@@ -28,6 +28,7 @@ pub enum SettingsStoreError {
     Json(#[from] serde_json::Error),
 }
 
+#[derive(Clone)]
 pub struct SettingsStore {
     base_dir: PathBuf,
 }

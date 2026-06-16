@@ -1,11 +1,8 @@
 use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::net::TcpStream;
-use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use ssh2::Session;
 use tauri::{AppHandle, Emitter};
 use thiserror::Error;
 use tokio::sync::{
@@ -16,8 +13,11 @@ use uuid::Uuid;
 
 use crate::core::credential_store::CredentialStore;
 use crate::core::settings_store::SettingsStore;
-use crate::models::settings::{ConnectionAuthSettings, ConnectionSettings};
+use crate::models::settings::ConnectionSettings;
 use crate::models::terminal::TerminalOutputEvent;
+use crate::ssh::client::{
+    connect_authenticated, load_connection, resolve_auth, ResolvedAuth, SshClientError,
+};
 
 const TERMINAL_OUTPUT_EVENT: &str = "terminal://output";
 const INPUT_CHANNEL_SIZE: usize = 256;
@@ -81,16 +81,7 @@ impl SessionManager {
         cols: u16,
         rows: u16,
     ) -> Result<String> {
-        let settings = settings_store
-            .load_or_create()
-            .map_err(|error| TerminalSessionError::Settings(error.to_string()))?;
-        let connection = settings
-            .connections
-            .iter()
-            .find(|item| item.id == connection_id)
-            .cloned()
-            .ok_or_else(|| TerminalSessionError::ConnectionNotFound(connection_id.clone()))?;
-
+        let connection = load_connection(settings_store, &connection_id)?;
         let auth = resolve_auth(credential_store, &connection)?;
         let session_id = Uuid::new_v4().to_string();
         let (input, input_rx) = mpsc::channel(INPUT_CHANNEL_SIZE);
@@ -142,46 +133,11 @@ impl SessionManager {
     }
 }
 
-#[derive(Debug)]
-enum ResolvedAuth {
-    Password(String),
-    PrivateKey {
-        private_key_path: String,
-        passphrase: Option<String>,
-    },
-}
-
-fn resolve_auth(
-    credential_store: &CredentialStore,
-    connection: &ConnectionSettings,
-) -> Result<ResolvedAuth> {
-    match &connection.auth {
-        ConnectionAuthSettings::Password { password_ref } => credential_store
-            .get_secret(password_ref)
-            .map(ResolvedAuth::Password)
-            .map_err(|error| TerminalSessionError::Credential(error.to_string())),
-        ConnectionAuthSettings::PrivateKey {
-            private_key_path,
-            passphrase_ref,
-        } => {
-            let passphrase = passphrase_ref
-                .as_ref()
-                .map(|id| credential_store.get_secret(id))
-                .transpose()
-                .map_err(|error| TerminalSessionError::Credential(error.to_string()))?;
-            Ok(ResolvedAuth::PrivateKey {
-                private_key_path: private_key_path.clone(),
-                passphrase,
-            })
-        }
-    }
-}
-
 fn spawn_ssh_worker(
     app: AppHandle,
     session_id: String,
     connection: ConnectionSettings,
-    auth: ResolvedAuth,
+    auth: crate::ssh::client::ResolvedAuth,
     mut input_rx: mpsc::Receiver<String>,
     cols: u16,
     rows: u16,
@@ -210,18 +166,12 @@ fn run_ssh_worker(
     cols: u16,
     rows: u16,
 ) -> Result<()> {
-    let tcp = TcpStream::connect((connection.host.as_str(), connection.port))
-        .map_err(|error| TerminalSessionError::Io(error.to_string()))?;
-    tcp.set_read_timeout(Some(Duration::from_millis(100)))
-        .map_err(|error| TerminalSessionError::Io(error.to_string()))?;
-    tcp.set_write_timeout(Some(Duration::from_secs(10)))
-        .map_err(|error| TerminalSessionError::Io(error.to_string()))?;
-
-    let mut ssh = Session::new().map_err(|error| TerminalSessionError::Ssh(error.to_string()))?;
-    ssh.set_tcp_stream(tcp);
-    ssh.handshake()
-        .map_err(|error| TerminalSessionError::Ssh(error.to_string()))?;
-    authenticate(&ssh, &connection.username, auth)?;
+    let ssh = connect_authenticated(
+        &connection,
+        auth,
+        Duration::from_millis(100),
+        Duration::from_secs(10),
+    )?;
 
     let mut channel = ssh
         .channel_session()
@@ -278,25 +228,6 @@ fn run_ssh_worker(
     Ok(())
 }
 
-fn authenticate(ssh: &Session, username: &str, auth: ResolvedAuth) -> Result<()> {
-    match auth {
-        ResolvedAuth::Password(password) => ssh
-            .userauth_password(username, &password)
-            .map_err(|error| TerminalSessionError::Ssh(error.to_string())),
-        ResolvedAuth::PrivateKey {
-            private_key_path,
-            passphrase,
-        } => ssh
-            .userauth_pubkey_file(
-                username,
-                None,
-                Path::new(&private_key_path),
-                passphrase.as_deref(),
-            )
-            .map_err(|error| TerminalSessionError::Ssh(error.to_string())),
-    }
-}
-
 fn emit_output(app: &AppHandle, session_id: &str, data: String) {
     let _ = app.emit(
         TERMINAL_OUTPUT_EVENT,
@@ -305,4 +236,18 @@ fn emit_output(app: &AppHandle, session_id: &str, data: String) {
             data,
         },
     );
+}
+
+impl From<SshClientError> for TerminalSessionError {
+    fn from(error: SshClientError) -> Self {
+        match error {
+            SshClientError::ConnectionNotFound(connection_id) => {
+                TerminalSessionError::ConnectionNotFound(connection_id)
+            }
+            SshClientError::Credential(message) => TerminalSessionError::Credential(message),
+            SshClientError::Settings(message) => TerminalSessionError::Settings(message),
+            SshClientError::Ssh(message) => TerminalSessionError::Ssh(message),
+            SshClientError::Io(message) => TerminalSessionError::Io(message),
+        }
+    }
 }
