@@ -1,2 +1,7 @@
 .worktrees
 .worktrees/
+
+node_modules
+dist
+dist-ssr
+*.local
