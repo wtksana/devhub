@@ -6,6 +6,7 @@ pub mod models;
 #[cfg(test)]
 mod tests;
 
+use crate::core::credential_store::CredentialStore;
 use crate::core::settings_store::SettingsStore;
 use tauri::Manager;
 
@@ -21,10 +22,13 @@ pub fn run() {
         .setup(|app| {
             let app_dir = app.path().app_config_dir()?;
             app.manage(SettingsStore::new_for_dir(app_dir));
+            app.manage(CredentialStore::new("devhub"));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             greet,
+            commands::credentials::save_credential,
+            commands::credentials::delete_credential,
             commands::settings::load_settings,
             commands::settings::save_settings
         ])
