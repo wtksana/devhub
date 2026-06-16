@@ -23,6 +23,7 @@ pub enum ConnectionAuthSettings {
     #[serde(rename = "private_key")]
     PrivateKey {
         private_key_path: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
         passphrase_ref: Option<String>,
     },
 }

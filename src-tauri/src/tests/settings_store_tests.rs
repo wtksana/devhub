@@ -1,6 +1,7 @@
 use tempfile::tempdir;
 
 use crate::core::settings_store::SettingsStore;
+use crate::models::settings::{ConnectionAuthSettings, ConnectionSettings, DevHubSettings};
 
 #[test]
 fn creates_default_settings_when_missing() {
@@ -33,4 +34,28 @@ fn rejects_sensitive_fields() {
     let error = store.load_or_create().unwrap_err().to_string();
 
     assert!(error.contains("sensitive"));
+}
+
+#[test]
+fn omits_empty_private_key_passphrase_ref() {
+    let dir = tempdir().unwrap();
+    let store = SettingsStore::new_for_dir(dir.path().to_path_buf());
+    let mut settings = DevHubSettings::default();
+    settings.connections.push(ConnectionSettings {
+        id: "dev".to_string(),
+        name: "Dev".to_string(),
+        group: None,
+        host: "localhost".to_string(),
+        port: 22,
+        username: "dev".to_string(),
+        auth: ConnectionAuthSettings::PrivateKey {
+            private_key_path: "~/.ssh/id_ed25519".to_string(),
+            passphrase_ref: None,
+        },
+    });
+
+    store.save(&settings).unwrap();
+
+    let raw = std::fs::read_to_string(store.settings_path()).unwrap();
+    assert!(!raw.contains("passphrase_ref"));
 }
