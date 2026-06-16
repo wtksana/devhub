@@ -1,7 +1,17 @@
+import { TerminalTab } from "./TerminalTab";
+
 interface TerminalWorkspaceProps {
   connectionId: string | null;
 }
 
 export function TerminalWorkspace({ connectionId }: TerminalWorkspaceProps) {
-  return <section>{connectionId ? `终端：${connectionId}` : "未选择连接"}</section>;
+  if (!connectionId) {
+    return <section>未选择连接</section>;
+  }
+
+  return (
+    <section className="terminal-workspace">
+      <TerminalTab connectionId={connectionId} />
+    </section>
+  );
 }
