@@ -12,7 +12,12 @@ export function ConnectionList({ connections, onOpenTerminal, onOpenSftp }: Conn
       <header>
         <h2>连接</h2>
       </header>
-      {connections.length === 0 ? <p>暂无连接，请在 Settings 中添加。</p> : null}
+      {connections.length === 0 ? (
+        <div className="empty-state">
+          <p>暂无连接</p>
+          <span>请在设置中添加 SSH 连接。</span>
+        </div>
+      ) : null}
       <ul>
         {connections.map((connection) => (
           <li key={connection.id}>

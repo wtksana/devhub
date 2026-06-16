@@ -17,18 +17,27 @@ export function SettingsJsonEditor({ rawJson, saveRawJson }: SettingsJsonEditorP
 
   return (
     <section className="settings-json">
-      <h2>settings.json</h2>
-      <Editor
-        height="360px"
-        defaultLanguage="json"
-        value={draft}
-        theme="vs-dark"
-        onChange={(value) => setDraft(value ?? "")}
-        options={{ minimap: { enabled: false }, fontSize: 13 }}
-      />
-      <button type="button" onClick={() => void saveRawJson(draft)}>
-        保存 settings.json
-      </button>
+      <header>
+        <h2>settings.json</h2>
+        <button type="button" onClick={() => void saveRawJson(draft)}>
+          保存
+        </button>
+      </header>
+      <div className="settings-json__editor">
+        <Editor
+          height="100%"
+          defaultLanguage="json"
+          value={draft}
+          theme="vs-dark"
+          onChange={(value) => setDraft(value ?? "")}
+          options={{
+            minimap: { enabled: false },
+            fontSize: 13,
+            scrollBeyondLastLine: false,
+            wordWrap: "on",
+          }}
+        />
+      </div>
     </section>
   );
 }

@@ -41,5 +41,7 @@ describe("AppShell", () => {
     expect(screen.getByLabelText("AI 面板")).toBeInTheDocument();
     expect(screen.getByLabelText("命令面板")).toBeInTheDocument();
     expect(screen.getByLabelText("状态栏")).toBeInTheDocument();
+    expect(screen.getByLabelText("设置摘要")).toBeInTheDocument();
+    expect(screen.getByLabelText("AI 对话")).toBeInTheDocument();
   });
 });

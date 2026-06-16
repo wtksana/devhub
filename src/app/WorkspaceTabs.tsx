@@ -7,7 +7,7 @@ export function WorkspaceTabs({ active, onSelect }: WorkspaceTabsProps) {
   const tabs = [
     ["terminal", "终端"],
     ["sftp", "SFTP"],
-    ["settings", "Settings"],
+    ["settings", "设置"],
   ] as const;
 
   return (
