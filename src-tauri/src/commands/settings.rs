@@ -1,21 +1,23 @@
-use tauri::AppHandle;
+use tauri::State;
 
-use crate::core::app_paths;
 use crate::core::settings_store::SettingsStore;
 use crate::models::settings::DevHubSettings;
 
 #[tauri::command]
-pub async fn load_settings(app: AppHandle) -> Result<DevHubSettings, String> {
-    let base_dir = app_paths::app_config_dir(&app).map_err(|error| error.to_string())?;
-    SettingsStore::new_for_dir(base_dir)
+pub async fn load_settings(
+    settings_store: State<'_, SettingsStore>,
+) -> Result<DevHubSettings, String> {
+    settings_store
         .load_or_create()
         .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
-pub async fn save_settings(app: AppHandle, settings: DevHubSettings) -> Result<(), String> {
-    let base_dir = app_paths::app_config_dir(&app).map_err(|error| error.to_string())?;
-    SettingsStore::new_for_dir(base_dir)
+pub async fn save_settings(
+    settings_store: State<'_, SettingsStore>,
+    settings: DevHubSettings,
+) -> Result<(), String> {
+    settings_store
         .save(&settings)
         .map_err(|error| error.to_string())
 }

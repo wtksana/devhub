@@ -3,15 +3,15 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AppearanceSettings {
     pub theme: String,
-    pub font_family: String,
-    pub editor_font_family: String,
-    pub editor_font_size: u16,
+    pub ui_font_family: String,
+    pub terminal_font_family: String,
+    pub terminal_font_size: u16,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LayoutSettings {
     pub ai_panel: String,
-    pub ai_panel_width: u16,
+    pub connection_sidebar_width: u16,
     pub open_ai_panel_by_default: bool,
 }
 
@@ -19,10 +19,10 @@ pub struct LayoutSettings {
 #[serde(tag = "type")]
 pub enum ConnectionAuthSettings {
     #[serde(rename = "password")]
-    Password { credential_ref: String },
+    Password { password_ref: String },
     #[serde(rename = "private_key")]
     PrivateKey {
-        key_ref: String,
+        private_key_path: String,
         passphrase_ref: Option<String>,
     },
 }
@@ -31,6 +31,7 @@ pub enum ConnectionAuthSettings {
 pub struct ConnectionSettings {
     pub id: String,
     pub name: String,
+    pub group: Option<String>,
     pub host: String,
     pub port: u16,
     pub username: String,
@@ -58,13 +59,13 @@ impl Default for DevHubSettings {
         Self {
             appearance: AppearanceSettings {
                 theme: "dark".to_string(),
-                font_family: "Inter".to_string(),
-                editor_font_family: "JetBrains Mono".to_string(),
-                editor_font_size: 14,
+                ui_font_family: "Inter".to_string(),
+                terminal_font_family: "JetBrains Mono".to_string(),
+                terminal_font_size: 14,
             },
             layout: LayoutSettings {
                 ai_panel: "right".to_string(),
-                ai_panel_width: 280,
+                connection_sidebar_width: 280,
                 open_ai_panel_by_default: true,
             },
             connections: Vec::new(),
