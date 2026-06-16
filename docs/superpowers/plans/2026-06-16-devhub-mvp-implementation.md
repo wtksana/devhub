@@ -36,6 +36,10 @@ C:\Dev\devhub
     App.tsx
     app\
       AppShell.tsx
+      CommandPalette.tsx
+      DockPanel.tsx
+      StatusBar.tsx
+      WorkspaceTabs.tsx
       routes.ts
     components\
       ToolbarButton.tsx
@@ -1387,12 +1391,16 @@ git commit -m "feat: 添加系统凭据存储"
 
 **Files:**
 - Create: `src/app/AppShell.tsx`
+- Create: `src/app/CommandPalette.tsx`
+- Create: `src/app/DockPanel.tsx`
+- Create: `src/app/StatusBar.tsx`
+- Create: `src/app/WorkspaceTabs.tsx`
 - Create: `src/features/connections/ConnectionList.tsx`
 - Create: `src/features/connections/ConnectionEditor.tsx`
 - Test: `src/app/AppShell.test.tsx`
 - Modify: `src/App.tsx`
 
-- [ ] **Step 1: Write shell test**
+- [ ] **Step 1: Write Zed-style shell test**
 
 Create `src/app/AppShell.test.tsx`:
 
@@ -1402,12 +1410,14 @@ import { describe, expect, it } from "vitest";
 import { AppShell } from "./AppShell";
 
 describe("AppShell", () => {
-  it("renders connections, workspace, and AI panel regions", () => {
+  it("renders Zed-style dock, workspace, assistant, command, and status regions", () => {
     render(<AppShell />);
 
     expect(screen.getByLabelText("连接列表")).toBeInTheDocument();
     expect(screen.getByLabelText("工作区")).toBeInTheDocument();
     expect(screen.getByLabelText("AI 面板")).toBeInTheDocument();
+    expect(screen.getByLabelText("命令面板")).toBeInTheDocument();
+    expect(screen.getByLabelText("状态栏")).toBeInTheDocument();
   });
 });
 ```
@@ -1420,7 +1430,96 @@ pnpm test -- src/app/AppShell.test.tsx
 
 Expected: FAIL because `AppShell` does not exist.
 
-- [ ] **Step 3: Add connection list**
+- [ ] **Step 3: Add Zed-style app primitives**
+
+Create `src/app/DockPanel.tsx`:
+
+```tsx
+import type { ReactNode } from "react";
+
+interface DockPanelProps {
+  side: "left" | "right";
+  label: string;
+  children: ReactNode;
+}
+
+export function DockPanel({ side, label, children }: DockPanelProps) {
+  return (
+    <aside className={`dock-panel dock-panel--${side}`} aria-label={label}>
+      {children}
+    </aside>
+  );
+}
+```
+
+Create `src/app/WorkspaceTabs.tsx`:
+
+```tsx
+interface WorkspaceTabsProps {
+  active: "terminal" | "sftp" | "settings";
+  onSelect: (workspace: "terminal" | "sftp" | "settings") => void;
+}
+
+export function WorkspaceTabs({ active, onSelect }: WorkspaceTabsProps) {
+  const tabs = [
+    ["terminal", "终端"],
+    ["sftp", "SFTP"],
+    ["settings", "Settings"],
+  ] as const;
+
+  return (
+    <nav className="workspace-tabs" aria-label="工作区标签">
+      {tabs.map(([id, label]) => (
+        <button
+          key={id}
+          type="button"
+          aria-pressed={active === id}
+          onClick={() => onSelect(id)}
+        >
+          {label}
+        </button>
+      ))}
+    </nav>
+  );
+}
+```
+
+Create `src/app/CommandPalette.tsx`:
+
+```tsx
+interface CommandPaletteProps {
+  onOpenSettings: () => void;
+}
+
+export function CommandPalette({ onOpenSettings }: CommandPaletteProps) {
+  return (
+    <section className="command-palette" aria-label="命令面板">
+      <button type="button" onClick={onOpenSettings}>
+        打开 Settings
+      </button>
+    </section>
+  );
+}
+```
+
+Create `src/app/StatusBar.tsx`:
+
+```tsx
+interface StatusBarProps {
+  activeConnectionId: string | null;
+}
+
+export function StatusBar({ activeConnectionId }: StatusBarProps) {
+  return (
+    <footer className="status-bar" aria-label="状态栏">
+      <span>{activeConnectionId ? `连接：${activeConnectionId}` : "未连接"}</span>
+      <span>AI: BYOK</span>
+    </footer>
+  );
+}
+```
+
+- [ ] **Step 4: Add connection list**
 
 Create `src/features/connections/ConnectionList.tsx`:
 
@@ -1468,12 +1567,16 @@ export function ConnectionEditor() {
 }
 ```
 
-- [ ] **Step 4: Add app shell**
+- [ ] **Step 5: Add app shell**
 
 Create `src/app/AppShell.tsx`:
 
 ```tsx
 import { useState } from "react";
+import { CommandPalette } from "./CommandPalette";
+import { DockPanel } from "./DockPanel";
+import { StatusBar } from "./StatusBar";
+import { WorkspaceTabs } from "./WorkspaceTabs";
 import { AiPanel } from "../features/ai/AiPanel";
 import { ConnectionList } from "../features/connections/ConnectionList";
 import { SettingsPanel } from "../features/settings/SettingsPanel";
@@ -1490,29 +1593,38 @@ export function AppShell() {
 
   return (
     <main className="app-shell">
-      <ConnectionList
-        connections={settings.connections}
-        onOpenTerminal={(connectionId) => {
-          setActiveConnectionId(connectionId);
-          setWorkspace("terminal");
-        }}
-        onOpenSftp={(connectionId) => {
-          setActiveConnectionId(connectionId);
-          setWorkspace("sftp");
-        }}
-      />
-      <section className="workspace" aria-label="工作区">
-        {workspace === "terminal" ? <TerminalWorkspace connectionId={activeConnectionId} /> : null}
-        {workspace === "sftp" ? <SftpWorkspace connectionId={activeConnectionId} /> : null}
-        {workspace === "settings" ? <SettingsPanel /> : null}
-      </section>
-      <AiPanel />
+      <CommandPalette onOpenSettings={() => setWorkspace("settings")} />
+      <div className="app-shell__body">
+        <DockPanel side="left" label="连接列表">
+          <ConnectionList
+            connections={settings.connections}
+            onOpenTerminal={(connectionId) => {
+              setActiveConnectionId(connectionId);
+              setWorkspace("terminal");
+            }}
+            onOpenSftp={(connectionId) => {
+              setActiveConnectionId(connectionId);
+              setWorkspace("sftp");
+            }}
+          />
+        </DockPanel>
+        <section className="workspace" aria-label="工作区">
+          <WorkspaceTabs active={workspace} onSelect={setWorkspace} />
+          {workspace === "terminal" ? <TerminalWorkspace connectionId={activeConnectionId} /> : null}
+          {workspace === "sftp" ? <SftpWorkspace connectionId={activeConnectionId} /> : null}
+          {workspace === "settings" ? <SettingsPanel /> : null}
+        </section>
+        <DockPanel side="right" label="AI 面板">
+          <AiPanel />
+        </DockPanel>
+      </div>
+      <StatusBar activeConnectionId={activeConnectionId} />
     </main>
   );
 }
 ```
 
-- [ ] **Step 5: Add temporary workspace placeholders**
+- [ ] **Step 6: Add temporary workspace placeholders**
 
 Create `src/features/ai/AiPanel.tsx`:
 
@@ -1562,7 +1674,69 @@ export default function App() {
 }
 ```
 
-- [ ] **Step 6: Verify**
+- [ ] **Step 7: Add Zed-inspired layout CSS**
+
+Append to `src/styles/globals.css`:
+
+```css
+.app-shell {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) 26px;
+  height: 100vh;
+  background: #101214;
+  color: #e6e8eb;
+}
+
+.app-shell__body {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr) 340px;
+  min-height: 0;
+}
+
+.dock-panel {
+  min-width: 0;
+  overflow: hidden;
+  border-color: #2a2f35;
+  background: #15181b;
+}
+
+.dock-panel--left {
+  border-right: 1px solid #2a2f35;
+}
+
+.dock-panel--right {
+  border-left: 1px solid #2a2f35;
+}
+
+.workspace {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: 34px minmax(0, 1fr);
+  background: #0f1113;
+}
+
+.workspace-tabs,
+.command-palette,
+.status-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  border-bottom: 1px solid #2a2f35;
+  background: #15181b;
+}
+
+.status-bar {
+  justify-content: space-between;
+  border-top: 1px solid #2a2f35;
+  border-bottom: 0;
+  font-size: 12px;
+  color: #aab0b7;
+}
+```
+
+- [ ] **Step 8: Verify**
 
 ```powershell
 pnpm test -- src/app src/features/connections
@@ -1571,11 +1745,11 @@ pnpm build
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 9: Commit**
 
 ```powershell
 git add -- src
-git commit -m "feat: 添加主界面和连接列表"
+git commit -m "feat: 添加 Zed 风格工作台"
 ```
 
 ---
