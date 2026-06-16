@@ -1,5 +1,5 @@
-import { SettingsPanel } from "./features/settings/SettingsPanel";
+import { AppShell } from "./app/AppShell";
 
 export default function App() {
-  return <SettingsPanel />;
+  return <AppShell />;
 }

@@ -26,9 +26,10 @@ vi.mock("@tauri-apps/api/core", () => ({
   }),
 }));
 
-test("renders settings screen", () => {
+test("renders app shell", () => {
   render(<App />);
 
-  expect(screen.getByRole("heading", { name: "设置" })).toBeInTheDocument();
-  expect(screen.getByText("settings.json")).toBeInTheDocument();
+  expect(screen.getByLabelText("连接列表")).toBeInTheDocument();
+  expect(screen.getByLabelText("工作区")).toBeInTheDocument();
+  expect(screen.getByLabelText("AI 面板")).toBeInTheDocument();
 });
