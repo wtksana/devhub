@@ -1,44 +1,44 @@
-# DevHub MVP Manual Test Checklist
+# DevHub MVP 手动验收清单
 
-## Settings
+## 设置
 
-- [ ] settings.json loads on first run.
-- [ ] Editing theme/font/layout validates JSON.
-- [ ] Password, passphrase, API key are rejected if written directly into settings.json.
-- [ ] Copying settings.json and keymap.json restores non-sensitive settings.
+- [ ] 首次运行时会自动加载或创建 `settings.json`。
+- [ ] 修改主题、字体、布局后会校验 JSON 配置。
+- [ ] 如果把密码、私钥口令、API 密钥直接写入 `settings.json`，保存时会被拒绝。
+- [ ] 复制 `settings.json` 和 `keymap.json` 可以恢复非敏感工作环境。
 
 ## SSH
 
-- [ ] Password login works.
-- [ ] Private key login works.
-- [ ] Private key passphrase works.
-- [ ] sudo prompt works in terminal.
-- [ ] Closing a terminal releases the session.
-- [ ] 20 terminal tabs remain responsive.
+- [ ] 密码登录可用。
+- [ ] 私钥登录可用。
+- [ ] 带口令的私钥登录可用。
+- [ ] 远程终端中的 `sudo` 提示可以正常交互输入。
+- [ ] 关闭终端标签后会释放会话。
+- [ ] 同时打开 20 个终端标签时界面仍保持响应。
 
 ## SFTP
 
-- [ ] Browse writable directory.
-- [ ] Upload small file.
-- [ ] Download small file.
-- [ ] Rename file.
-- [ ] Delete file.
-- [ ] Permission denied is shown without sudo attempt.
-- [ ] 3 concurrent transfer tasks do not freeze terminal input.
+- [ ] 可以浏览有权限访问的目录。
+- [ ] 可以上传小文件。
+- [ ] 可以下载小文件。
+- [ ] 可以重命名文件或目录。
+- [ ] 可以删除文件或目录。
+- [ ] 没有权限时会显示错误，不会尝试 sudo 提权写入。
+- [ ] 同时运行 3 个传输任务时，不会阻塞终端输入。
 
 ## AI
 
-- [ ] BYOK key is stored outside settings.json.
-- [ ] AI can explain selected text.
-- [ ] AI can generate a command.
-- [ ] AI-generated command is not auto-executed.
-- [ ] API key does not appear in logs.
+- [ ] BYOK 密钥保存在系统凭据存储中，不写入 `settings.json`。
+- [ ] AI 可以解释选中的文本或用户输入。
+- [ ] AI 可以生成命令。
+- [ ] AI 生成的命令不会自动执行。
+- [ ] API 密钥不会出现在界面日志、开发者工具日志或错误信息中。
 
-## Known MVP Limitations
+## MVP 已知限制
 
-- No jump host support.
-- No SSH agent support.
-- No SSH tunnel support.
-- No SFTP sudo write.
-- No full database or Redis management.
-- No AI auto-execution.
+- 暂不支持跳板机。
+- 暂不支持 SSH agent。
+- 暂不支持 SSH tunnel。
+- 暂不支持 SFTP sudo 写入。
+- 暂不支持完整数据库和 Redis 管理。
+- 暂不支持 AI 自动执行命令或多步任务。
