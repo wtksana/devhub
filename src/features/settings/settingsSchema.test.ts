@@ -7,13 +7,12 @@ describe("settings schema", () => {
       appearance: {
         theme: "dark",
         ui_font_family: "Inter",
+        ui_font_size: 13,
         terminal_font_family: "JetBrains Mono",
         terminal_font_size: 14,
       },
       layout: {
-        ai_panel: "right",
         connection_sidebar_width: 280,
-        open_ai_panel_by_default: true,
       },
       connections: [
         {
@@ -30,12 +29,6 @@ describe("settings schema", () => {
           },
         },
       ],
-      ai: {
-        provider: "openai_compatible",
-        base_url: "https://api.example.com/v1",
-        model: "gpt-4.1",
-        api_key_ref: "ai:default",
-      },
     });
 
     expect(settings.connections[0].auth.type).toBe("private_key");
@@ -56,5 +49,86 @@ describe("settings schema", () => {
         ],
       }),
     ).toThrow(/sensitive/i);
+  });
+
+  it("accepts SSH password auth with the real password in settings json", () => {
+    const settings = parseSettings({
+      appearance: {
+        theme: "dark",
+        ui_font_family: "Inter",
+        ui_font_size: 13,
+        terminal_font_family: "JetBrains Mono",
+        terminal_font_size: 14,
+      },
+      layout: {
+        connection_sidebar_width: 280,
+      },
+      connections: [
+        {
+          id: "dev",
+          name: "Dev",
+          host: "127.0.0.1",
+          port: 22,
+          username: "root",
+          auth: {
+            type: "password",
+            password: "plain-password",
+          },
+        },
+      ],
+    });
+
+    expect(settings.connections[0].auth).toEqual({
+      type: "password",
+      password: "plain-password",
+    });
+  });
+
+  it("accepts nullable optional connection fields", () => {
+    const settings = parseSettings({
+      appearance: {
+        theme: "dark",
+        ui_font_family: "Inter",
+        ui_font_size: 13,
+        terminal_font_family: "JetBrains Mono",
+        terminal_font_size: 14,
+      },
+      layout: {
+        connection_sidebar_width: 280,
+      },
+      connections: [
+        {
+          id: "dev",
+          name: "Dev",
+          group: null,
+          host: "127.0.0.1",
+          port: 22,
+          username: "root",
+          auth: {
+            type: "password",
+            password: "",
+          },
+        },
+      ],
+    });
+
+    expect(settings.connections[0].group).toBeUndefined();
+  });
+
+  it("fills defaults for newly added appearance fields", () => {
+    const settings = parseSettings({
+      appearance: {
+        theme: "dark",
+        ui_font_family: "Inter",
+        terminal_font_family: "JetBrains Mono",
+        terminal_font_size: 14,
+      },
+      layout: {
+        connection_sidebar_width: 280,
+      },
+      connections: [],
+    });
+
+    expect(settings.appearance.ui_font_size).toBe(13);
   });
 });

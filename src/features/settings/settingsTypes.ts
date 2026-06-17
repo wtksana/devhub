@@ -1,22 +1,20 @@
 export type ThemeName = "dark" | "light" | "system";
-export type AiPanelPosition = "left" | "right" | "hidden";
 
 export interface AppearanceSettings {
   theme: ThemeName;
   ui_font_family: string;
+  ui_font_size: number;
   terminal_font_family: string;
   terminal_font_size: number;
 }
 
 export interface LayoutSettings {
-  ai_panel: AiPanelPosition;
   connection_sidebar_width: number;
-  open_ai_panel_by_default: boolean;
 }
 
 export interface PasswordAuthSettings {
   type: "password";
-  password_ref: string;
+  password: string;
 }
 
 export interface PrivateKeyAuthSettings {
@@ -37,16 +35,8 @@ export interface ConnectionSettings {
   auth: ConnectionAuthSettings;
 }
 
-export interface AiSettings {
-  provider: "openai_compatible";
-  base_url: string;
-  model: string;
-  api_key_ref: string;
-}
-
 export interface DevHubSettings {
   appearance: AppearanceSettings;
   layout: LayoutSettings;
   connections: ConnectionSettings[];
-  ai: AiSettings;
 }

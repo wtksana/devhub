@@ -10,6 +10,7 @@ mod tests;
 use crate::core::credential_store::CredentialStore;
 use crate::core::settings_store::SettingsStore;
 use crate::ssh::session_manager::SessionManager;
+use tauri::image::Image;
 use tauri::Manager;
 
 #[tauri::command]
@@ -22,6 +23,11 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
+            if let Some(window) = app.get_webview_window("main") {
+                let icon = Image::from_bytes(include_bytes!("../icons/128x128.png"))?;
+                window.set_icon(icon)?;
+            }
+
             let app_dir = app.path().app_config_dir()?;
             app.manage(SettingsStore::new_for_dir(app_dir));
             app.manage(CredentialStore::new("devhub"));
@@ -34,6 +40,7 @@ pub fn run() {
             commands::credentials::delete_credential,
             commands::settings::load_settings,
             commands::settings::save_settings,
+            commands::settings::list_system_fonts,
             commands::terminal::open_terminal,
             commands::terminal::write_terminal,
             commands::terminal::resize_terminal,
@@ -41,8 +48,7 @@ pub fn run() {
             commands::sftp::list_directory,
             commands::sftp::delete_path,
             commands::sftp::rename_path,
-            commands::sftp::create_directory,
-            commands::ai::ai_chat
+            commands::sftp::create_directory
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

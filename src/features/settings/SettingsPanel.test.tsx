@@ -1,45 +1,170 @@
 import "@testing-library/jest-dom/vitest";
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { cleanup, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SettingsPanel } from "./SettingsPanel";
+import type { DevHubSettings } from "./settingsTypes";
+
+const saveSettings = vi.fn();
+const listSystemFonts = vi.fn(async () => ["Inter", "Zed Sans", "JetBrains Mono", "Consolas"]);
+const settings: DevHubSettings = {
+  appearance: {
+    theme: "dark",
+    ui_font_family: "Inter",
+    ui_font_size: 13,
+    terminal_font_family: "JetBrains Mono",
+    terminal_font_size: 14,
+  },
+  layout: {
+    connection_sidebar_width: 280,
+  },
+  connections: [],
+};
+
+vi.mock("../../lib/tauri", () => ({
+  callBackend: (command: string) => {
+    if (command === "list_system_fonts") return listSystemFonts();
+    throw new Error(`unexpected command: ${command}`);
+  },
+}));
 
 vi.mock("./useSettings", () => ({
   useSettings: () => ({
-    settings: {
-      appearance: {
-        theme: "dark",
-        ui_font_family: "Inter",
-        terminal_font_family: "JetBrains Mono",
-        terminal_font_size: 14,
-      },
-      layout: {
-        ai_panel: "right",
-        connection_sidebar_width: 280,
-        open_ai_panel_by_default: true,
-      },
-      connections: [],
-      ai: {
-        provider: "openai_compatible",
-        base_url: "https://api.openai.com/v1",
-        model: "gpt-4.1",
-        api_key_ref: "ai:default",
-      },
-    },
+    settings,
     rawJson: "{}",
     error: null,
+    saveSettings,
     saveRawJson: vi.fn(),
     reload: vi.fn(),
   }),
 }));
 
 describe("SettingsPanel", () => {
-  it("shows appearance, layout, connections, and AI sections", () => {
+  beforeEach(() => {
+    cleanup();
+    saveSettings.mockClear();
+    listSystemFonts.mockClear();
+  });
+
+  it("shows appearance, layout, and connection sections", () => {
     render(<SettingsPanel />);
 
-    expect(screen.getByText("外观")).toBeInTheDocument();
-    expect(screen.getByText("布局")).toBeInTheDocument();
-    expect(screen.getByText("连接")).toBeInTheDocument();
-    expect(screen.getByText("AI")).toBeInTheDocument();
-    expect(screen.getByText("settings.json")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "外观" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "布局" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "连接" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "AI" })).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "settings.json" })).toBeInTheDocument();
+    expect(screen.queryByText("User")).not.toBeInTheDocument();
+  });
+
+  it("saves typed input edits after the field loses focus", async () => {
+    render(<SettingsPanel />);
+
+    await userEvent.selectOptions(screen.getByLabelText("主题"), "system");
+
+    expect(saveSettings).toHaveBeenCalledWith({
+      ...settings,
+      appearance: {
+        ...settings.appearance,
+        theme: "system",
+      },
+    });
+    expect(saveSettings).toHaveBeenCalledTimes(1);
+
+    await within(screen.getByLabelText("界面字体")).findByRole("option", { name: "Zed Sans" });
+    await userEvent.selectOptions(screen.getByLabelText("界面字体"), "Zed Sans");
+
+    expect(saveSettings).toHaveBeenLastCalledWith({
+      ...settings,
+      appearance: {
+        ...settings.appearance,
+        theme: "system",
+        ui_font_family: "Zed Sans",
+      },
+    });
+  });
+
+  it("loads system fonts for UI and terminal font selection", async () => {
+    render(<SettingsPanel />);
+
+    await within(screen.getByLabelText("界面字体")).findByRole("option", { name: "Zed Sans" });
+
+    expect(listSystemFonts).toHaveBeenCalledTimes(1);
+    expect(screen.getByLabelText("界面字体")).toHaveDisplayValue("Inter");
+    expect(screen.getByLabelText("终端字体")).toHaveDisplayValue("JetBrains Mono");
+
+    await userEvent.selectOptions(screen.getByLabelText("终端字体"), "Consolas");
+
+    expect(saveSettings).toHaveBeenLastCalledWith({
+      ...settings,
+      appearance: {
+        ...settings.appearance,
+        terminal_font_family: "Consolas",
+      },
+    });
+  });
+
+  it("saves UI font size after blur", async () => {
+    render(<SettingsPanel />);
+
+    await userEvent.clear(screen.getByLabelText("界面字号"));
+    await userEvent.type(screen.getByLabelText("界面字号"), "15");
+
+    expect(saveSettings).not.toHaveBeenCalled();
+
+    await userEvent.tab();
+
+    expect(saveSettings).toHaveBeenLastCalledWith({
+      ...settings,
+      appearance: {
+        ...settings.appearance,
+        ui_font_size: 15,
+      },
+    });
+  });
+
+  it("scrolls to the matching section when selecting a settings category", async () => {
+    const scrollIntoView = vi.fn();
+    window.HTMLElement.prototype.scrollIntoView = scrollIntoView;
+
+    render(<SettingsPanel />);
+
+    await userEvent.click(within(screen.getByLabelText("设置分类")).getByRole("button", { name: "连接" }));
+
+    expect(scrollIntoView).toHaveBeenCalledWith({ behavior: "smooth", block: "start" });
+    expect(within(screen.getByLabelText("设置分类")).getByRole("button", { name: "连接" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("scrolls to settings json when clicking the edit button", async () => {
+    const scrollIntoView = vi.fn();
+    window.HTMLElement.prototype.scrollIntoView = scrollIntoView;
+
+    render(<SettingsPanel />);
+
+    await userEvent.click(screen.getByRole("button", { name: "Edit in settings.json" }));
+
+    expect(scrollIntoView).toHaveBeenCalledWith({ behavior: "smooth", block: "start" });
+    expect(within(screen.getByLabelText("设置分类")).getByRole("button", { name: "settings.json" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
+
+  it("saves layout panel widths after blur", async () => {
+    render(<SettingsPanel />);
+
+    expect(screen.queryByLabelText("连接栏宽度")).not.toBeInTheDocument();
+
+    await userEvent.clear(screen.getByLabelText("连接面板宽度"));
+    await userEvent.type(screen.getByLabelText("连接面板宽度"), "320");
+    await userEvent.tab();
+
+    expect(saveSettings).toHaveBeenLastCalledWith({
+      ...settings,
+      layout: {
+        ...settings.layout,
+        connection_sidebar_width: 320,
+      },
+    });
   });
 });

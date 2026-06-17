@@ -13,11 +13,13 @@ fn creates_default_settings_when_missing() {
 
     assert_eq!(settings.appearance.theme, "dark");
     assert_eq!(value["appearance"]["ui_font_family"], "Inter");
+    assert_eq!(value["appearance"]["ui_font_size"], 13);
     assert_eq!(
         value["appearance"]["terminal_font_family"],
         "JetBrains Mono"
     );
     assert_eq!(value["layout"]["connection_sidebar_width"], 280);
+    assert!(value.get("ai").is_none());
     assert!(store.settings_path().exists());
 }
 
@@ -34,6 +36,57 @@ fn rejects_sensitive_fields() {
     let error = store.load_or_create().unwrap_err().to_string();
 
     assert!(error.contains("sensitive"));
+}
+
+#[test]
+fn allows_ssh_password_auth_in_settings() {
+    let dir = tempdir().unwrap();
+    let store = SettingsStore::new_for_dir(dir.path().to_path_buf());
+    let mut settings = DevHubSettings::default();
+    settings.connections.push(ConnectionSettings {
+        id: "dev".to_string(),
+        name: "Dev".to_string(),
+        group: None,
+        host: "localhost".to_string(),
+        port: 22,
+        username: "dev".to_string(),
+        auth: ConnectionAuthSettings::Password {
+            password: "plain-password".to_string(),
+        },
+    });
+
+    store.save(&settings).unwrap();
+    let loaded = store.load_or_create().unwrap();
+
+    assert_eq!(
+        loaded.connections[0].auth,
+        ConnectionAuthSettings::Password {
+            password: "plain-password".to_string()
+        }
+    );
+}
+
+#[test]
+fn omits_empty_connection_group() {
+    let dir = tempdir().unwrap();
+    let store = SettingsStore::new_for_dir(dir.path().to_path_buf());
+    let mut settings = DevHubSettings::default();
+    settings.connections.push(ConnectionSettings {
+        id: "dev".to_string(),
+        name: "Dev".to_string(),
+        group: None,
+        host: "localhost".to_string(),
+        port: 22,
+        username: "dev".to_string(),
+        auth: ConnectionAuthSettings::Password {
+            password: String::new(),
+        },
+    });
+
+    store.save(&settings).unwrap();
+
+    let raw = std::fs::read_to_string(store.settings_path()).unwrap();
+    assert!(!raw.contains(r#""group""#));
 }
 
 #[test]

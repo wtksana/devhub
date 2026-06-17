@@ -8,21 +8,22 @@ vi.mock("@tauri-apps/api/core", () => ({
     appearance: {
       theme: "dark",
       ui_font_family: "Inter",
+      ui_font_size: 13,
       terminal_font_family: "JetBrains Mono",
       terminal_font_size: 14,
     },
     layout: {
-      ai_panel: "right",
       connection_sidebar_width: 280,
-      open_ai_panel_by_default: true,
     },
     connections: [],
-    ai: {
-      provider: "openai_compatible",
-      base_url: "https://api.openai.com/v1",
-      model: "gpt-4.1",
-      api_key_ref: "ai:default",
-    },
+  }),
+}));
+
+vi.mock("@tauri-apps/api/window", () => ({
+  getCurrentWindow: () => ({
+    minimize: vi.fn(),
+    toggleMaximize: vi.fn(),
+    close: vi.fn(),
   }),
 }));
 
@@ -31,5 +32,7 @@ test("renders app shell", () => {
 
   expect(screen.getByLabelText("连接列表")).toBeInTheDocument();
   expect(screen.getByLabelText("工作区")).toBeInTheDocument();
-  expect(screen.getByLabelText("AI 面板")).toBeInTheDocument();
+  expect(screen.queryByLabelText("设置分类")).not.toBeInTheDocument();
+  expect(screen.getByLabelText("工作区标签")).toBeEmptyDOMElement();
+  expect(screen.getByText("未打开标签")).toBeInTheDocument();
 });

@@ -18,7 +18,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["image-png"] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -29,7 +29,7 @@ directories = "6"
 keyring = "3"
 ssh2 = "0.9"
 rusqlite = { version = "0.32", features = ["bundled"] }
-reqwest = { version = "0.12", features = ["json", "stream", "rustls-tls"], default-features = false }
+portable-pty = "0.9"
 
 [dev-dependencies]
 tempfile = "3"

@@ -7,21 +7,14 @@ const defaultSettings: DevHubSettings = {
   appearance: {
     theme: "dark",
     ui_font_family: "Inter",
+    ui_font_size: 13,
     terminal_font_family: "JetBrains Mono",
     terminal_font_size: 14,
   },
   layout: {
-    ai_panel: "right",
     connection_sidebar_width: 280,
-    open_ai_panel_by_default: true,
   },
   connections: [],
-  ai: {
-    provider: "openai_compatible",
-    base_url: "https://api.openai.com/v1",
-    model: "gpt-4.1",
-    api_key_ref: "ai:default",
-  },
 };
 
 function getErrorMessage(caught: unknown): string {
@@ -60,8 +53,20 @@ export function useSettings() {
     }
   }, []);
 
+  const saveSettings = useCallback(async (nextSettings: DevHubSettings) => {
+    try {
+      const parsed = parseSettings(nextSettings);
+      await callBackend<void>("save_settings", { settings: parsed });
+      setSettings(parsed);
+      setRawJson(JSON.stringify(parsed, null, 2));
+      setError(null);
+    } catch (caught) {
+      setError(getErrorMessage(caught));
+    }
+  }, []);
+
   return useMemo(
-    () => ({ settings, rawJson, error, saveRawJson, reload }),
-    [settings, rawJson, error, saveRawJson, reload],
+    () => ({ settings, rawJson, error, saveRawJson, saveSettings, reload }),
+    [settings, rawJson, error, saveRawJson, saveSettings, reload],
   );
 }

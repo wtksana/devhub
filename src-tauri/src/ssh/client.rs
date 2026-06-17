@@ -55,10 +55,9 @@ pub fn resolve_auth(
     connection: &ConnectionSettings,
 ) -> Result<ResolvedAuth> {
     match &connection.auth {
-        ConnectionAuthSettings::Password { password_ref } => credential_store
-            .get_secret(password_ref)
-            .map(ResolvedAuth::Password)
-            .map_err(|error| SshClientError::Credential(error.to_string())),
+        ConnectionAuthSettings::Password { password } => {
+            Ok(ResolvedAuth::Password(password.clone()))
+        }
         ConnectionAuthSettings::PrivateKey {
             private_key_path,
             passphrase_ref,

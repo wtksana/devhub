@@ -8,7 +8,7 @@ interface SettingsJsonEditorProps {
   saveRawJson: (value: string) => Promise<void>;
 }
 
-export function SettingsJsonEditor({ rawJson, saveRawJson }: SettingsJsonEditorProps) {
+export function SettingsJsonEditor({ settings, rawJson, saveRawJson }: SettingsJsonEditorProps) {
   const [draft, setDraft] = useState(rawJson);
 
   useEffect(() => {
@@ -32,7 +32,8 @@ export function SettingsJsonEditor({ rawJson, saveRawJson }: SettingsJsonEditorP
           onChange={(value) => setDraft(value ?? "")}
           options={{
             minimap: { enabled: false },
-            fontSize: 13,
+            fontFamily: settings.appearance.ui_font_family,
+            fontSize: 14,
             scrollBeyondLastLine: false,
             wordWrap: "on",
           }}

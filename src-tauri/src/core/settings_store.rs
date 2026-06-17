@@ -9,14 +9,7 @@ use crate::models::settings::DevHubSettings;
 const SETTINGS_FILE: &str = "settings.json";
 const KEYMAP_FILE: &str = "keymap.json";
 const DEFAULT_KEYMAP: &str = "{\n  \"bindings\": []\n}\n";
-const FORBIDDEN_KEYS: &[&str] = &[
-    "password",
-    "passphrase",
-    "api_key",
-    "apiKey",
-    "private_key",
-    "privateKey",
-];
+const FORBIDDEN_KEYS: &[&str] = &["password", "passphrase", "private_key", "privateKey"];
 
 #[derive(Debug, Error)]
 pub enum SettingsStoreError {
@@ -59,7 +52,7 @@ impl SettingsStore {
 
         let raw = fs::read_to_string(settings_path)?;
         let value: Value = serde_json::from_str(&raw)?;
-        reject_sensitive_fields(&value)?;
+        reject_sensitive_fields(&value, &[])?;
 
         Ok(serde_json::from_value(value)?)
     }
@@ -69,7 +62,7 @@ impl SettingsStore {
         self.ensure_keymap_exists()?;
 
         let value = serde_json::to_value(settings)?;
-        reject_sensitive_fields(&value)?;
+        reject_sensitive_fields(&value, &[])?;
 
         let mut json = serde_json::to_string_pretty(settings)?;
         json.push('\n');
@@ -88,23 +81,33 @@ impl SettingsStore {
     }
 }
 
-fn reject_sensitive_fields(value: &Value) -> Result<(), SettingsStoreError> {
+fn reject_sensitive_fields(value: &Value, path: &[String]) -> Result<(), SettingsStoreError> {
     match value {
         Value::Object(object) => {
             for (key, value) in object {
-                if FORBIDDEN_KEYS.contains(&key.as_str()) {
+                let mut next_path = path.to_vec();
+                next_path.push(key.clone());
+                if FORBIDDEN_KEYS.contains(&key.as_str())
+                    && !is_allowed_connection_password_path(&next_path)
+                {
                     return Err(SettingsStoreError::SensitiveField(key.clone()));
                 }
-                reject_sensitive_fields(value)?;
+                reject_sensitive_fields(value, &next_path)?;
             }
         }
         Value::Array(items) => {
-            for item in items {
-                reject_sensitive_fields(item)?;
+            for (index, item) in items.iter().enumerate() {
+                let mut next_path = path.to_vec();
+                next_path.push(index.to_string());
+                reject_sensitive_fields(item, &next_path)?;
             }
         }
         _ => {}
     }
 
     Ok(())
+}
+
+fn is_allowed_connection_password_path(path: &[String]) -> bool {
+    path.len() == 4 && path[0] == "connections" && path[2] == "auth" && path[3] == "password"
 }
