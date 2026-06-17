@@ -1,17 +1,25 @@
-import { render, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { TerminalTab } from "./TerminalTab";
 import { callBackend, listenBackend } from "../../lib/tauri";
+import { readClipboardText, writeClipboardText } from "../../lib/clipboard";
 
 vi.mock("../../lib/tauri", () => ({
   callBackend: vi.fn(),
   listenBackend: vi.fn(),
 }));
 
+vi.mock("../../lib/clipboard", () => ({
+  readClipboardText: vi.fn(),
+  writeClipboardText: vi.fn(),
+}));
+
 const callBackendMock = vi.mocked(callBackend);
 const listenBackendMock = vi.mocked(listenBackend);
+const readClipboardTextMock = vi.mocked(readClipboardText);
+const writeClipboardTextMock = vi.mocked(writeClipboardText);
 
 interface MockTerminal {
   cols: number;
@@ -22,6 +30,8 @@ interface MockTerminal {
   dispose: ReturnType<typeof vi.fn>;
   focus: ReturnType<typeof vi.fn>;
   refresh: ReturnType<typeof vi.fn>;
+  getSelection: ReturnType<typeof vi.fn>;
+  clear: ReturnType<typeof vi.fn>;
 }
 
 interface MockFitAddon {
@@ -48,6 +58,7 @@ class MockResizeObserver {
 
 describe("TerminalTab", () => {
   afterEach(() => {
+    cleanup();
     vi.clearAllMocks();
     MockResizeObserver.instances = [];
     vi.unstubAllGlobals();
@@ -213,5 +224,89 @@ describe("TerminalTab", () => {
     expect(fitAddon.fit).not.toHaveBeenCalled();
     expect(terminal.refresh).not.toHaveBeenCalled();
     expect(callBackendMock).not.toHaveBeenCalledWith("resize_terminal", expect.anything());
+  });
+
+  it("shows terminal actions from the terminal context menu", () => {
+    callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
+    listenBackendMock.mockResolvedValueOnce(vi.fn());
+
+    render(<TerminalTab connectionId="prod-web-01" fontFamily="Maple Mono" fontSize={16} theme="dark" isActive={true} />);
+
+    fireEvent.contextMenu(screen.getByLabelText("SSH 终端"), { clientX: 12, clientY: 24 });
+
+    expect(screen.getByRole("menuitem", { name: "复制" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "粘贴" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "清屏" })).toBeInTheDocument();
+  });
+
+  it("copies the current terminal selection from the context menu", async () => {
+    const browserWriteText = vi.fn();
+    vi.stubGlobal("navigator", { clipboard: { writeText: browserWriteText } });
+    callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
+    listenBackendMock.mockResolvedValueOnce(vi.fn());
+
+    render(<TerminalTab connectionId="prod-web-01" fontFamily="Maple Mono" fontSize={16} theme="dark" isActive={true} />);
+
+    const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
+    terminal.getSelection.mockReturnValue("selected text");
+    terminal.focus.mockClear();
+    fireEvent.contextMenu(screen.getByLabelText("SSH 终端"), { clientX: 12, clientY: 24 });
+    fireEvent.click(screen.getByRole("menuitem", { name: "复制" }));
+
+    expect(writeClipboardTextMock).toHaveBeenCalledWith("selected text");
+    expect(browserWriteText).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(terminal.focus).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("pastes clipboard text into the active backend session from the context menu", async () => {
+    const browserReadText = vi.fn().mockResolvedValue("browser text");
+    vi.stubGlobal("navigator", { clipboard: { readText: browserReadText } });
+    readClipboardTextMock.mockResolvedValue("pwd\r");
+    callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
+    listenBackendMock.mockResolvedValueOnce(vi.fn());
+
+    render(<TerminalTab connectionId="prod-web-01" fontFamily="Maple Mono" fontSize={16} theme="dark" isActive={true} />);
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+        request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
+      });
+    });
+    callBackendMock.mockClear();
+
+    const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
+    terminal.focus.mockClear();
+    fireEvent.contextMenu(screen.getByLabelText("SSH 终端"), { clientX: 12, clientY: 24 });
+    fireEvent.click(screen.getByRole("menuitem", { name: "粘贴" }));
+
+    await waitFor(() => {
+      expect(readClipboardTextMock).toHaveBeenCalledTimes(1);
+      expect(callBackendMock).toHaveBeenCalledWith("write_terminal", {
+        request: { session_id: "session-1", data: "pwd\r" },
+      });
+    });
+    expect(browserReadText).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(terminal.focus).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("clears the terminal display from the context menu", async () => {
+    callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
+    listenBackendMock.mockResolvedValueOnce(vi.fn());
+
+    render(<TerminalTab connectionId="prod-web-01" fontFamily="Maple Mono" fontSize={16} theme="dark" isActive={true} />);
+
+    const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
+    terminal.focus.mockClear();
+    fireEvent.contextMenu(screen.getByLabelText("SSH 终端"), { clientX: 12, clientY: 24 });
+    fireEvent.click(screen.getByRole("menuitem", { name: "清屏" }));
+
+    expect(terminal.clear).toHaveBeenCalledTimes(1);
+    await waitFor(() => {
+      expect(terminal.focus).toHaveBeenCalledTimes(1);
+    });
   });
 });

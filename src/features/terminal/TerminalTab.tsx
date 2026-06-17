@@ -1,7 +1,9 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
+import { ContextMenu, type ContextMenuState } from "../../app/ContextMenu";
+import { readClipboardText, writeClipboardText } from "../../lib/clipboard";
 import { callBackend, listenBackend } from "../../lib/tauri";
 
 interface TerminalTabProps {
@@ -76,10 +78,57 @@ export function TerminalTab({ connectionId, fontFamily, fontSize, theme, isActiv
   const fitAddonRef = useRef<FitAddon | null>(null);
   const sessionIdRef = useRef<string | null>(null);
   const isActiveRef = useRef(isActive);
+  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
 
   useEffect(() => {
     isActiveRef.current = isActive;
   }, [isActive]);
+
+  function copySelection() {
+    const selection = terminalRef.current?.getSelection();
+    if (!selection) return;
+    void writeClipboardText(selection);
+    refocusTerminal();
+  }
+
+  async function pasteClipboard() {
+    try {
+      const sessionId = sessionIdRef.current;
+      if (!sessionId) return;
+      const text = await readClipboardText();
+      if (!text) return;
+      void callBackend<void>("write_terminal", {
+        request: { session_id: sessionId, data: text },
+      });
+    } finally {
+      refocusTerminal();
+    }
+  }
+
+  function clearTerminal() {
+    terminalRef.current?.clear();
+    refocusTerminal();
+  }
+
+  function refocusTerminal() {
+    window.requestAnimationFrame(() => {
+      terminalRef.current?.focus();
+    });
+  }
+
+  function handleContextMenu(event: React.MouseEvent<HTMLDivElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    setContextMenu({
+      x: event.clientX,
+      y: event.clientY,
+      items: [
+        { label: "复制", onSelect: copySelection },
+        { label: "粘贴", onSelect: () => void pasteClipboard() },
+        { label: "清屏", onSelect: clearTerminal },
+      ],
+    });
+  }
 
   function updateContainerTheme(themeName: "dark" | "light") {
     const terminalTheme = terminalThemes[themeName];
@@ -232,5 +281,10 @@ export function TerminalTab({ connectionId, fontFamily, fontSize, theme, isActiv
     });
   }, [isActive]);
 
-  return <div className="terminal-tab" aria-label="SSH 终端" ref={containerRef} />;
+  return (
+    <>
+      <div className="terminal-tab" aria-label="SSH 终端" ref={containerRef} onContextMenu={handleContextMenu} />
+      <ContextMenu menu={contextMenu} onClose={() => setContextMenu(null)} />
+    </>
+  );
 }

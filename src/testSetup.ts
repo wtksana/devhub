@@ -13,6 +13,8 @@ vi.mock("@xterm/xterm", () => ({
     dispose: ReturnType<typeof vi.fn>;
     focus: ReturnType<typeof vi.fn>;
     refresh: ReturnType<typeof vi.fn>;
+    getSelection: ReturnType<typeof vi.fn>;
+    clear: ReturnType<typeof vi.fn>;
     options: Record<string, unknown>;
   }) {
     this.cols = 80;
@@ -26,6 +28,8 @@ vi.mock("@xterm/xterm", () => ({
     this.dispose = vi.fn();
     this.focus = vi.fn();
     this.refresh = vi.fn();
+    this.getSelection = vi.fn(() => "");
+    this.clear = vi.fn();
   }),
 }));
 

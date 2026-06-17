@@ -21,10 +21,24 @@ const connections: ConnectionSettings[] = [
 ];
 
 describe("ConnectionList", () => {
+  function renderConnectionList(props: Partial<React.ComponentProps<typeof ConnectionList>> = {}) {
+    return render(
+      <ConnectionList
+        connections={[]}
+        onOpenTerminal={vi.fn()}
+        onOpenNewTerminal={vi.fn()}
+        onOpenSftp={vi.fn()}
+        onAddConnection={vi.fn()}
+        onUpdateConnection={vi.fn()}
+        {...props}
+      />,
+    );
+  }
+
   it("shows local terminal by default and opens it from the connection list", async () => {
     const onOpenTerminal = vi.fn();
 
-    render(<ConnectionList connections={[]} onOpenTerminal={onOpenTerminal} onAddConnection={vi.fn()} />);
+    renderConnectionList({ onOpenTerminal });
 
     expect(screen.getByText("本地终端")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "终端" })).not.toBeInTheDocument();
@@ -40,13 +54,7 @@ describe("ConnectionList", () => {
   it("opens a modal add SSH connection form and submits a password connection", async () => {
     const onAddConnection = vi.fn();
 
-    const { container } = render(
-      <ConnectionList
-        connections={connections}
-        onOpenTerminal={vi.fn()}
-        onAddConnection={onAddConnection}
-      />,
-    );
+    const { container } = renderConnectionList({ connections, onAddConnection });
     const connectionList = within(container);
 
     await userEvent.click(connectionList.getByRole("button", { name: "添加连接" }));
@@ -76,13 +84,7 @@ describe("ConnectionList", () => {
   it("opens a remote terminal by double clicking a connection row and shows an icon before the name", async () => {
     const onOpenTerminal = vi.fn();
 
-    const { container } = render(
-      <ConnectionList
-        connections={connections}
-        onOpenTerminal={onOpenTerminal}
-        onAddConnection={vi.fn()}
-      />,
-    );
+    const { container } = renderConnectionList({ connections, onOpenTerminal });
     const connectionList = within(container);
 
     const connectionItem = connectionList.getByText("生产 Web").closest("li");

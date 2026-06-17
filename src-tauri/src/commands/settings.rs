@@ -96,7 +96,7 @@ fn parse_windows_font_name(line: &str) -> Option<String> {
         .map_or_else(|| name.trim(), |(family, _)| family.trim());
     let family = strip_font_style_suffixes(family);
 
-    (!family.is_empty()).then(|| family)
+    (!family.is_empty()).then_some(family)
 }
 
 fn strip_font_style_suffixes(font_name: &str) -> String {
@@ -110,7 +110,7 @@ fn strip_font_style_suffixes(font_name: &str) -> String {
                 .strip_suffix(&suffix_lower)
                 .and_then(|candidate| {
                     let end = candidate.trim_end().len();
-                    (end > 0).then(|| family[..end].trim().to_string())
+                    (end > 0).then_some(family[..end].trim().to_string())
                 })
         }) else {
             break;

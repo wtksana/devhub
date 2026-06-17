@@ -1,5 +1,6 @@
 use crate::ssh::session_manager::{
-    drain_terminal_input, local_shell_command, InputDrain, SessionManager, TerminalWorkerMessage,
+    drain_terminal_input, is_ignorable_terminal_read_error, local_shell_command, InputDrain,
+    SessionManager, TerminalWorkerMessage,
 };
 
 #[tokio::test]
@@ -54,4 +55,11 @@ async fn sends_resize_to_terminal_worker() {
             rows: 36
         })
     );
+}
+
+#[test]
+fn treats_transport_read_as_a_transient_ssh_read_error() {
+    let error = std::io::Error::other("transport read");
+
+    assert!(is_ignorable_terminal_read_error(&error));
 }

@@ -1,10 +1,12 @@
 import { useState, type CSSProperties } from "react";
 import { CommandPalette } from "./CommandPalette";
+import { ContextMenu, type ContextMenuState } from "./ContextMenu";
 import { DockPanel } from "./DockPanel";
 import { StatusBar } from "./StatusBar";
 import { WorkspaceTabs, type WorkspaceTabItem } from "./WorkspaceTabs";
 import { ConnectionList } from "../features/connections/ConnectionList";
 import { SettingsPanel } from "../features/settings/SettingsPanel";
+import { SftpWorkspace } from "../features/sftp/SftpWorkspace";
 import { useSettings } from "../features/settings/useSettings";
 import { TerminalWorkspace } from "../features/terminal/TerminalWorkspace";
 
@@ -17,7 +19,12 @@ interface TerminalWorkspaceTab extends WorkspaceTabItem {
   connectionId: string;
 }
 
-type AppWorkspaceTab = SettingsWorkspaceTab | TerminalWorkspaceTab;
+interface SftpWorkspaceTab extends WorkspaceTabItem {
+  kind: "sftp";
+  connectionId: string;
+}
+
+type AppWorkspaceTab = SettingsWorkspaceTab | TerminalWorkspaceTab | SftpWorkspaceTab;
 
 function connectionTitle(connectionId: string, settings: ReturnType<typeof useSettings>["settings"]) {
   if (connectionId === "local") return "本地终端";
@@ -30,6 +37,7 @@ export function AppShell() {
   const [workspaceTabs, setWorkspaceTabs] = useState<AppWorkspaceTab[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
   const [isConnectionPanelVisible, setIsConnectionPanelVisible] = useState(true);
+  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const theme = settings.appearance.theme === "system" ? "dark" : settings.appearance.theme;
   const uiFontSize = settings.appearance.ui_font_size;
   const activeTab = workspaceTabs.find((tab) => tab.id === activeTabId) ?? null;
@@ -52,6 +60,56 @@ export function AppShell() {
           kind: "terminal",
           connectionId,
           title: connectionTitle(connectionId, settings),
+        },
+      ];
+    });
+    setActiveTabId(tabId);
+  }
+
+  function openNewTerminalTab(connectionId: string) {
+    setWorkspaceTabs((tabs) => {
+      const existingCount = tabs.filter((tab) => tab.kind === "terminal" && tab.connectionId === connectionId).length;
+      if (existingCount === 0) {
+        const tabId = `terminal:${connectionId}`;
+        setActiveTabId(tabId);
+        return [
+          ...tabs,
+          {
+            id: tabId,
+            kind: "terminal",
+            connectionId,
+            title: connectionTitle(connectionId, settings),
+          },
+        ];
+      }
+
+      const count = existingCount + 1;
+      const tabId = `terminal:${connectionId}:${Date.now()}`;
+      const title = `${connectionTitle(connectionId, settings)} ${count}`;
+      setActiveTabId(tabId);
+      return [
+        ...tabs,
+        {
+          id: tabId,
+          kind: "terminal",
+          connectionId,
+          title,
+        },
+      ];
+    });
+  }
+
+  function openSftpTab(connectionId: string) {
+    const tabId = `sftp:${connectionId}`;
+    setWorkspaceTabs((tabs) => {
+      if (tabs.some((tab) => tab.id === tabId)) return tabs;
+      return [
+        ...tabs,
+        {
+          id: tabId,
+          kind: "sftp",
+          connectionId,
+          title: `${connectionTitle(connectionId, settings)} SFTP`,
         },
       ];
     });
@@ -83,10 +141,59 @@ export function AppShell() {
     });
   }
 
+  function closeTabs(tabIds: string[]) {
+    setWorkspaceTabs((tabs) => {
+      const nextTabs = tabs.filter((tab) => !tabIds.includes(tab.id));
+      if (activeTabId && tabIds.includes(activeTabId)) {
+        setActiveTabId(nextTabs[nextTabs.length - 1]?.id ?? null);
+      }
+      return nextTabs;
+    });
+  }
+
+  function openTabContextMenu(event: React.MouseEvent, tabId: string) {
+    event.preventDefault();
+    setContextMenu({
+      x: event.clientX,
+      y: event.clientY,
+      items: [
+        { label: "关闭", onSelect: () => closeTab(tabId) },
+        { label: "关闭其他", onSelect: () => closeTabs(workspaceTabs.filter((tab) => tab.id !== tabId).map((tab) => tab.id)) },
+        {
+          label: "关闭左侧",
+          onSelect: () => {
+            const tabIndex = workspaceTabs.findIndex((tab) => tab.id === tabId);
+            closeTabs(workspaceTabs.slice(0, tabIndex).map((tab) => tab.id));
+          },
+        },
+        {
+          label: "关闭右侧",
+          onSelect: () => {
+            const tabIndex = workspaceTabs.findIndex((tab) => tab.id === tabId);
+            closeTabs(workspaceTabs.slice(tabIndex + 1).map((tab) => tab.id));
+          },
+        },
+      ],
+    });
+  }
+
+  function openEmptyWorkspaceContextMenu(event: React.MouseEvent) {
+    event.preventDefault();
+    setContextMenu({
+      x: event.clientX,
+      y: event.clientY,
+      items: [
+        { label: "打开设置", onSelect: openSettingsTab },
+        { label: "显示连接面板", onSelect: () => setIsConnectionPanelVisible(true) },
+      ],
+    });
+  }
+
   return (
     <main
       className="app-shell"
       data-theme={theme}
+      onContextMenu={(event) => event.preventDefault()}
       style={{
         fontFamily: settings.appearance.ui_font_family,
         fontSize: `${uiFontSize}px`,
@@ -110,14 +217,32 @@ export function AppShell() {
                   connections: [...settings.connections, connection],
                 });
               }}
+              onUpdateConnection={(connection) => {
+                void settingsState.saveSettings({
+                  ...settings,
+                  connections: settings.connections.map((item) => (item.id === connection.id ? connection : item)),
+                });
+              }}
               onOpenTerminal={(connectionId) => {
                 openTerminalTab(connectionId);
+              }}
+              onOpenNewTerminal={(connectionId) => {
+                openNewTerminalTab(connectionId);
+              }}
+              onOpenSftp={(connectionId) => {
+                openSftpTab(connectionId);
               }}
             />
           </DockPanel>
         ) : null}
         <section className="workspace" aria-label="工作区">
-          <WorkspaceTabs tabs={workspaceTabs} activeTabId={activeTabId} onSelect={setActiveTabId} onClose={closeTab} />
+          <WorkspaceTabs
+            tabs={workspaceTabs}
+            activeTabId={activeTabId}
+            onSelect={setActiveTabId}
+            onClose={closeTab}
+            onContextMenu={openTabContextMenu}
+          />
           {workspaceTabs.map((tab) => (
             <div key={tab.id} hidden={activeTabId !== tab.id} className="workspace-tab-panel">
               {tab.kind === "terminal" ? (
@@ -129,11 +254,12 @@ export function AppShell() {
                   isActive={activeTabId === tab.id}
                 />
               ) : null}
+              {tab.kind === "sftp" ? <SftpWorkspace connectionId={tab.connectionId} /> : null}
               {tab.kind === "settings" ? <SettingsPanel settingsState={settingsState} /> : null}
             </div>
           ))}
           {!activeTab ? (
-            <section className="workspace-empty">
+            <section className="workspace-empty" onContextMenu={openEmptyWorkspaceContextMenu}>
               <h2>未打开标签</h2>
               <p>请从左侧连接列表打开终端。</p>
             </section>
@@ -144,6 +270,7 @@ export function AppShell() {
         isConnectionPanelVisible={isConnectionPanelVisible}
         onToggleConnectionPanel={() => setIsConnectionPanelVisible((visible) => !visible)}
       />
+      <ContextMenu menu={contextMenu} onClose={() => setContextMenu(null)} />
     </main>
   );
 }

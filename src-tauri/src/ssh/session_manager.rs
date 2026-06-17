@@ -217,10 +217,10 @@ pub fn local_shell_command() -> LocalShellCommand {
                 };
             }
         }
-        return LocalShellCommand {
+        LocalShellCommand {
             program: "cmd.exe".to_string(),
             args: Vec::new(),
-        };
+        }
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -317,8 +317,7 @@ fn run_local_worker(
                 session_id,
                 String::from_utf8_lossy(&buffer[..size]).to_string(),
             ),
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
-            Err(error) if error.kind() == std::io::ErrorKind::TimedOut => {}
+            Err(error) if is_ignorable_terminal_read_error(&error) => {}
             Err(error) => return Err(TerminalSessionError::Io(error.to_string())),
         }
 
@@ -409,8 +408,7 @@ fn run_ssh_worker(
                     String::from_utf8_lossy(&buffer[..size]).to_string(),
                 );
             }
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
-            Err(error) if error.kind() == std::io::ErrorKind::TimedOut => {}
+            Err(error) if is_ignorable_terminal_read_error(&error) => {}
             Err(error) => return Err(TerminalSessionError::Io(error.to_string())),
         }
 
@@ -425,6 +423,13 @@ fn run_ssh_worker(
 
     let _ = channel.close();
     Ok(())
+}
+
+pub fn is_ignorable_terminal_read_error(error: &std::io::Error) -> bool {
+    matches!(
+        error.kind(),
+        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+    ) || error.to_string().contains("transport read")
 }
 
 pub fn drain_terminal_input<W: Write>(

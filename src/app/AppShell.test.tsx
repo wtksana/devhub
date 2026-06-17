@@ -71,6 +71,10 @@ describe("AppShell", () => {
     callBackendMock.mockResolvedValue({ session_id: "session-1" });
   });
 
+  function getConnectionItem(name: string) {
+    return within(screen.getByLabelText("连接列表")).getByText(name).closest("li") as HTMLElement;
+  }
+
   it("renders Zed-style dock, workspace, command, status, and settings regions", () => {
     render(<AppShell />);
 
@@ -216,5 +220,158 @@ describe("AppShell", () => {
         },
       ],
     });
+  });
+
+  it("shows connection context actions for opening, duplicating, editing, and SFTP", async () => {
+    settings = {
+      ...createSettings(),
+      connections: [remoteConnection],
+    };
+
+    render(<AppShell />);
+
+    await userEvent.pointer({ keys: "[MouseRight]", target: getConnectionItem("生产 Web") });
+
+    expect(screen.getByRole("menuitem", { name: "连接" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "新标签连接" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "SFTP" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "编辑" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "复制" })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("menuitem", { name: "连接" }));
+    expect(within(screen.getByLabelText("工作区标签")).getByRole("button", { name: "生产 Web" })).toBeInTheDocument();
+
+    await userEvent.pointer({ keys: "[MouseRight]", target: getConnectionItem("生产 Web") });
+    await userEvent.click(screen.getByRole("menuitem", { name: "新标签连接" }));
+    expect(within(screen.getByLabelText("工作区标签")).getByRole("button", { name: "生产 Web 2" })).toBeInTheDocument();
+
+    await userEvent.pointer({ keys: "[MouseRight]", target: getConnectionItem("生产 Web") });
+    await userEvent.click(screen.getByRole("menuitem", { name: "SFTP" }));
+    expect(within(screen.getByLabelText("工作区标签")).getByRole("button", { name: "生产 Web SFTP" })).toBeInTheDocument();
+    expect(screen.getByLabelText("远程路径")).toBeInTheDocument();
+  });
+
+  it("opens a normal connection tab when new tab connection has no existing terminal tab", async () => {
+    settings = {
+      ...createSettings(),
+      connections: [remoteConnection],
+    };
+
+    render(<AppShell />);
+
+    await userEvent.pointer({ keys: "[MouseRight]", target: getConnectionItem("生产 Web") });
+    await userEvent.click(screen.getByRole("menuitem", { name: "新标签连接" }));
+
+    expect(within(screen.getByLabelText("工作区标签")).getByRole("button", { name: "生产 Web" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.queryByRole("button", { name: "生产 Web 1" })).not.toBeInTheDocument();
+  });
+
+  it("edits and copies an existing connection from the connection context menu", async () => {
+    settings = {
+      ...createSettings(),
+      connections: [remoteConnection],
+    };
+
+    render(<AppShell />);
+
+    await userEvent.pointer({ keys: "[MouseRight]", target: getConnectionItem("生产 Web") });
+    await userEvent.click(screen.getByRole("menuitem", { name: "编辑" }));
+    expect(screen.getByRole("dialog", { name: "编辑 SSH 连接" })).toBeInTheDocument();
+    expect(screen.getByLabelText("连接名称")).toHaveValue("生产 Web");
+
+    await userEvent.clear(screen.getByLabelText("连接名称"));
+    await userEvent.type(screen.getByLabelText("连接名称"), "生产 Web 变更");
+    await userEvent.click(screen.getByRole("button", { name: "保存连接" }));
+
+    expect(saveSettings).toHaveBeenLastCalledWith({
+      ...settings,
+      connections: [
+        {
+          ...remoteConnection,
+          name: "生产 Web 变更",
+        },
+      ],
+    });
+
+    await userEvent.pointer({ keys: "[MouseRight]", target: getConnectionItem("生产 Web") });
+    await userEvent.click(screen.getByRole("menuitem", { name: "复制" }));
+    expect(screen.getByRole("dialog", { name: "复制 SSH 连接" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "保存连接" }));
+
+    expect(saveSettings).toHaveBeenLastCalledWith({
+      ...settings,
+      connections: [
+        remoteConnection,
+        {
+          ...remoteConnection,
+          id: expect.stringMatching(/^ssh-/),
+        },
+      ],
+    });
+  });
+
+  it("shows workspace tab context close actions", async () => {
+    settings = {
+      ...createSettings(),
+      connections: [
+        remoteConnection,
+        { ...remoteConnection, id: "stage-web-01", name: "预发 Web", host: "10.0.0.11" },
+      ],
+    };
+
+    render(<AppShell />);
+
+    await userEvent.dblClick(screen.getByText("生产 Web").closest("li") as HTMLElement);
+    await userEvent.dblClick(screen.getByText("预发 Web").closest("li") as HTMLElement);
+
+    await userEvent.pointer({
+      keys: "[MouseRight]",
+      target: within(screen.getByLabelText("工作区标签")).getByRole("button", { name: "预发 Web" }),
+    });
+
+    expect(screen.getByRole("menuitem", { name: "关闭" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "关闭其他" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "关闭左侧" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "关闭右侧" })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("menuitem", { name: "关闭左侧" }));
+
+    expect(screen.queryByRole("button", { name: "生产 Web" })).not.toBeInTheDocument();
+    expect(within(screen.getByLabelText("工作区标签")).getByRole("button", { name: "预发 Web" })).toBeInTheDocument();
+  });
+
+  it("shows empty workspace context actions for settings and connection panel", async () => {
+    render(<AppShell />);
+
+    await userEvent.click(screen.getByRole("button", { name: "切换连接面板" }));
+    expect(screen.queryByLabelText("连接列表")).not.toBeInTheDocument();
+
+    await userEvent.pointer({ keys: "[MouseRight]", target: screen.getByText("未打开标签").closest("section") as HTMLElement });
+
+    expect(screen.getByRole("menuitem", { name: "打开设置" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "显示连接面板" })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("menuitem", { name: "显示连接面板" }));
+    expect(screen.getByLabelText("连接列表")).toBeInTheDocument();
+
+    await userEvent.pointer({ keys: "[MouseRight]", target: screen.getByText("未打开标签").closest("section") as HTMLElement });
+    await userEvent.click(screen.getByRole("menuitem", { name: "打开设置" }));
+    expect(screen.getByLabelText("设置分类")).toBeInTheDocument();
+  });
+
+  it("prevents the browser context menu in areas without custom context actions", () => {
+    render(<AppShell />);
+
+    const event = new MouseEvent("contextmenu", {
+      bubbles: true,
+      cancelable: true,
+    });
+    screen.getByLabelText("命令面板").dispatchEvent(event);
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
   });
 });
