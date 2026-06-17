@@ -1,4 +1,5 @@
 export type ThemeName = "dark" | "light" | "system";
+export type SftpFileSizeUnit = "bytes" | "auto";
 
 export interface AppearanceSettings {
   theme: ThemeName;
@@ -10,6 +11,10 @@ export interface AppearanceSettings {
 
 export interface LayoutSettings {
   connection_sidebar_width: number;
+}
+
+export interface SftpSettings {
+  file_size_unit: SftpFileSizeUnit;
 }
 
 export interface PasswordAuthSettings {
@@ -38,5 +43,6 @@ export interface ConnectionSettings {
 export interface DevHubSettings {
   appearance: AppearanceSettings;
   layout: LayoutSettings;
+  sftp: SftpSettings;
   connections: ConnectionSettings[];
 }

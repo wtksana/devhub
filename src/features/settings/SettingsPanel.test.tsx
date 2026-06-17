@@ -18,6 +18,9 @@ const settings: DevHubSettings = {
   layout: {
     connection_sidebar_width: 280,
   },
+  sftp: {
+    file_size_unit: "bytes",
+  },
   connections: [],
 };
 
@@ -164,6 +167,19 @@ describe("SettingsPanel", () => {
       layout: {
         ...settings.layout,
         connection_sidebar_width: 320,
+      },
+    });
+  });
+
+  it("saves SFTP file size unit changes", async () => {
+    render(<SettingsPanel />);
+
+    await userEvent.selectOptions(screen.getByLabelText("SFTP 文件大小单位"), "auto");
+
+    expect(saveSettings).toHaveBeenLastCalledWith({
+      ...settings,
+      sftp: {
+        file_size_unit: "auto",
       },
     });
   });

@@ -65,6 +65,9 @@ export const devHubSettingsSchema = z.object({
   layout: z.object({
     connection_sidebar_width: z.number().min(220).max(520),
   }),
+  sftp: z.object({
+    file_size_unit: z.enum(["bytes", "auto"]),
+  }),
   connections: z.array(connectionSchema),
 });
 
@@ -78,6 +81,10 @@ export function parseSettings(value: unknown): DevHubSettings {
         ...settings.appearance,
       };
     }
+    settings.sftp = {
+      file_size_unit: "bytes",
+      ...(settings.sftp && typeof settings.sftp === "object" && !Array.isArray(settings.sftp) ? settings.sftp : {}),
+    };
   }
   return devHubSettingsSchema.parse(value);
 }

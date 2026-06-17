@@ -131,6 +131,16 @@ export function AppShell() {
     setActiveTabId("settings");
   }
 
+  function toggleTheme() {
+    void settingsState.saveSettings({
+      ...settings,
+      appearance: {
+        ...settings.appearance,
+        theme: theme === "dark" ? "light" : "dark",
+      },
+    });
+  }
+
   function closeTab(tabId: string) {
     setWorkspaceTabs((tabs) => {
       const nextTabs = tabs.filter((tab) => tab.id !== tabId);
@@ -205,7 +215,7 @@ export function AppShell() {
         "--terminal-font-size": `${settings.appearance.terminal_font_size}px`,
       } as CSSProperties}
     >
-      <CommandPalette onOpenSettings={openSettingsTab} />
+      <CommandPalette onOpenSettings={openSettingsTab} onToggleTheme={toggleTheme} />
       <div className={bodyClassName}>
         {isConnectionPanelVisible ? (
           <DockPanel side="left" label="连接列表">
@@ -254,7 +264,9 @@ export function AppShell() {
                   isActive={activeTabId === tab.id}
                 />
               ) : null}
-              {tab.kind === "sftp" ? <SftpWorkspace connectionId={tab.connectionId} /> : null}
+              {tab.kind === "sftp" ? (
+                <SftpWorkspace connectionId={tab.connectionId} sizeUnit={settings.sftp.file_size_unit} />
+              ) : null}
               {tab.kind === "settings" ? <SettingsPanel settingsState={settingsState} /> : null}
             </div>
           ))}

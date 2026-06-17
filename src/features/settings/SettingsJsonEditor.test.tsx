@@ -25,6 +25,9 @@ const settings: DevHubSettings = {
   layout: {
     connection_sidebar_width: 280,
   },
+  sftp: {
+    file_size_unit: "bytes",
+  },
   connections: [],
 };
 

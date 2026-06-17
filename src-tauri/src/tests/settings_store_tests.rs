@@ -19,6 +19,7 @@ fn creates_default_settings_when_missing() {
         "JetBrains Mono"
     );
     assert_eq!(value["layout"]["connection_sidebar_width"], 280);
+    assert_eq!(value["sftp"]["file_size_unit"], "bytes");
     assert!(value.get("ai").is_none());
     assert!(store.settings_path().exists());
 }

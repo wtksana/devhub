@@ -1,14 +1,188 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
-use ssh2::FileStat;
+use ssh2::{FileStat, Session, Sftp};
+use thiserror::Error;
+use tokio::sync::Mutex;
+use uuid::Uuid;
 
 use crate::core::credential_store::CredentialStore;
 use crate::core::settings_store::SettingsStore;
 use crate::models::sftp::SftpEntry;
-use crate::ssh::client::connect_from_stores;
+use crate::ssh::client::{connect_from_stores, SshClientError};
 
 type Result<T> = std::result::Result<T, String>;
+
+#[derive(Debug, Error)]
+pub enum SftpSessionError {
+    #[error("connection not found: {0}")]
+    ConnectionNotFound(String),
+    #[error("credential error: {0}")]
+    Credential(String),
+    #[error("settings error: {0}")]
+    Settings(String),
+    #[error("sftp session not found: {0}")]
+    SessionNotFound(String),
+    #[error("ssh error: {0}")]
+    Ssh(String),
+    #[error("io error: {0}")]
+    Io(String),
+}
+
+type SessionResult<T> = std::result::Result<T, SftpSessionError>;
+
+#[derive(Clone, Default)]
+pub struct SftpSessionManager {
+    sessions: Arc<Mutex<HashMap<String, ManagedSftpSession>>>,
+}
+
+struct ManagedSftpSession {
+    _connection_id: String,
+    _ssh: Option<Session>,
+    sftp: Option<Sftp>,
+}
+
+impl SftpSessionManager {
+    pub async fn create_placeholder(&self, connection_id: String) -> String {
+        let session_id = Uuid::new_v4().to_string();
+        self.sessions.lock().await.insert(
+            session_id.clone(),
+            ManagedSftpSession::placeholder(connection_id),
+        );
+        session_id
+    }
+
+    pub async fn open_session(
+        &self,
+        settings_store: SettingsStore,
+        credential_store: CredentialStore,
+        connection_id: String,
+    ) -> SessionResult<String> {
+        let managed_session = tokio::task::spawn_blocking(move || {
+            let (ssh, _) = connect_from_stores(
+                &settings_store,
+                &credential_store,
+                &connection_id,
+                Duration::from_secs(20),
+                Duration::from_secs(20),
+            )?;
+            let sftp = ssh.sftp()?;
+            Ok::<ManagedSftpSession, SftpSessionError>(ManagedSftpSession {
+                _connection_id: connection_id,
+                _ssh: Some(ssh),
+                sftp: Some(sftp),
+            })
+        })
+        .await
+        .map_err(|error| SftpSessionError::Io(error.to_string()))??;
+
+        let session_id = Uuid::new_v4().to_string();
+        self.sessions
+            .lock()
+            .await
+            .insert(session_id.clone(), managed_session);
+        Ok(session_id)
+    }
+
+    pub async fn has_session(&self, session_id: &str) -> bool {
+        self.sessions.lock().await.contains_key(session_id)
+    }
+
+    pub async fn close(&self, session_id: &str) {
+        self.sessions.lock().await.remove(session_id);
+    }
+
+    pub async fn list_directory(
+        &self,
+        session_id: &str,
+        path: &str,
+    ) -> SessionResult<Vec<SftpEntry>> {
+        let entries = self
+            .with_sftp(session_id, |sftp| sftp.readdir(Path::new(path)))
+            .await?;
+        Ok(entries
+            .into_iter()
+            .map(|(entry_path, stat)| to_entry(path, entry_path, stat))
+            .collect())
+    }
+
+    pub async fn delete_path(&self, session_id: &str, path: &str) -> SessionResult<()> {
+        self.with_sftp(session_id, |sftp| {
+            let remote_path = Path::new(path);
+            match sftp.stat(remote_path)?.file_type() {
+                file_type if file_type.is_dir() => sftp.rmdir(remote_path),
+                _ => sftp.unlink(remote_path),
+            }
+        })
+        .await
+    }
+
+    pub async fn rename_path(&self, session_id: &str, from: &str, to: &str) -> SessionResult<()> {
+        self.with_sftp(session_id, |sftp| {
+            sftp.rename(Path::new(from), Path::new(to), None)
+        })
+        .await
+    }
+
+    pub async fn create_directory(&self, session_id: &str, path: &str) -> SessionResult<()> {
+        self.with_sftp(session_id, |sftp| sftp.mkdir(Path::new(path), 0o755))
+            .await
+    }
+
+    pub async fn create_file(&self, session_id: &str, path: &str) -> SessionResult<()> {
+        self.with_sftp(session_id, |sftp| sftp.create(Path::new(path)).map(|_| ()))
+            .await
+    }
+
+    async fn with_sftp<T>(
+        &self,
+        session_id: &str,
+        operation: impl FnOnce(&Sftp) -> std::result::Result<T, ssh2::Error>,
+    ) -> SessionResult<T> {
+        let sessions = self.sessions.lock().await;
+        let Some(session) = sessions.get(session_id) else {
+            return Err(SftpSessionError::SessionNotFound(session_id.to_string()));
+        };
+
+        let Some(sftp) = session.sftp.as_ref() else {
+            return Err(SftpSessionError::SessionNotFound(session_id.to_string()));
+        };
+
+        Ok(operation(sftp)?)
+    }
+}
+
+impl ManagedSftpSession {
+    fn placeholder(connection_id: String) -> Self {
+        Self {
+            _connection_id: connection_id,
+            _ssh: None,
+            sftp: None,
+        }
+    }
+}
+
+impl From<SshClientError> for SftpSessionError {
+    fn from(error: SshClientError) -> Self {
+        match error {
+            SshClientError::ConnectionNotFound(connection_id) => {
+                SftpSessionError::ConnectionNotFound(connection_id)
+            }
+            SshClientError::Credential(message) => SftpSessionError::Credential(message),
+            SshClientError::Settings(message) => SftpSessionError::Settings(message),
+            SshClientError::Ssh(message) => SftpSessionError::Ssh(message),
+            SshClientError::Io(message) => SftpSessionError::Io(message),
+        }
+    }
+}
+
+impl From<ssh2::Error> for SftpSessionError {
+    fn from(error: ssh2::Error) -> Self {
+        SftpSessionError::Ssh(error.to_string())
+    }
+}
 
 pub async fn list_directory(
     settings_store: SettingsStore,

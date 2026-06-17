@@ -4,7 +4,7 @@
 
 ## 目标
 
-构建第一版 DevHub 桌面 MVP：基于 Tauri 2、Rust、React 和 TypeScript，实现可迁移设置、连接管理、SSH 终端和 SFTP 文件管理。
+构建第一版 DevHub 桌面 MVP：基于 Tauri 2、Rust、React 和 TypeScript，实现可迁移设置、连接管理、SSH 终端和 SFTP 基础文件管理器。
 
 ## 技术栈
 
@@ -15,6 +15,7 @@
 - 设置编辑：Monaco Editor。
 - 配置校验：Zod 与 Rust 侧 serde 校验。
 - SSH/SFTP：`ssh2` / libssh2。
+- 文件选择和保存：Tauri 对话框插件与 Rust 后端文件流。
 - 凭据存储：系统凭据存储，通过 `keyring` 访问，保留给私钥口令等后续凭据场景。
 
 ## 模块边界
@@ -115,6 +116,77 @@
 - 删除 OpenAI 兼容 HTTP 依赖。
 - 更新文档和验收清单。
 
+### 任务 14：连接面板交互完善
+
+- 连接面板默认展示本地终端连接。
+- 添加连接改为弹窗表单。
+- 连接项双击直接打开终端标签。
+- 移除连接项内显式的“终端”“SFTP”按钮。
+- SSH 连接项名称前展示终端图标。
+- 支持通过“复制”连接打开添加连接弹窗并填入原连接信息。
+
+### 任务 15：右键菜单和终端操作
+
+- 添加通用右键菜单组件 `ContextMenu`。
+- 未定义右键菜单的区域统一阻止浏览器默认菜单，不显示浏览器菜单。
+- 连接项右键菜单支持：连接、新标签连接、SFTP、编辑、复制。
+- 工作区标签右键菜单支持：关闭、关闭其他、关闭左侧、关闭右侧。
+- 空白工作区右键菜单支持：打开设置、显示连接面板。
+- 终端区域右键菜单支持：复制、粘贴、清屏。
+- 终端复制和粘贴使用 Tauri 剪贴板插件，不使用浏览器 `navigator.clipboard`，避免 WebView 权限弹窗。
+- 粘贴和清屏后焦点自动回到 xterm。
+- SSH 终端读取中的 `transport read` 归类为瞬时读错误，不直接输出到终端中断会话。
+
+### 任务 16：仓库开发方式调整
+
+- 后续直接在 `C:\Dev\devhub` 的 `main` 分支开发。
+- 已移除 `.worktrees` 工作区目录。
+- 不再使用 `devhub-mvp` worktree 作为日常开发目录。
+
+### 任务 17：SFTP 会话生命周期
+
+- 新增后端 `SftpSessionManager`。
+- 打开 SFTP 标签时创建 `sftp_session_id`。
+- SFTP 操作统一基于 `sftp_session_id`，不再每次操作都创建短连接。
+- 关闭 SFTP 标签时调用 `close_sftp_session`。
+- 后端会话持有真实 SSH/SFTP handle，目录读取复用该会话。
+- 添加 Rust 测试覆盖会话创建、关闭和不存在会话错误。
+
+### 任务 18：SFTP 文件管理器导航
+
+- 前端 `SftpWorkspace` 维护当前路径、地址栏路径、后退栈和前进栈。
+- 支持双击文件夹进入目录。
+- 支持地址栏输入路径并跳转。
+- 支持后退、前进、刷新。
+- 列目录时展示加载状态和错误信息。
+- 添加前端测试覆盖路径跳转、历史栈和刷新行为。
+
+### 任务 19：SFTP 基础文件操作
+
+- 支持新建文件夹。
+- 支持新建空文件。
+- 支持重命名文件或目录。
+- 支持删除文件或目录。
+- 支持复制远程路径到剪贴板。
+- 基础操作统一使用 `sftp_session_id`，复用已打开的 SFTP 会话。
+- 支持右键菜单：
+  - 空白处：上传文件入口、刷新、新建文件夹、新建文件。
+  - 文件夹：打开、下载入口、重命名、复制路径、删除。
+  - 文件：下载入口、重命名、复制路径、删除。
+- 删除操作需要确认，避免误删。
+- 添加前端和 Rust 测试覆盖命令参数、菜单项和错误展示。
+
+## 待完成任务
+
+### 任务 20：SFTP 上传、下载和传输队列
+
+- 上传文件使用 Tauri 文件选择器选择本地文件。
+- 下载文件使用 Tauri 保存对话框选择本地保存位置。
+- 后端以流式方式上传和下载，避免把大文件读入前端内存。
+- 传输队列展示文件名、方向、状态、错误信息。
+- 关闭 SFTP 标签时取消未完成任务。
+- 第一版只做单文件上传、单文件下载；上传文件夹、拖拽上传和批量操作暂缓。
+
 ## 自动验证命令
 
 每次合并前至少运行：
@@ -122,7 +194,7 @@
 ```powershell
 pnpm test
 pnpm build
-pnpm run test:rust
+pnpm test:rust
 cargo fmt --manifest-path src-tauri\Cargo.toml --check
 cargo clippy --manifest-path src-tauri\Cargo.toml --all-targets -- -D warnings
 ```
@@ -132,6 +204,7 @@ cargo clippy --manifest-path src-tauri\Cargo.toml --all-targets -- -D warnings
 - 前端测试通过。
 - 前端构建通过。
 - Rust 测试通过。
+- Rust clippy 通过。
 - Vite 仍提示 chunk size 较大，来源主要是 Monaco/xterm 等大依赖，不阻塞 MVP。
 
 ## 手动验收重点
@@ -150,6 +223,10 @@ cargo clippy --manifest-path src-tauri\Cargo.toml --all-targets -- -D warnings
 - SSH agent。
 - SSH tunnel。
 - SFTP sudo 写入。
+- SFTP 压缩和解压缩。
+- SFTP 上传文件夹。
+- SFTP 拖拽上传。
+- SFTP 远程编辑文件内容。
 - 完整数据库管理。
 - Redis 管理。
 - Docker / Kubernetes 管理。
@@ -157,7 +234,8 @@ cargo clippy --manifest-path src-tauri\Cargo.toml --all-targets -- -D warnings
 
 ## 下一阶段建议
 
-1. 做真实 SSH、SFTP 手动验收。
-2. 修复手动验收暴露的问题。
-3. 合并 `devhub-mvp` 到 `master`。
-4. 开始第二阶段：数据库连接管理、Redis 管理、连接编辑器完善、传输队列和 UI 细节打磨。
+1. 实现任务 20：SFTP 上传、下载和传输队列。
+2. 做真实 SSH、SFTP 和右键菜单手动验收。
+3. 修复手动验收暴露的问题。
+4. 完善连接编辑器字段，覆盖密码、私钥、私钥口令和 sudo 使用说明。
+5. 开始第二阶段：数据库连接管理、Redis 管理、SSH tunnel、跳板机、Docker 等能力。

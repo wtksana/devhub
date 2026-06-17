@@ -10,6 +10,7 @@ mod tests;
 use crate::core::credential_store::CredentialStore;
 use crate::core::settings_store::SettingsStore;
 use crate::ssh::session_manager::SessionManager;
+use crate::ssh::sftp_manager::SftpSessionManager;
 use tauri::image::Image;
 use tauri::Manager;
 
@@ -33,6 +34,7 @@ pub fn run() {
             app.manage(SettingsStore::new_for_dir(app_dir));
             app.manage(CredentialStore::new("devhub"));
             app.manage(SessionManager::default());
+            app.manage(SftpSessionManager::default());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -46,6 +48,13 @@ pub fn run() {
             commands::terminal::write_terminal,
             commands::terminal::resize_terminal,
             commands::terminal::close_terminal,
+            commands::sftp::open_sftp_session,
+            commands::sftp::close_sftp_session,
+            commands::sftp::list_sftp_directory,
+            commands::sftp::delete_sftp_path,
+            commands::sftp::rename_sftp_path,
+            commands::sftp::create_sftp_directory,
+            commands::sftp::create_sftp_file,
             commands::sftp::list_directory,
             commands::sftp::delete_path,
             commands::sftp::rename_path,

@@ -22,6 +22,9 @@ function createSettings(): DevHubSettings {
     layout: {
       connection_sidebar_width: 280,
     },
+    sftp: {
+      file_size_unit: "bytes",
+    },
     connections: [],
   };
 }
@@ -104,6 +107,40 @@ describe("AppShell", () => {
 
     expect(screen.queryByLabelText("设置分类")).not.toBeInTheDocument();
     expect(screen.getByText("未打开标签")).toBeInTheDocument();
+  });
+
+  it("toggles dark and light theme from the top bar", async () => {
+    render(<AppShell />);
+
+    await userEvent.click(screen.getByRole("button", { name: "切换主题" }));
+
+    expect(saveSettings).toHaveBeenCalledWith({
+      ...settings,
+      appearance: {
+        ...settings.appearance,
+        theme: "light",
+      },
+    });
+
+    settings = {
+      ...settings,
+      appearance: {
+        ...settings.appearance,
+        theme: "light",
+      },
+    };
+
+    cleanup();
+    render(<AppShell />);
+    await userEvent.click(screen.getByRole("button", { name: "切换主题" }));
+
+    expect(saveSettings).toHaveBeenLastCalledWith({
+      ...settings,
+      appearance: {
+        ...settings.appearance,
+        theme: "dark",
+      },
+    });
   });
 
   it("applies appearance settings to the shell immediately", () => {
@@ -227,6 +264,12 @@ describe("AppShell", () => {
       ...createSettings(),
       connections: [remoteConnection],
     };
+    callBackendMock.mockImplementation((command) => {
+      if (command === "list_sftp_directory") {
+        return Promise.resolve([]);
+      }
+      return Promise.resolve({ session_id: "session-1" });
+    });
 
     render(<AppShell />);
 

@@ -1,11 +1,14 @@
+import themeIcon from "../assets/icons/bi--brilliance.png";
+import settingsIcon from "../assets/icons/bi--gear-wide-connected.png";
 import { WindowControls } from "./WindowControls";
 import { getSafeCurrentWindow } from "./windowRuntime";
 
 interface CommandPaletteProps {
   onOpenSettings: () => void;
+  onToggleTheme: () => void;
 }
 
-export function CommandPalette({ onOpenSettings }: CommandPaletteProps) {
+export function CommandPalette({ onOpenSettings, onToggleTheme }: CommandPaletteProps) {
   const appWindow = getSafeCurrentWindow();
 
   return (
@@ -25,11 +28,23 @@ export function CommandPalette({ onOpenSettings }: CommandPaletteProps) {
       </span>
       <button
         type="button"
+        className="command-palette__icon-button"
+        aria-label="切换主题"
+        onMouseDown={(event) => event.stopPropagation()}
+        onDoubleClick={(event) => event.stopPropagation()}
+        onClick={onToggleTheme}
+      >
+        <img src={themeIcon} alt="" aria-hidden="true" />
+      </button>
+      <button
+        type="button"
+        className="command-palette__icon-button"
+        aria-label="打开设置"
         onMouseDown={(event) => event.stopPropagation()}
         onDoubleClick={(event) => event.stopPropagation()}
         onClick={onOpenSettings}
       >
-        打开设置
+        <img src={settingsIcon} alt="" aria-hidden="true" />
       </button>
       <WindowControls />
     </section>

@@ -114,7 +114,7 @@ export function ConnectionList({
         <div className="connection-dialog__backdrop">
           <div className="connection-dialog" role="dialog" aria-modal="true" aria-labelledby="connection-dialog-title">
             <form className="connection-form" onSubmit={submitConnection}>
-              <header>
+              <header className="connection-dialog__header">
                 <h3 id="connection-dialog-title">{dialogTitle(dialogMode)}</h3>
                 <button type="button" aria-label="关闭添加连接弹窗" onClick={closeConnectionDialog}>
                   ×

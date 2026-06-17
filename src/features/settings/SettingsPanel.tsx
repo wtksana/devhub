@@ -2,10 +2,10 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNod
 import { SettingsJsonEditor } from "./SettingsJsonEditor";
 import { KeymapEditor } from "./KeymapEditor";
 import { useSettings } from "./useSettings";
-import type { DevHubSettings, ThemeName } from "./settingsTypes";
+import type { DevHubSettings, SftpFileSizeUnit, ThemeName } from "./settingsTypes";
 import { callBackend } from "../../lib/tauri";
 
-const navItems = ["通用", "外观", "布局", "连接", "快捷键", "settings.json"] as const;
+const navItems = ["通用", "外观", "布局", "连接", "SFTP", "快捷键", "settings.json"] as const;
 type SettingsCategory = (typeof navItems)[number];
 type SettingsState = ReturnType<typeof useSettings>;
 const fallbackFonts = ["Inter", "Segoe UI", "Zed Sans", "JetBrains Mono", "Consolas"];
@@ -93,6 +93,7 @@ function SettingsPanelView({ settingsState }: { settingsState: SettingsState }) 
     外观: null,
     布局: null,
     连接: null,
+    SFTP: null,
     快捷键: null,
     "settings.json": null,
   });
@@ -150,6 +151,16 @@ function SettingsPanelView({ settingsState }: { settingsState: SettingsState }) 
       layout: {
         ...draftSettings.layout,
         ...nextLayout,
+      },
+    });
+  }
+
+  function updateSftp(nextSftp: Partial<DevHubSettings["sftp"]>) {
+    updateSettings({
+      ...draftSettings,
+      sftp: {
+        ...draftSettings.sftp,
+        ...nextSftp,
       },
     });
   }
@@ -312,6 +323,28 @@ function SettingsPanelView({ settingsState }: { settingsState: SettingsState }) 
           </header>
           <SettingsRow title="连接配置" description="服务器、数据库和 Redis 连接会写入 settings.json。">
             <span className="settings-value">{connectionSummary}</span>
+          </SettingsRow>
+        </section>
+
+        <section
+          className="settings-section"
+          aria-labelledby="settings-sftp-heading"
+          ref={(element) => {
+            sectionRefs.current["SFTP"] = element;
+          }}
+        >
+          <header>
+            <h2 id="settings-sftp-heading">SFTP</h2>
+          </header>
+          <SettingsRow title="文件大小单位" description="控制 SFTP 文件列表中的大小显示方式。">
+            <select
+              aria-label="SFTP 文件大小单位"
+              value={draftSettings.sftp.file_size_unit}
+              onChange={(event) => updateSftp({ file_size_unit: event.target.value as SftpFileSizeUnit })}
+            >
+              <option value="bytes">B</option>
+              <option value="auto">B / KB / MB</option>
+            </select>
           </SettingsRow>
         </section>
 

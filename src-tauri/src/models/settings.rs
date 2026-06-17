@@ -20,6 +20,16 @@ pub struct LayoutSettings {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SftpSettings {
+    #[serde(default = "default_sftp_file_size_unit")]
+    pub file_size_unit: String,
+}
+
+fn default_sftp_file_size_unit() -> String {
+    "bytes".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type")]
 pub enum ConnectionAuthSettings {
     #[serde(rename = "password")]
@@ -48,7 +58,17 @@ pub struct ConnectionSettings {
 pub struct DevHubSettings {
     pub appearance: AppearanceSettings,
     pub layout: LayoutSettings,
+    #[serde(default)]
+    pub sftp: SftpSettings,
     pub connections: Vec<ConnectionSettings>,
+}
+
+impl Default for SftpSettings {
+    fn default() -> Self {
+        Self {
+            file_size_unit: default_sftp_file_size_unit(),
+        }
+    }
 }
 
 impl Default for DevHubSettings {
@@ -64,6 +84,7 @@ impl Default for DevHubSettings {
             layout: LayoutSettings {
                 connection_sidebar_width: 280,
             },
+            sftp: SftpSettings::default(),
             connections: Vec::new(),
         }
     }

@@ -14,6 +14,9 @@ describe("settings schema", () => {
       layout: {
         connection_sidebar_width: 280,
       },
+      sftp: {
+        file_size_unit: "auto",
+      },
       connections: [
         {
           id: "prod-web-01",
@@ -32,6 +35,7 @@ describe("settings schema", () => {
     });
 
     expect(settings.connections[0].auth.type).toBe("private_key");
+    expect(settings.sftp.file_size_unit).toBe("auto");
   });
 
   it("rejects sensitive values inside settings json", () => {
@@ -130,5 +134,6 @@ describe("settings schema", () => {
     });
 
     expect(settings.appearance.ui_font_size).toBe(13);
+    expect(settings.sftp.file_size_unit).toBe("bytes");
   });
 });
