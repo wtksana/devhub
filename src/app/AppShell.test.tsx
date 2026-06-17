@@ -139,7 +139,7 @@ describe("AppShell", () => {
     };
 
     render(<AppShell />);
-    await userEvent.click(within(screen.getByLabelText("连接列表")).getByRole("button", { name: "终端" }));
+    await userEvent.dblClick(within(screen.getByLabelText("连接列表")).getByText("本地终端").closest("li") as HTMLElement);
 
     const shell = screen.getByRole("main");
     expect(shell).toHaveStyle({
@@ -155,9 +155,7 @@ describe("AppShell", () => {
 
     render(<AppShell />);
 
-    await userEvent.click(
-      within(screen.getByText("生产 Web").closest("li") as HTMLElement).getByRole("button", { name: "终端" }),
-    );
+    await userEvent.dblClick(screen.getByText("生产 Web").closest("li") as HTMLElement);
 
     expect(within(screen.getByLabelText("工作区标签")).getByRole("button", { name: "生产 Web" })).toHaveAttribute(
       "aria-pressed",
@@ -172,7 +170,7 @@ describe("AppShell", () => {
 
   it("toggles panels from the status bar", async () => {
     render(<AppShell />);
-    await userEvent.click(within(screen.getByLabelText("连接列表")).getByRole("button", { name: "终端" }));
+    await userEvent.dblClick(within(screen.getByLabelText("连接列表")).getByText("本地终端").closest("li") as HTMLElement);
 
     expect(screen.getByLabelText("连接列表")).toBeInTheDocument();
 

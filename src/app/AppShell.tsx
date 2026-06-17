@@ -113,9 +113,6 @@ export function AppShell() {
               onOpenTerminal={(connectionId) => {
                 openTerminalTab(connectionId);
               }}
-              onOpenSftp={() => {
-                setActiveTabId(null);
-              }}
             />
           </DockPanel>
         ) : null}

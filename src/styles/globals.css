@@ -440,11 +440,27 @@ p {
   overflow: auto;
 }
 
+.connection-dialog__backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  background: rgb(0 0 0 / 42%);
+}
+
+.connection-dialog {
+  width: min(420px, calc(100vw - 48px));
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--panel);
+  box-shadow: 0 18px 48px rgb(0 0 0 / 32%);
+}
+
 .connection-form {
   display: grid;
-  gap: 8px;
-  padding: 10px;
-  border-bottom: 1px solid var(--border-subtle);
+  gap: 10px;
+  padding: 12px;
 }
 
 .connection-form label {
@@ -467,6 +483,34 @@ p {
   justify-self: end;
 }
 
+.connection-form header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: -12px -12px 2px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.connection-form h3 {
+  font-size: var(--panel-header-font-size);
+  font-weight: 650;
+}
+
+.connection-form header button {
+  width: 28px;
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+}
+
+.connection-form footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 2px;
+}
+
 .connection-list li {
   display: grid;
   gap: 5px;
@@ -479,7 +523,17 @@ p {
 }
 
 .connection-list strong {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
   font-size: var(--ui-font-size, 13px);
+}
+
+.connection-list strong img {
+  width: 17px;
+  height: 17px;
+  flex: 0 0 auto;
 }
 
 .connection-list span,
