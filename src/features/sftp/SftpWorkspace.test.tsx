@@ -1,9 +1,11 @@
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SftpWorkspace } from "./SftpWorkspace";
 import { callBackend } from "../../lib/tauri";
 import { writeClipboardText } from "../../lib/clipboard";
+import { pickDownloadPath, pickUploadFile } from "../../lib/fileDialog";
+import { listenSftpTransferProgress } from "../../lib/tauriEvents";
 
 vi.mock("../../lib/tauri", () => ({
   callBackend: vi.fn(),
@@ -13,14 +15,36 @@ vi.mock("../../lib/clipboard", () => ({
   writeClipboardText: vi.fn(),
 }));
 
+vi.mock("../../lib/fileDialog", () => ({
+  pickUploadFile: vi.fn(),
+  pickDownloadPath: vi.fn(),
+}));
+
+vi.mock("../../lib/tauriEvents", () => ({
+  listenSftpTransferProgress: vi.fn(),
+}));
+
 const callBackendMock = vi.mocked(callBackend);
 const writeClipboardTextMock = vi.mocked(writeClipboardText);
+const pickUploadFileMock = vi.mocked(pickUploadFile);
+const pickDownloadPathMock = vi.mocked(pickDownloadPath);
+const listenSftpTransferProgressMock = vi.mocked(listenSftpTransferProgress);
 
 describe("SftpWorkspace", () => {
+  let progressHandler: ((payload: { transfer_id: string; progress: number }) => void) | null = null;
+
   afterEach(() => {
     cleanup();
     vi.clearAllMocks();
     vi.unstubAllGlobals();
+    progressHandler = null;
+  });
+
+  beforeEach(() => {
+    listenSftpTransferProgressMock.mockImplementation((handler) => {
+      progressHandler = handler;
+      return Promise.resolve(() => undefined);
+    });
   });
 
   function mockOpenSession(entries: unknown[] = []) {
@@ -334,6 +358,167 @@ describe("SftpWorkspace", () => {
     expect(promptSpy).not.toHaveBeenCalled();
   });
 
+  it("uploads a selected local file into the current directory", async () => {
+    mockOpenSession();
+    pickUploadFileMock.mockResolvedValue("C:\\Users\\ttat\\Desktop\\app.log");
+    callBackendMock.mockResolvedValueOnce(undefined);
+    callBackendMock.mockResolvedValueOnce([
+      {
+        name: "app.log",
+        path: "/app.log",
+        kind: "file",
+        size: 128,
+      },
+    ]);
+
+    render(<SftpWorkspace connectionId="prod-web-01" />);
+
+    await waitForInitialLoad();
+    await userEvent.pointer({ keys: "[MouseRight]", target: screen.getByLabelText("SFTP 文件列表") });
+    await userEvent.click(screen.getByRole("menuitem", { name: "上传文件" }));
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("upload_sftp_file", {
+        request: {
+          session_id: "sftp-session-1",
+          transfer_id: "transfer-1",
+          local_path: "C:\\Users\\ttat\\Desktop\\app.log",
+          remote_path: "/app.log",
+          overwrite: false,
+        },
+      });
+    });
+    expect(await screen.findByText("app.log")).toBeInTheDocument();
+    expect(screen.getByText("app.log 上传完成")).toBeInTheDocument();
+  });
+
+  it("asks before overwriting an existing remote file during upload", async () => {
+    mockOpenSession([
+      {
+        name: "app.log",
+        path: "/app.log",
+        kind: "file",
+        size: 128,
+      },
+    ]);
+    pickUploadFileMock.mockResolvedValue("C:\\Users\\ttat\\Desktop\\app.log");
+    callBackendMock.mockResolvedValueOnce(undefined);
+    callBackendMock.mockResolvedValueOnce([
+      {
+        name: "app.log",
+        path: "/app.log",
+        kind: "file",
+        size: 256,
+      },
+    ]);
+
+    render(<SftpWorkspace connectionId="prod-web-01" />);
+
+    await waitForInitialLoad();
+    await userEvent.pointer({ keys: "[MouseRight]", target: screen.getByLabelText("SFTP 文件列表") });
+    await userEvent.click(screen.getByRole("menuitem", { name: "上传文件" }));
+
+    expect(screen.getByRole("dialog", { name: "确认覆盖" })).toBeInTheDocument();
+    expect(screen.getByText("app.log 已存在，是否覆盖？")).toBeInTheDocument();
+    expect(callBackendMock).not.toHaveBeenCalledWith("upload_sftp_file", expect.anything());
+
+    await userEvent.click(screen.getByRole("button", { name: "覆盖" }));
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("upload_sftp_file", {
+        request: {
+          session_id: "sftp-session-1",
+          transfer_id: "transfer-1",
+          local_path: "C:\\Users\\ttat\\Desktop\\app.log",
+          remote_path: "/app.log",
+          overwrite: true,
+        },
+      });
+    });
+  });
+
+  it("downloads a remote file to the selected local path", async () => {
+    mockOpenSession([
+      {
+        name: "app.log",
+        path: "/app.log",
+        kind: "file",
+        size: 128,
+      },
+    ]);
+    pickDownloadPathMock.mockResolvedValue("C:\\Users\\ttat\\Downloads\\app.log");
+    callBackendMock.mockResolvedValueOnce(undefined);
+
+    render(<SftpWorkspace connectionId="prod-web-01" />);
+
+    await waitForInitialLoad();
+    await userEvent.pointer({ keys: "[MouseRight]", target: await screen.findByText("app.log") });
+    await userEvent.click(screen.getByRole("menuitem", { name: "下载" }));
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("download_sftp_file", {
+        request: {
+          session_id: "sftp-session-1",
+          transfer_id: "transfer-1",
+          remote_path: "/app.log",
+          local_path: "C:\\Users\\ttat\\Downloads\\app.log",
+        },
+      });
+    });
+    expect(screen.getByText("app.log 下载完成")).toBeInTheDocument();
+  });
+
+  it("shows compact transfer failure text", async () => {
+    mockOpenSession([
+      {
+        name: "tzbh",
+        path: "/tzbh",
+        kind: "file",
+        size: 128,
+      },
+    ]);
+    pickDownloadPathMock.mockResolvedValue("C:\\Users\\ttat\\Downloads\\tzbh");
+    callBackendMock.mockRejectedValueOnce(new Error("io error: failure"));
+
+    render(<SftpWorkspace connectionId="prod-web-01" />);
+
+    await waitForInitialLoad();
+    await userEvent.pointer({ keys: "[MouseRight]", target: await screen.findByText("tzbh") });
+    await userEvent.click(screen.getByRole("menuitem", { name: "下载" }));
+
+    expect(await screen.findByText("tzbh 下载失败 io error: failure")).toBeInTheDocument();
+  });
+
+  it("renders transfer progress updates from backend events", async () => {
+    mockOpenSession([
+      {
+        name: "spring.log.2026-05-29.6",
+        path: "/spring.log.2026-05-29.6",
+        kind: "file",
+        size: 128,
+      },
+    ]);
+    pickDownloadPathMock.mockResolvedValue("C:\\Users\\ttat\\Downloads\\spring.log.2026-05-29.6");
+    let resolveDownload!: () => void;
+    callBackendMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveDownload = () => resolve(undefined);
+        }),
+    );
+
+    render(<SftpWorkspace connectionId="prod-web-01" />);
+
+    await waitForInitialLoad();
+    await userEvent.pointer({ keys: "[MouseRight]", target: await screen.findByText("spring.log.2026-05-29.6") });
+    await userEvent.click(screen.getByRole("menuitem", { name: "下载" }));
+
+    progressHandler?.({ transfer_id: "transfer-1", progress: 30 });
+
+    expect(await screen.findByText("spring.log.2026-05-29.6 传输中...30%")).toBeInTheDocument();
+    resolveDownload();
+  });
+
   it("shows blank area actions from the reserved table action area", async () => {
     mockOpenSession([
       {
@@ -503,5 +688,12 @@ describe("SftpWorkspace", () => {
         request: { session_id: "sftp-session-1" },
       });
     });
+  });
+
+  it("keeps the transfer queue in a fixed scrollable area", () => {
+    mockOpenSession();
+    render(<SftpWorkspace connectionId="prod-web-01" />);
+
+    expect(screen.getByLabelText("传输队列")).toHaveClass("transfer-queue");
   });
 });

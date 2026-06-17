@@ -968,6 +968,46 @@ p {
   background: color-mix(in srgb, var(--danger) 84%, var(--button-hover));
 }
 
+.transfer-queue {
+  flex: 0 0 112px;
+  min-height: 112px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+}
+
+.transfer-queue h3 {
+  height: 30px;
+  margin: 0;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: var(--panel-header-font-size);
+  line-height: 30px;
+}
+
+.transfer-queue p,
+.transfer-queue ul {
+  margin: 0;
+}
+
+.transfer-queue ul {
+  max-height: 80px;
+  padding: 6px 10px;
+  overflow: auto;
+}
+
+.transfer-queue li {
+  min-height: 22px;
+  list-style: none;
+  color: var(--text);
+}
+
+.transfer-queue p {
+  padding: 8px 10px;
+  color: var(--muted);
+}
+
 .terminal-tab {
   width: 100%;
   height: 100%;

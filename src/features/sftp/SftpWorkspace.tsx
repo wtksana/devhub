@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ContextMenu, type ContextMenuState } from "../../app/ContextMenu";
 import { writeClipboardText } from "../../lib/clipboard";
+import { pickDownloadPath, pickUploadFile } from "../../lib/fileDialog";
 import { callBackend } from "../../lib/tauri";
+import { listenSftpTransferProgress } from "../../lib/tauriEvents";
 import type { SftpFileSizeUnit } from "../settings/settingsTypes";
 import type { SftpEntry } from "./sftpTypes";
-import { TransferQueue } from "./TransferQueue";
+import { TransferQueue, type TransferTask } from "./TransferQueue";
 
 interface SftpWorkspaceProps {
   connectionId: string | null;
@@ -17,6 +19,11 @@ type SftpDialogState =
   | { kind: "create-directory"; title: "新建文件夹"; initialValue: ""; entry?: undefined }
   | { kind: "create-file"; title: "新建文件"; initialValue: ""; entry?: undefined }
   | { kind: "rename"; title: "重命名"; initialValue: string; entry: SftpEntry };
+type PendingUpload = {
+  localPath: string;
+  name: string;
+  remotePath: string;
+};
 
 function normalizeRemotePath(value: string) {
   const path = value.trim().replace(/\\/g, "/");
@@ -58,6 +65,10 @@ function getDeleteConfirmationText(entry: SftpEntry) {
   return `确认删除 ${entry.name}${entry.kind === "directory" ? " 文件夹" : ""}？`;
 }
 
+function localFileName(path: string) {
+  return path.split(/[\\/]/).filter(Boolean).pop() ?? "未命名文件";
+}
+
 export function SftpWorkspace({ connectionId, sizeUnit = "bytes" }: SftpWorkspaceProps) {
   const [path, setPath] = useState("/");
   const [addressPath, setAddressPath] = useState("/");
@@ -72,7 +83,10 @@ export function SftpWorkspace({ connectionId, sizeUnit = "bytes" }: SftpWorkspac
   const [dialog, setDialog] = useState<SftpDialogState | null>(null);
   const [dialogName, setDialogName] = useState("");
   const [deleteCandidate, setDeleteCandidate] = useState<SftpEntry | null>(null);
+  const [pendingUpload, setPendingUpload] = useState<PendingUpload | null>(null);
+  const [transferTasks, setTransferTasks] = useState<TransferTask[]>([]);
   const initialLoadSessionRef = useRef<string | null>(null);
+  const transferSeqRef = useRef(0);
 
   const sortedEntries = useMemo(() => {
     if (!sort) return entries;
@@ -107,6 +121,9 @@ export function SftpWorkspace({ connectionId, sizeUnit = "bytes" }: SftpWorkspac
     initialLoadSessionRef.current = null;
     setDialog(null);
     setDeleteCandidate(null);
+    setPendingUpload(null);
+    setTransferTasks([]);
+    transferSeqRef.current = 0;
 
     void callBackend<{ session_id: string }>("open_sftp_session", {
       request: { connection_id: connectionId },
@@ -136,6 +153,15 @@ export function SftpWorkspace({ connectionId, sizeUnit = "bytes" }: SftpWorkspac
       }
     };
   }, [connectionId]);
+
+  useEffect(() => {
+    const unlisten = listenSftpTransferProgress((payload) => {
+      updateTransferTask(payload.transfer_id, { progress: payload.progress });
+    });
+    return () => {
+      void unlisten.then((dispose) => dispose());
+    };
+  }, []);
 
   const loadPath = useCallback(async (nextPath: string) => {
     if (!sessionId) return;
@@ -298,13 +324,83 @@ export function SftpWorkspace({ connectionId, sizeUnit = "bytes" }: SftpWorkspac
     setDeleteCandidate(null);
   }
 
+  function updateTransferTask(id: string, patch: Partial<TransferTask>) {
+    setTransferTasks((tasks) => tasks.map((task) => (task.id === id ? { ...task, ...patch } : task)));
+  }
+
+  function nextTransferId() {
+    transferSeqRef.current += 1;
+    return `transfer-${transferSeqRef.current}`;
+  }
+
+  async function uploadFile() {
+    if (!sessionId) return;
+    const localPath = await pickUploadFile();
+    if (!localPath) return;
+    const name = localFileName(localPath);
+    const remotePath = joinRemotePath(path, name);
+    if (entries.some((entry) => entry.name === name)) {
+      setPendingUpload({ localPath, name, remotePath });
+      return;
+    }
+    await uploadSelectedFile({ localPath, name, remotePath }, false);
+  }
+
+  async function uploadSelectedFile(upload: PendingUpload, overwrite: boolean) {
+    if (!sessionId) return;
+    const taskId = nextTransferId();
+    setTransferTasks((tasks) => [{ id: taskId, name: upload.name, direction: "upload", status: "running" }, ...tasks]);
+    try {
+      await callBackend("upload_sftp_file", {
+        request: {
+          session_id: sessionId,
+          transfer_id: taskId,
+          local_path: upload.localPath,
+          remote_path: upload.remotePath,
+          overwrite,
+        },
+      });
+      updateTransferTask(taskId, { status: "completed", progress: 100 });
+      await refresh();
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : String(caught);
+      updateTransferTask(taskId, { status: "failed", error: message });
+      setError(message);
+    }
+  }
+
+  async function confirmUploadOverwrite() {
+    if (!pendingUpload) return;
+    const upload = pendingUpload;
+    setPendingUpload(null);
+    await uploadSelectedFile(upload, true);
+  }
+
+  async function downloadFile(entry: SftpEntry) {
+    if (!sessionId) return;
+    const localPath = await pickDownloadPath(entry.name);
+    if (!localPath) return;
+    const taskId = nextTransferId();
+    setTransferTasks((tasks) => [{ id: taskId, name: entry.name, direction: "download", status: "running" }, ...tasks]);
+    try {
+      await callBackend("download_sftp_file", {
+        request: { session_id: sessionId, transfer_id: taskId, remote_path: entry.path, local_path: localPath },
+      });
+      updateTransferTask(taskId, { status: "completed", progress: 100 });
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : String(caught);
+      updateTransferTask(taskId, { status: "failed", error: message });
+      setError(message);
+    }
+  }
+
   function openBlankContextMenu(event: React.MouseEvent) {
     event.preventDefault();
     setContextMenu({
       x: event.clientX,
       y: event.clientY,
       items: [
-        { label: "上传文件", onSelect: () => undefined },
+        { label: "上传文件", onSelect: () => void uploadFile() },
         { label: "刷新", onSelect: () => void refresh() },
         { label: "新建文件夹", onSelect: () => openDialog({ kind: "create-directory", title: "新建文件夹", initialValue: "" }) },
         { label: "新建文件", onSelect: () => openDialog({ kind: "create-file", title: "新建文件", initialValue: "" }) },
@@ -316,7 +412,7 @@ export function SftpWorkspace({ connectionId, sizeUnit = "bytes" }: SftpWorkspac
     event.preventDefault();
     event.stopPropagation();
     const items = [
-      { label: "下载", onSelect: () => undefined },
+      { label: "下载", onSelect: () => void downloadFile(entry) },
       { label: "重命名", onSelect: () => openDialog({ kind: "rename", title: "重命名", initialValue: entry.name, entry }) },
       { label: "复制路径", onSelect: () => void writeClipboardText(entry.path) },
       { label: "删除", onSelect: () => setDeleteCandidate(entry) },
@@ -408,7 +504,7 @@ export function SftpWorkspace({ connectionId, sizeUnit = "bytes" }: SftpWorkspac
         </table>
         <div className="sftp-blank-action-area" aria-label="SFTP 空白操作区" onContextMenu={openBlankContextMenu} />
       </div>
-      <TransferQueue />
+      <TransferQueue tasks={transferTasks} />
       <ContextMenu menu={contextMenu} onClose={() => setContextMenu(null)} />
       {dialog ? (
         <div className="connection-dialog__backdrop" role="presentation" onPointerDown={closeDialog}>
@@ -467,6 +563,34 @@ export function SftpWorkspace({ connectionId, sizeUnit = "bytes" }: SftpWorkspac
                 </button>
                 <button type="button" className="sftp-dialog__danger-button" onClick={() => void confirmDeleteEntry()}>
                   确认
+                </button>
+              </div>
+            </div>
+          </section>
+        </div>
+      ) : null}
+      {pendingUpload ? (
+        <div className="connection-dialog__backdrop" role="presentation" onPointerDown={() => setPendingUpload(null)}>
+          <section
+            className="connection-dialog sftp-dialog"
+            role="dialog"
+            aria-label="确认覆盖"
+            onPointerDown={(event) => event.stopPropagation()}
+          >
+            <div className="connection-form">
+              <header className="connection-dialog__header">
+                <h2>确认覆盖</h2>
+                <button type="button" onClick={() => setPendingUpload(null)} aria-label="关闭">
+                  ×
+                </button>
+              </header>
+              <p>{pendingUpload.name} 已存在，是否覆盖？</p>
+              <div className="sftp-dialog__actions">
+                <button type="button" onClick={() => setPendingUpload(null)}>
+                  取消
+                </button>
+                <button type="button" className="sftp-dialog__danger-button" onClick={() => void confirmUploadOverwrite()}>
+                  覆盖
                 </button>
               </div>
             </div>

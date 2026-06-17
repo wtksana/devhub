@@ -24,6 +24,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             if let Some(window) = app.get_webview_window("main") {
                 let icon = Image::from_bytes(include_bytes!("../icons/128x128.png"))?;
@@ -55,6 +56,8 @@ pub fn run() {
             commands::sftp::rename_sftp_path,
             commands::sftp::create_sftp_directory,
             commands::sftp::create_sftp_file,
+            commands::sftp::upload_sftp_file,
+            commands::sftp::download_sftp_file,
             commands::sftp::list_directory,
             commands::sftp::delete_path,
             commands::sftp::rename_path,

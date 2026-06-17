@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -29,6 +30,8 @@ pub enum SftpSessionError {
     Ssh(String),
     #[error("io error: {0}")]
     Io(String),
+    #[error("remote path already exists: {0}")]
+    RemotePathExists(String),
 }
 
 type SessionResult<T> = std::result::Result<T, SftpSessionError>;
@@ -100,7 +103,7 @@ impl SftpSessionManager {
         path: &str,
     ) -> SessionResult<Vec<SftpEntry>> {
         let entries = self
-            .with_sftp(session_id, |sftp| sftp.readdir(Path::new(path)))
+            .with_sftp(session_id, |sftp| Ok(sftp.readdir(Path::new(path))?))
             .await?;
         Ok(entries
             .into_iter()
@@ -112,34 +115,80 @@ impl SftpSessionManager {
         self.with_sftp(session_id, |sftp| {
             let remote_path = Path::new(path);
             match sftp.stat(remote_path)?.file_type() {
-                file_type if file_type.is_dir() => sftp.rmdir(remote_path),
-                _ => sftp.unlink(remote_path),
-            }
+                file_type if file_type.is_dir() => sftp.rmdir(remote_path)?,
+                _ => sftp.unlink(remote_path)?,
+            };
+            Ok(())
         })
         .await
     }
 
     pub async fn rename_path(&self, session_id: &str, from: &str, to: &str) -> SessionResult<()> {
-        self.with_sftp(session_id, |sftp| {
-            sftp.rename(Path::new(from), Path::new(to), None)
-        })
-        .await
+        self.with_sftp(session_id, |sftp| Ok(sftp.rename(Path::new(from), Path::new(to), None)?))
+            .await
     }
 
     pub async fn create_directory(&self, session_id: &str, path: &str) -> SessionResult<()> {
-        self.with_sftp(session_id, |sftp| sftp.mkdir(Path::new(path), 0o755))
+        self.with_sftp(session_id, |sftp| Ok(sftp.mkdir(Path::new(path), 0o755)?))
             .await
     }
 
     pub async fn create_file(&self, session_id: &str, path: &str) -> SessionResult<()> {
-        self.with_sftp(session_id, |sftp| sftp.create(Path::new(path)).map(|_| ()))
-            .await
+        self.with_sftp(session_id, |sftp| {
+            sftp.create(Path::new(path))?;
+            Ok(())
+        })
+        .await
+    }
+
+    pub async fn upload_file(
+        &self,
+        session_id: &str,
+        local_path: &str,
+        remote_path: &str,
+        overwrite: bool,
+        on_progress: impl FnMut(u8),
+    ) -> SessionResult<()> {
+        let local_path = PathBuf::from(local_path);
+        self.with_sftp(session_id, |sftp| {
+            let remote_path_ref = Path::new(remote_path);
+            if !overwrite && sftp.stat(remote_path_ref).is_ok() {
+                return Err(SftpSessionError::RemotePathExists(remote_path.to_string()));
+            }
+            let total_size = std::fs::metadata(&local_path)?.len();
+            let mut local_file = std::fs::File::open(&local_path)?;
+            let mut remote_file = sftp.create(remote_path_ref)?;
+            copy_with_progress(&mut local_file, &mut remote_file, total_size, on_progress)?;
+            Ok(())
+        })
+        .await
+    }
+
+    pub async fn download_file(
+        &self,
+        session_id: &str,
+        remote_path: &str,
+        local_path: &str,
+        on_progress: impl FnMut(u8),
+    ) -> SessionResult<()> {
+        let local_path = PathBuf::from(local_path);
+        self.with_sftp(session_id, |sftp| {
+            let total_size = sftp
+                .stat(Path::new(remote_path))?
+                .size
+                .unwrap_or_default();
+            let mut remote_file = sftp.open(Path::new(remote_path))?;
+            let mut local_file = std::fs::File::create(&local_path)?;
+            copy_with_progress(&mut remote_file, &mut local_file, total_size, on_progress)?;
+            Ok(())
+        })
+        .await
     }
 
     async fn with_sftp<T>(
         &self,
         session_id: &str,
-        operation: impl FnOnce(&Sftp) -> std::result::Result<T, ssh2::Error>,
+        operation: impl FnOnce(&Sftp) -> SessionResult<T>,
     ) -> SessionResult<T> {
         let sessions = self.sessions.lock().await;
         let Some(session) = sessions.get(session_id) else {
@@ -150,7 +199,7 @@ impl SftpSessionManager {
             return Err(SftpSessionError::SessionNotFound(session_id.to_string()));
         };
 
-        Ok(operation(sftp)?)
+        operation(sftp)
     }
 }
 
@@ -181,6 +230,12 @@ impl From<SshClientError> for SftpSessionError {
 impl From<ssh2::Error> for SftpSessionError {
     fn from(error: ssh2::Error) -> Self {
         SftpSessionError::Ssh(error.to_string())
+    }
+}
+
+impl From<std::io::Error> for SftpSessionError {
+    fn from(error: std::io::Error) -> Self {
+        SftpSessionError::Io(error.to_string())
     }
 }
 
@@ -326,4 +381,38 @@ fn join_remote_path(parent: &str, name: &str) -> String {
     } else {
         format!("{}/{}", parent.trim_end_matches('/'), name)
     }
+}
+
+fn copy_with_progress(
+    reader: &mut impl Read,
+    writer: &mut impl Write,
+    total_size: u64,
+    mut on_progress: impl FnMut(u8),
+) -> std::io::Result<()> {
+    let mut buffer = [0_u8; 64 * 1024];
+    let mut copied = 0_u64;
+    let mut last_progress = 0_u8;
+
+    on_progress(0);
+    loop {
+        let bytes_read = reader.read(&mut buffer)?;
+        if bytes_read == 0 {
+            break;
+        }
+        writer.write_all(&buffer[..bytes_read])?;
+        copied += bytes_read as u64;
+        let progress = copied
+            .saturating_mul(100)
+            .checked_div(total_size)
+            .unwrap_or(100)
+            .min(100) as u8;
+        if progress != last_progress {
+            last_progress = progress;
+            on_progress(progress);
+        }
+    }
+    if last_progress != 100 {
+        on_progress(100);
+    }
+    Ok(())
 }

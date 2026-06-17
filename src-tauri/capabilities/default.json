@@ -12,6 +12,8 @@
     "core:window:allow-toggle-maximize",
     "clipboard-manager:allow-read-text",
     "clipboard-manager:allow-write-text",
+    "dialog:allow-open",
+    "dialog:allow-save",
     "opener:default"
   ]
 }

@@ -30,6 +30,29 @@ pub struct SftpSessionRenameRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SftpUploadFileRequest {
+    pub session_id: String,
+    pub transfer_id: String,
+    pub local_path: String,
+    pub remote_path: String,
+    pub overwrite: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SftpDownloadFileRequest {
+    pub session_id: String,
+    pub transfer_id: String,
+    pub remote_path: String,
+    pub local_path: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SftpTransferProgress {
+    pub transfer_id: String,
+    pub progress: u8,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SftpSessionResponse {
     pub session_id: String,
 }

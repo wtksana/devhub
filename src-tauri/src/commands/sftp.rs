@@ -1,11 +1,12 @@
-use tauri::State;
+use tauri::{AppHandle, Emitter, State};
 
 use crate::core::credential_store::CredentialStore;
 use crate::core::settings_store::SettingsStore;
 use crate::models::sftp::{
     CreateDirectoryRequest, DeletePathRequest, ListDirectoryRequest, OpenSftpSessionRequest,
     RenamePathRequest, SftpEntry, SftpSessionPathRequest, SftpSessionRenameRequest,
-    SftpSessionRequest, SftpSessionResponse,
+    SftpDownloadFileRequest, SftpSessionRequest, SftpSessionResponse, SftpTransferProgress,
+    SftpUploadFileRequest,
 };
 use crate::ssh::sftp_manager::{self, SftpSessionManager};
 
@@ -87,6 +88,59 @@ pub async fn create_sftp_file(
 ) -> Result<(), String> {
     sessions
         .create_file(&request.session_id, &request.path)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn upload_sftp_file(
+    app: AppHandle,
+    sessions: State<'_, SftpSessionManager>,
+    request: SftpUploadFileRequest,
+) -> Result<(), String> {
+    let transfer_id = request.transfer_id.clone();
+    sessions
+        .upload_file(
+            &request.session_id,
+            &request.local_path,
+            &request.remote_path,
+            request.overwrite,
+            move |progress| {
+                let _ = app.emit(
+                    "sftp-transfer-progress",
+                    SftpTransferProgress {
+                        transfer_id: transfer_id.clone(),
+                        progress,
+                    },
+                );
+            },
+        )
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn download_sftp_file(
+    app: AppHandle,
+    sessions: State<'_, SftpSessionManager>,
+    request: SftpDownloadFileRequest,
+) -> Result<(), String> {
+    let transfer_id = request.transfer_id.clone();
+    sessions
+        .download_file(
+            &request.session_id,
+            &request.remote_path,
+            &request.local_path,
+            move |progress| {
+                let _ = app.emit(
+                    "sftp-transfer-progress",
+                    SftpTransferProgress {
+                        transfer_id: transfer_id.clone(),
+                        progress,
+                    },
+                );
+            },
+        )
         .await
         .map_err(|error| error.to_string())
 }
