@@ -221,6 +221,13 @@ export function AppShell() {
           <DockPanel side="left" label="连接列表">
             <ConnectionList
               connections={settings.connections}
+              connectionGroups={settings.connection_groups}
+              onUpdateConnectionGroups={(connectionGroups) => {
+                void settingsState.saveSettings({
+                  ...settings,
+                  connection_groups: connectionGroups,
+                });
+              }}
               onAddConnection={(connection) => {
                 void settingsState.saveSettings({
                   ...settings,

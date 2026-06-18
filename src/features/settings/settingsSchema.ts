@@ -25,7 +25,12 @@ function assertNoSensitiveKeys(value: unknown, path: string[] = []): void {
 }
 
 function isAllowedSensitivePath(path: string[]): boolean {
-  return path.length === 4 && path[0] === "connections" && path[2] === "auth" && path[3] === "password";
+  return (
+    path.length === 4 &&
+    path[0] === "connections" &&
+    path[2] === "auth" &&
+    (path[3] === "password" || path[3] === "passphrase")
+  );
 }
 
 const authSchema = z.discriminatedUnion("type", [
@@ -36,7 +41,7 @@ const authSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("private_key"),
     private_key_path: z.string().min(1),
-    passphrase_ref: z.string().min(1).optional(),
+    passphrase: z.string().optional(),
   }),
 ]);
 
@@ -68,6 +73,7 @@ export const devHubSettingsSchema = z.object({
   sftp: z.object({
     file_size_unit: z.enum(["bytes", "auto"]),
   }),
+  connection_groups: z.array(z.string().min(1)),
   connections: z.array(connectionSchema),
 });
 
@@ -85,6 +91,7 @@ export function parseSettings(value: unknown): DevHubSettings {
       file_size_unit: "bytes",
       ...(settings.sftp && typeof settings.sftp === "object" && !Array.isArray(settings.sftp) ? settings.sftp : {}),
     };
+    settings.connection_groups = Array.isArray(settings.connection_groups) ? settings.connection_groups : [];
   }
   return devHubSettingsSchema.parse(value);
 }

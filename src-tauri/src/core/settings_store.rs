@@ -88,7 +88,7 @@ fn reject_sensitive_fields(value: &Value, path: &[String]) -> Result<(), Setting
                 let mut next_path = path.to_vec();
                 next_path.push(key.clone());
                 if FORBIDDEN_KEYS.contains(&key.as_str())
-                    && !is_allowed_connection_password_path(&next_path)
+                    && !is_allowed_connection_secret_path(&next_path)
                 {
                     return Err(SettingsStoreError::SensitiveField(key.clone()));
                 }
@@ -108,6 +108,9 @@ fn reject_sensitive_fields(value: &Value, path: &[String]) -> Result<(), Setting
     Ok(())
 }
 
-fn is_allowed_connection_password_path(path: &[String]) -> bool {
-    path.len() == 4 && path[0] == "connections" && path[2] == "auth" && path[3] == "password"
+fn is_allowed_connection_secret_path(path: &[String]) -> bool {
+    path.len() == 4
+        && path[0] == "connections"
+        && path[2] == "auth"
+        && (path[3] == "password" || path[3] == "passphrase")
 }

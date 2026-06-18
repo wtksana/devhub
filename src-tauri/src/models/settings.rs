@@ -38,7 +38,7 @@ pub enum ConnectionAuthSettings {
     PrivateKey {
         private_key_path: String,
         #[serde(skip_serializing_if = "Option::is_none")]
-        passphrase_ref: Option<String>,
+        passphrase: Option<String>,
     },
 }
 
@@ -60,6 +60,8 @@ pub struct DevHubSettings {
     pub layout: LayoutSettings,
     #[serde(default)]
     pub sftp: SftpSettings,
+    #[serde(default)]
+    pub connection_groups: Vec<String>,
     pub connections: Vec<ConnectionSettings>,
 }
 
@@ -85,6 +87,7 @@ impl Default for DevHubSettings {
                 connection_sidebar_width: 280,
             },
             sftp: SftpSettings::default(),
+            connection_groups: Vec::new(),
             connections: Vec::new(),
         }
     }

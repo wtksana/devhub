@@ -88,7 +88,7 @@ fn omits_empty_connection_group() {
 }
 
 #[test]
-fn omits_empty_private_key_passphrase_ref() {
+fn omits_empty_private_key_passphrase() {
     let dir = tempdir().unwrap();
     let store = SettingsStore::new_for_dir(dir.path().to_path_buf());
     let mut settings = DevHubSettings::default();
@@ -101,12 +101,42 @@ fn omits_empty_private_key_passphrase_ref() {
         username: "dev".to_string(),
         auth: ConnectionAuthSettings::PrivateKey {
             private_key_path: "~/.ssh/id_ed25519".to_string(),
-            passphrase_ref: None,
+            passphrase: None,
         },
     });
 
     store.save(&settings).unwrap();
 
     let raw = std::fs::read_to_string(store.settings_path()).unwrap();
-    assert!(!raw.contains("passphrase_ref"));
+    assert!(!raw.contains("passphrase"));
+}
+
+#[test]
+fn saves_private_key_passphrase_in_settings() {
+    let dir = tempdir().unwrap();
+    let store = SettingsStore::new_for_dir(dir.path().to_path_buf());
+    let mut settings = DevHubSettings::default();
+    settings.connections.push(ConnectionSettings {
+        id: "dev".to_string(),
+        name: "Dev".to_string(),
+        group: Some("staging".to_string()),
+        host: "localhost".to_string(),
+        port: 22,
+        username: "dev".to_string(),
+        auth: ConnectionAuthSettings::PrivateKey {
+            private_key_path: "~/.ssh/id_ed25519".to_string(),
+            passphrase: Some("key-passphrase".to_string()),
+        },
+    });
+
+    store.save(&settings).unwrap();
+    let loaded = store.load_or_create().unwrap();
+
+    assert_eq!(
+        loaded.connections[0].auth,
+        ConnectionAuthSettings::PrivateKey {
+            private_key_path: "~/.ssh/id_ed25519".to_string(),
+            passphrase: Some("key-passphrase".to_string())
+        }
+    );
 }

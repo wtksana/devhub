@@ -8,6 +8,14 @@ export async function pickUploadFile() {
   return typeof selected === "string" ? selected : null;
 }
 
+export async function pickPrivateKeyFile() {
+  const selected = await open({
+    multiple: false,
+    directory: false,
+  });
+  return typeof selected === "string" ? selected : null;
+}
+
 export async function pickUploadDirectory() {
   const selected = await open({
     multiple: false,

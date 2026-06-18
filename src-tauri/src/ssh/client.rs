@@ -51,7 +51,7 @@ pub fn load_connection(
 }
 
 pub fn resolve_auth(
-    credential_store: &CredentialStore,
+    _credential_store: &CredentialStore,
     connection: &ConnectionSettings,
 ) -> Result<ResolvedAuth> {
     match &connection.auth {
@@ -60,18 +60,11 @@ pub fn resolve_auth(
         }
         ConnectionAuthSettings::PrivateKey {
             private_key_path,
-            passphrase_ref,
-        } => {
-            let passphrase = passphrase_ref
-                .as_ref()
-                .map(|id| credential_store.get_secret(id))
-                .transpose()
-                .map_err(|error| SshClientError::Credential(error.to_string()))?;
-            Ok(ResolvedAuth::PrivateKey {
-                private_key_path: private_key_path.clone(),
-                passphrase,
-            })
-        }
+            passphrase,
+        } => Ok(ResolvedAuth::PrivateKey {
+            private_key_path: private_key_path.clone(),
+            passphrase: passphrase.clone(),
+        }),
     }
 }
 

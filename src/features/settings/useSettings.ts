@@ -17,6 +17,7 @@ const defaultSettings: DevHubSettings = {
   sftp: {
     file_size_unit: "bytes",
   },
+  connection_groups: [],
   connections: [],
 };
 

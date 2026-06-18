@@ -25,7 +25,7 @@ export interface PasswordAuthSettings {
 export interface PrivateKeyAuthSettings {
   type: "private_key";
   private_key_path: string;
-  passphrase_ref?: string;
+  passphrase?: string;
 }
 
 export type ConnectionAuthSettings = PasswordAuthSettings | PrivateKeyAuthSettings;
@@ -44,5 +44,6 @@ export interface DevHubSettings {
   appearance: AppearanceSettings;
   layout: LayoutSettings;
   sftp: SftpSettings;
+  connection_groups: string[];
   connections: ConnectionSettings[];
 }

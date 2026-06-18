@@ -7,6 +7,11 @@ export type ContextMenuItem =
       onSelect: () => void;
     }
   | {
+      type: "submenu";
+      label: string;
+      items: ContextMenuItem[];
+    }
+  | {
       type: "separator";
     }
   | {
@@ -73,6 +78,48 @@ export function ContextMenu({ menu, onClose }: ContextMenuProps) {
           return (
             <div key={`label-${index}-${item.label}`} className="context-menu__label">
               {item.label}
+            </div>
+          );
+        }
+        if (item.type === "submenu") {
+          return (
+            <div key={`submenu-${index}-${item.label}`} className="context-menu__submenu" data-hover-bridge="true">
+              <button type="button" role="menuitem" aria-haspopup="menu">
+                {item.label}
+              </button>
+              <div
+                className="context-menu context-menu__submenu-panel"
+                role="menu"
+                aria-label={`${item.label} 子菜单`}
+                data-visible-on-hover="true"
+              >
+                {item.items.map((child, childIndex) => {
+                  if (child.type === "separator") {
+                    return <div key={`separator-${childIndex}`} className="context-menu__separator" role="separator" />;
+                  }
+                  if (child.type === "label") {
+                    return (
+                      <div key={`label-${childIndex}-${child.label}`} className="context-menu__label">
+                        {child.label}
+                      </div>
+                    );
+                  }
+                  if (child.type === "submenu") return null;
+                  return (
+                    <button
+                      key={`action-${childIndex}-${child.label}`}
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        child.onSelect();
+                        onClose();
+                      }}
+                    >
+                      {child.label}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           );
         }

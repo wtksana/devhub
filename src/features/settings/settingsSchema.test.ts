@@ -17,6 +17,7 @@ describe("settings schema", () => {
       sftp: {
         file_size_unit: "auto",
       },
+      connection_groups: ["production"],
       connections: [
         {
           id: "prod-web-01",
@@ -28,7 +29,7 @@ describe("settings schema", () => {
           auth: {
             type: "private_key",
             private_key_path: "C:\\Users\\user\\.ssh\\id_ed25519",
-            passphrase_ref: "ssh:prod-web-01:passphrase",
+            passphrase: "key-passphrase",
           },
         },
       ],
@@ -36,6 +37,7 @@ describe("settings schema", () => {
 
     expect(settings.connections[0].auth.type).toBe("private_key");
     expect(settings.sftp.file_size_unit).toBe("auto");
+    expect(settings.connection_groups).toEqual(["production"]);
   });
 
   it("rejects sensitive values inside settings json", () => {
@@ -135,5 +137,6 @@ describe("settings schema", () => {
 
     expect(settings.appearance.ui_font_size).toBe(16);
     expect(settings.sftp.file_size_unit).toBe("bytes");
+    expect(settings.connection_groups).toEqual([]);
   });
 });

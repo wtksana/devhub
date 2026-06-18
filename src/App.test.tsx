@@ -18,6 +18,7 @@ vi.mock("@tauri-apps/api/core", () => ({
     sftp: {
       file_size_unit: "bytes",
     },
+    connection_groups: [],
     connections: [],
   }),
 }));
