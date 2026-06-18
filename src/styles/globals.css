@@ -878,6 +878,7 @@ p {
 }
 
 .sftp-table-scroll {
+  position: relative;
   display: flex;
   flex-direction: column;
   flex: 1;
@@ -886,6 +887,24 @@ p {
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--panel);
+}
+
+.sftp-table-scroll--drag-over {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 9%, var(--panel));
+}
+
+.sftp-drop-overlay {
+  position: absolute;
+  inset: 10px;
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  border: 1px dashed var(--accent);
+  border-radius: 6px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--panel) 78%, transparent);
+  pointer-events: none;
 }
 
 .sftp-workspace table {

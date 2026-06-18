@@ -5,6 +5,8 @@ import { SftpWorkspace } from "./SftpWorkspace";
 import { callBackend } from "../../lib/tauri";
 import { writeClipboardText } from "../../lib/clipboard";
 import { pickDownloadDirectory, pickDownloadPath, pickUploadDirectory, pickUploadFile } from "../../lib/fileDialog";
+import { listenLocalDragDrop } from "../../lib/tauriDragDrop";
+import type { LocalDragDropEvent } from "../../lib/tauriDragDrop";
 import { listenSftpTransferProgress } from "../../lib/tauriEvents";
 
 vi.mock("../../lib/tauri", () => ({
@@ -26,12 +28,21 @@ vi.mock("../../lib/tauriEvents", () => ({
   listenSftpTransferProgress: vi.fn(),
 }));
 
+let dragDropHandler:
+  | ((event: LocalDragDropEvent) => void)
+  | null = null;
+
+vi.mock("../../lib/tauriDragDrop", () => ({
+  listenLocalDragDrop: vi.fn(),
+}));
+
 const callBackendMock = vi.mocked(callBackend);
 const writeClipboardTextMock = vi.mocked(writeClipboardText);
 const pickUploadFileMock = vi.mocked(pickUploadFile);
 const pickUploadDirectoryMock = vi.mocked(pickUploadDirectory);
 const pickDownloadPathMock = vi.mocked(pickDownloadPath);
 const pickDownloadDirectoryMock = vi.mocked(pickDownloadDirectory);
+const listenLocalDragDropMock = vi.mocked(listenLocalDragDrop);
 const listenSftpTransferProgressMock = vi.mocked(listenSftpTransferProgress);
 
 describe("SftpWorkspace", () => {
@@ -42,9 +53,18 @@ describe("SftpWorkspace", () => {
     vi.clearAllMocks();
     vi.unstubAllGlobals();
     progressHandler = null;
+    dragDropHandler = null;
   });
 
   beforeEach(() => {
+    listenLocalDragDropMock.mockImplementation((handler) => {
+      dragDropHandler = handler;
+      return Promise.resolve(() => {
+        if (dragDropHandler === handler) {
+          dragDropHandler = null;
+        }
+      });
+    });
     listenSftpTransferProgressMock.mockImplementation((handler) => {
       progressHandler = handler;
       return Promise.resolve(() => undefined);
@@ -58,6 +78,12 @@ describe("SftpWorkspace", () => {
 
   function menuItemLabels() {
     return screen.getAllByRole("menuitem").map((item) => item.textContent);
+  }
+
+  function dropPosition(x: number, y: number) {
+    return { x, y } as LocalDragDropEvent extends { position: infer Position }
+      ? Position
+      : never;
   }
 
   async function waitForInitialLoad() {
@@ -969,6 +995,119 @@ describe("SftpWorkspace", () => {
       });
     });
     expect(screen.getByText("logs 上传完成")).toBeInTheDocument();
+  });
+
+  it("uploads a dragged local file into the current directory", async () => {
+    mockOpenSession();
+    callBackendMock.mockResolvedValueOnce({ kind: "file", name: "dragged.log" });
+    callBackendMock.mockResolvedValueOnce(undefined);
+    callBackendMock.mockResolvedValueOnce([
+      {
+        name: "dragged.log",
+        path: "/dragged.log",
+        kind: "file",
+        size: 128,
+      },
+    ]);
+
+    render(<SftpWorkspace connectionId="prod-web-01" />);
+
+    await waitForInitialLoad();
+    const dropArea = screen.getByLabelText("SFTP 文件列表");
+    vi.spyOn(dropArea, "getBoundingClientRect").mockReturnValue({
+      x: 0,
+      y: 0,
+      width: 600,
+      height: 360,
+      top: 0,
+      right: 600,
+      bottom: 360,
+      left: 0,
+      toJSON: () => ({}),
+    });
+
+    await waitFor(() => expect(dragDropHandler).not.toBeNull());
+    dragDropHandler?.({
+      type: "drop",
+      paths: ["C:\\Users\\ttat\\Desktop\\dragged.log"],
+      position: dropPosition(40, 40),
+    });
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("get_local_path_kind", {
+        request: { path: "C:\\Users\\ttat\\Desktop\\dragged.log" },
+      });
+    });
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("upload_sftp_file", {
+        request: {
+          session_id: "sftp-session-1",
+          transfer_id: "transfer-1",
+          local_path: "C:\\Users\\ttat\\Desktop\\dragged.log",
+          remote_path: "/dragged.log",
+          overwrite: false,
+        },
+      });
+    });
+    expect(await screen.findByText("dragged.log")).toBeInTheDocument();
+  });
+
+  it("uploads a dragged local directory and shows the drop target state", async () => {
+    mockOpenSession();
+    callBackendMock.mockResolvedValueOnce({ kind: "directory", name: "logs" });
+    callBackendMock.mockResolvedValueOnce(undefined);
+    callBackendMock.mockResolvedValueOnce([
+      {
+        name: "logs",
+        path: "/logs",
+        kind: "directory",
+        size: 4096,
+      },
+    ]);
+
+    render(<SftpWorkspace connectionId="prod-web-01" />);
+
+    await waitForInitialLoad();
+    const dropArea = screen.getByLabelText("SFTP 文件列表");
+    vi.spyOn(dropArea, "getBoundingClientRect").mockReturnValue({
+      x: 0,
+      y: 0,
+      width: 600,
+      height: 360,
+      top: 0,
+      right: 600,
+      bottom: 360,
+      left: 0,
+      toJSON: () => ({}),
+    });
+
+    await waitFor(() => expect(dragDropHandler).not.toBeNull());
+    dragDropHandler?.({
+      type: "enter",
+      paths: ["C:\\Users\\ttat\\Desktop\\logs"],
+      position: dropPosition(40, 40),
+    });
+    await waitFor(() => expect(dropArea).toHaveClass("sftp-table-scroll--drag-over"));
+    expect(screen.getByText("拖放到当前目录上传")).toBeInTheDocument();
+
+    dragDropHandler?.({
+      type: "drop",
+      paths: ["C:\\Users\\ttat\\Desktop\\logs"],
+      position: dropPosition(40, 40),
+    });
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("upload_sftp_directory", {
+        request: {
+          session_id: "sftp-session-1",
+          transfer_id: "transfer-1",
+          local_path: "C:\\Users\\ttat\\Desktop\\logs",
+          remote_path: "/logs",
+          overwrite: false,
+        },
+      });
+    });
+    expect(screen.queryByText("拖放到当前目录上传")).not.toBeInTheDocument();
   });
 
   it("downloads a remote file to the selected local path", async () => {

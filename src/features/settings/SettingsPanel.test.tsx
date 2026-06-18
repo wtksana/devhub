@@ -10,9 +10,9 @@ const listSystemFonts = vi.fn(async () => ["Inter", "Zed Sans", "JetBrains Mono"
 const settings: DevHubSettings = {
   appearance: {
     theme: "dark",
-    ui_font_family: "Inter",
-    ui_font_size: 13,
-    terminal_font_family: "JetBrains Mono",
+    ui_font_family: "Consolas",
+    ui_font_size: 16,
+    terminal_font_family: "Consolas",
     terminal_font_size: 14,
   },
   layout: {
@@ -93,8 +93,8 @@ describe("SettingsPanel", () => {
     await within(screen.getByLabelText("界面字体")).findByRole("option", { name: "Zed Sans" });
 
     expect(listSystemFonts).toHaveBeenCalledTimes(1);
-    expect(screen.getByLabelText("界面字体")).toHaveDisplayValue("Inter");
-    expect(screen.getByLabelText("终端字体")).toHaveDisplayValue("JetBrains Mono");
+    expect(screen.getByLabelText("界面字体")).toHaveDisplayValue("Consolas");
+    expect(screen.getByLabelText("终端字体")).toHaveDisplayValue("Consolas");
 
     await userEvent.selectOptions(screen.getByLabelText("终端字体"), "Consolas");
 

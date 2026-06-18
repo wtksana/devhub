@@ -12,12 +12,9 @@ fn creates_default_settings_when_missing() {
     let value = serde_json::to_value(&settings).unwrap();
 
     assert_eq!(settings.appearance.theme, "dark");
-    assert_eq!(value["appearance"]["ui_font_family"], "Inter");
-    assert_eq!(value["appearance"]["ui_font_size"], 13);
-    assert_eq!(
-        value["appearance"]["terminal_font_family"],
-        "JetBrains Mono"
-    );
+    assert_eq!(value["appearance"]["ui_font_family"], "Consolas");
+    assert_eq!(value["appearance"]["ui_font_size"], 16);
+    assert_eq!(value["appearance"]["terminal_font_family"], "Consolas");
     assert_eq!(value["layout"]["connection_sidebar_width"], 280);
     assert_eq!(value["sftp"]["file_size_unit"], "bytes");
     assert!(value.get("ai").is_none());

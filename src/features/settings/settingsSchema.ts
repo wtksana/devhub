@@ -77,7 +77,7 @@ export function parseSettings(value: unknown): DevHubSettings {
     const settings = value as Record<string, unknown>;
     if (settings.appearance && typeof settings.appearance === "object" && !Array.isArray(settings.appearance)) {
       settings.appearance = {
-        ui_font_size: 13,
+        ui_font_size: 16,
         ...settings.appearance,
       };
     }

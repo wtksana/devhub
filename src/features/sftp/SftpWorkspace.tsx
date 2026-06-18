@@ -16,6 +16,7 @@ import {
   pickUploadFile,
 } from "../../lib/fileDialog";
 import { callBackend } from "../../lib/tauri";
+import { listenLocalDragDrop } from "../../lib/tauriDragDrop";
 import { listenSftpTransferProgress } from "../../lib/tauriEvents";
 import type { SftpFileSizeUnit } from "../settings/settingsTypes";
 import type { SftpEntry } from "./sftpTypes";
@@ -47,6 +48,10 @@ type PendingUpload = {
   localPath: string;
   name: string;
   remotePath: string;
+};
+type LocalPathKindResponse = {
+  kind: "file" | "directory";
+  name: string;
 };
 type SftpTextFile = {
   path: string;
@@ -309,9 +314,11 @@ export function SftpWorkspace({
   const [confirmTextOverwrite, setConfirmTextOverwrite] = useState(false);
   const [editorDialogLayout, setEditorDialogLayout] =
     useState<EditorDialogLayout | null>(null);
+  const [isDragOverFileList, setIsDragOverFileList] = useState(false);
   const [transferTasks, setTransferTasks] = useState<TransferTask[]>([]);
   const initialLoadSessionRef = useRef<string | null>(null);
   const transferSeqRef = useRef(0);
+  const fileListRef = useRef<HTMLDivElement | null>(null);
   const editorDialogRef = useRef<HTMLElement | null>(null);
   const editorDialogInteractionRef = useRef<EditorDialogInteraction | null>(
     null,
@@ -352,6 +359,7 @@ export function SftpWorkspace({
     setConfirmTextClose(false);
     setConfirmTextOverwrite(false);
     setEditorDialogLayout(null);
+    setIsDragOverFileList(false);
     setTransferTasks([]);
     transferSeqRef.current = 0;
 
@@ -392,6 +400,31 @@ export function SftpWorkspace({
       void unlisten.then((dispose) => dispose());
     };
   }, []);
+
+  useEffect(() => {
+    const unlisten = listenLocalDragDrop((event) => {
+      if (event.type === "leave") {
+        setIsDragOverFileList(false);
+        return;
+      }
+
+      if (event.type === "enter" || event.type === "over") {
+        setIsDragOverFileList(isPositionInsideFileList(event.position.x, event.position.y));
+        return;
+      }
+
+      if (event.type !== "drop") return;
+      const isInside = isPositionInsideFileList(event.position.x, event.position.y);
+      setIsDragOverFileList(false);
+      if (!isInside || !event.paths.length) return;
+
+      void uploadDroppedPaths(event.paths);
+    });
+
+    return () => {
+      void unlisten.then((dispose) => dispose());
+    };
+  }, [entries, path, sessionId]);
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -655,6 +688,41 @@ export function SftpWorkspace({
       { kind: "directory", localPath, name, remotePath },
       false,
     );
+  }
+
+  function isPositionInsideFileList(x: number, y: number) {
+    const rect = fileListRef.current?.getBoundingClientRect();
+    if (!rect) return false;
+    return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+  }
+
+  async function uploadDroppedPaths(localPaths: string[]) {
+    if (!sessionId) return;
+    for (const localPath of localPaths) {
+      try {
+        const localPathInfo = await callBackend<LocalPathKindResponse>(
+          "get_local_path_kind",
+          { request: { path: localPath } },
+        );
+        const name = localPathInfo.name || localFileName(localPath);
+        const remotePath = joinRemotePath(path, name);
+        const upload = {
+          kind: localPathInfo.kind,
+          localPath,
+          name,
+          remotePath,
+        };
+
+        if (entries.some((entry) => entry.name === name)) {
+          setPendingUpload(upload);
+          return;
+        }
+
+        await uploadSelectedFile(upload, false);
+      } catch (caught) {
+        setError(caught instanceof Error ? caught.message : String(caught));
+      }
+    }
   }
 
   async function uploadSelectedFile(upload: PendingUpload, overwrite: boolean) {
@@ -1049,10 +1117,14 @@ export function SftpWorkspace({
       {error ? <p role="alert">{error}</p> : null}
       {isLoading ? <p role="status">加载中...</p> : null}
       <div
-        className="sftp-table-scroll"
+        ref={fileListRef}
+        className={`sftp-table-scroll${isDragOverFileList ? " sftp-table-scroll--drag-over" : ""}`}
         aria-label="SFTP 文件列表"
         onContextMenu={openBlankContextMenu}
       >
+        {isDragOverFileList ? (
+          <div className="sftp-drop-overlay">拖放到当前目录上传</div>
+        ) : null}
         <table>
           <thead>
             <tr>

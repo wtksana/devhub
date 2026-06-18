@@ -101,6 +101,17 @@ pub struct SftpDownloadDirectoryRequest {
     pub overwrite: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalPathKindRequest {
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct LocalPathKindResponse {
+    pub kind: String,
+    pub name: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct SftpTransferProgress {
     pub transfer_id: String,

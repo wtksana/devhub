@@ -118,6 +118,37 @@ describe("TerminalTab", () => {
     expect(terminal.dispose).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps output that arrives before the open terminal response resolves", async () => {
+    let outputHandler: ((payload: { session_id: string; data: string }) => void) | null = null;
+    let resolveOpenTerminal: (response: { session_id: string }) => void = () => {};
+    callBackendMock.mockImplementation((command) => {
+      if (command === "open_terminal") {
+        return new Promise((resolve) => {
+          resolveOpenTerminal = resolve as (response: { session_id: string }) => void;
+        });
+      }
+      return Promise.resolve(undefined);
+    });
+    listenBackendMock.mockImplementationOnce(async (_event, handler) => {
+      outputHandler = handler as (payload: { session_id: string; data: string }) => void;
+      return () => {};
+    });
+
+    render(<TerminalTab connectionId="prod-web-01" fontFamily="Maple Mono" fontSize={16} theme="dark" isActive={true} />);
+
+    await waitFor(() => {
+      expect(outputHandler).not.toBeNull();
+    });
+    const emitOutput = outputHandler as unknown as (payload: { session_id: string; data: string }) => void;
+    emitOutput({ session_id: "session-1", data: "root@host:~# " });
+    resolveOpenTerminal({ session_id: "session-1" });
+
+    const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
+    await waitFor(() => {
+      expect(terminal.write).toHaveBeenCalledWith("root@host:~# ");
+    });
+  });
+
   it("refits and resizes the backend session when the terminal container changes size", async () => {
     vi.stubGlobal("ResizeObserver", MockResizeObserver);
     callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });

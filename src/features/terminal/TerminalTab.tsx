@@ -157,6 +157,7 @@ export function TerminalTab({ connectionId, fontFamily, fontSize, theme, isActiv
     let unlistenOutput: (() => void) | null = null;
     let resizeObserver: ResizeObserver | null = null;
     let resizeFrame: number | null = null;
+    let pendingOutput: TerminalOutputEvent[] = [];
 
     const terminal = new Terminal({
       cursorBlink: true,
@@ -214,37 +215,50 @@ export function TerminalTab({ connectionId, fontFamily, fontSize, theme, isActiv
       });
     });
 
-    void listenBackend<TerminalOutputEvent>("terminal://output", (event) => {
-      if (event.session_id === sessionIdRef.current) {
-        terminal.write(event.data);
-      }
-    }).then((unlisten) => {
-      if (disposed) {
-        unlisten();
+    function handleTerminalOutput(event: TerminalOutputEvent) {
+      const sessionId = sessionIdRef.current;
+      if (!sessionId) {
+        pendingOutput.push(event);
         return;
       }
-      unlistenOutput = unlisten;
-    });
+      if (event.session_id === sessionId) {
+        terminal.write(event.data);
+      }
+    }
 
-    void callBackend<TerminalSessionResponse>("open_terminal", {
-      request: {
-        connection_id: connectionId,
-        cols: terminal.cols || 80,
-        rows: terminal.rows || 24,
-      },
-    })
-      .then((response) => {
+    void (async () => {
+      try {
+        const unlisten = await listenBackend<TerminalOutputEvent>("terminal://output", handleTerminalOutput);
+        if (disposed) {
+          unlisten();
+          return;
+        }
+        unlistenOutput = unlisten;
+
+        const response = await callBackend<TerminalSessionResponse>("open_terminal", {
+          request: {
+            connection_id: connectionId,
+            cols: terminal.cols || 80,
+            rows: terminal.rows || 24,
+          },
+        });
         sessionIdRef.current = response.session_id;
         if (disposed) {
           void callBackend<void>("close_terminal", { sessionId: response.session_id });
           return;
         }
         terminal.writeln("Connected.");
+        for (const event of pendingOutput) {
+          if (event.session_id === response.session_id) {
+            terminal.write(event.data);
+          }
+        }
+        pendingOutput = [];
         fitAndResizeBackend();
-      })
-      .catch((caught: unknown) => {
+      } catch (caught: unknown) {
         terminal.writeln(`[devhub] ${caught instanceof Error ? caught.message : String(caught)}`);
-      });
+      }
+    })();
 
     return () => {
       disposed = true;

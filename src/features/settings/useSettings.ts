@@ -6,9 +6,9 @@ import type { DevHubSettings } from "./settingsTypes";
 const defaultSettings: DevHubSettings = {
   appearance: {
     theme: "dark",
-    ui_font_family: "Inter",
-    ui_font_size: 13,
-    terminal_font_family: "JetBrains Mono",
+    ui_font_family: "Consolas",
+    ui_font_size: 16,
+    terminal_font_family: "Consolas",
     terminal_font_size: 14,
   },
   layout: {

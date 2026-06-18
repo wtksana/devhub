@@ -76,9 +76,9 @@ impl Default for DevHubSettings {
         Self {
             appearance: AppearanceSettings {
                 theme: "dark".to_string(),
-                ui_font_family: "Inter".to_string(),
-                ui_font_size: 13,
-                terminal_font_family: "JetBrains Mono".to_string(),
+                ui_font_family: "Consolas".to_string(),
+                ui_font_size: 16,
+                terminal_font_family: "Consolas".to_string(),
                 terminal_font_size: 14,
             },
             layout: LayoutSettings {

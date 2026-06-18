@@ -6,9 +6,9 @@ describe("settings schema", () => {
     const settings = parseSettings({
       appearance: {
         theme: "dark",
-        ui_font_family: "Inter",
-        ui_font_size: 13,
-        terminal_font_family: "JetBrains Mono",
+        ui_font_family: "Consolas",
+        ui_font_size: 16,
+        terminal_font_family: "Consolas",
         terminal_font_size: 14,
       },
       layout: {
@@ -59,9 +59,9 @@ describe("settings schema", () => {
     const settings = parseSettings({
       appearance: {
         theme: "dark",
-        ui_font_family: "Inter",
-        ui_font_size: 13,
-        terminal_font_family: "JetBrains Mono",
+        ui_font_family: "Consolas",
+        ui_font_size: 16,
+        terminal_font_family: "Consolas",
         terminal_font_size: 14,
       },
       layout: {
@@ -92,9 +92,9 @@ describe("settings schema", () => {
     const settings = parseSettings({
       appearance: {
         theme: "dark",
-        ui_font_family: "Inter",
-        ui_font_size: 13,
-        terminal_font_family: "JetBrains Mono",
+        ui_font_family: "Consolas",
+        ui_font_size: 16,
+        terminal_font_family: "Consolas",
         terminal_font_size: 14,
       },
       layout: {
@@ -123,8 +123,8 @@ describe("settings schema", () => {
     const settings = parseSettings({
       appearance: {
         theme: "dark",
-        ui_font_family: "Inter",
-        terminal_font_family: "JetBrains Mono",
+        ui_font_family: "Consolas",
+        terminal_font_family: "Consolas",
         terminal_font_size: 14,
       },
       layout: {
@@ -133,7 +133,7 @@ describe("settings schema", () => {
       connections: [],
     });
 
-    expect(settings.appearance.ui_font_size).toBe(13);
+    expect(settings.appearance.ui_font_size).toBe(16);
     expect(settings.sftp.file_size_unit).toBe("bytes");
   });
 });

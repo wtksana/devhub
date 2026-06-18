@@ -3,14 +3,39 @@ use tauri::{AppHandle, Emitter, State};
 use crate::core::credential_store::CredentialStore;
 use crate::core::settings_store::SettingsStore;
 use crate::models::sftp::{
-    CreateDirectoryRequest, DeletePathRequest, ListDirectoryRequest, OpenSftpSessionRequest,
-    RenamePathRequest, SftpArchiveRequest, SftpDownloadDirectoryRequest, SftpDownloadFileRequest,
-    SftpEntry, SftpReadTextFileRequest, SftpSessionPathRequest, SftpSessionRenameRequest,
-    SftpSessionRequest, SftpSessionResponse, SftpTextFileResponse, SftpTransferProgress,
-    SftpUploadDirectoryRequest, SftpUploadFileRequest, SftpWriteTextFileRequest,
-    SftpWriteTextFileResponse,
+    CreateDirectoryRequest, DeletePathRequest, ListDirectoryRequest, LocalPathKindRequest,
+    LocalPathKindResponse, OpenSftpSessionRequest, RenamePathRequest, SftpArchiveRequest,
+    SftpDownloadDirectoryRequest, SftpDownloadFileRequest, SftpEntry, SftpReadTextFileRequest,
+    SftpSessionPathRequest, SftpSessionRenameRequest, SftpSessionRequest, SftpSessionResponse,
+    SftpTextFileResponse, SftpTransferProgress, SftpUploadDirectoryRequest, SftpUploadFileRequest,
+    SftpWriteTextFileRequest, SftpWriteTextFileResponse,
 };
 use crate::ssh::sftp_manager::{self, SftpSessionManager};
+
+#[tauri::command]
+pub async fn get_local_path_kind(
+    request: LocalPathKindRequest,
+) -> Result<LocalPathKindResponse, String> {
+    let path = std::path::PathBuf::from(&request.path);
+    let metadata = std::fs::metadata(&path).map_err(|error| error.to_string())?;
+    let kind = if metadata.is_dir() {
+        "directory"
+    } else if metadata.is_file() {
+        "file"
+    } else {
+        return Err(format!("unsupported local path type: {}", request.path));
+    };
+    let name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| format!("invalid local path: {}", request.path))?
+        .to_string();
+
+    Ok(LocalPathKindResponse {
+        kind: kind.to_string(),
+        name,
+    })
+}
 
 #[tauri::command]
 pub async fn open_sftp_session(
