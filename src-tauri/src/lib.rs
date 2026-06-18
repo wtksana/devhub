@@ -80,6 +80,7 @@ pub fn run() {
             commands::sftp::create_sftp_directory,
             commands::sftp::create_sftp_file,
             commands::sftp::compress_sftp_path,
+            commands::sftp::compress_sftp_paths,
             commands::sftp::extract_sftp_archive,
             commands::sftp::read_sftp_text_file,
             commands::sftp::write_sftp_text_file,

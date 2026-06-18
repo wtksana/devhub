@@ -229,12 +229,15 @@
 - 取消后传输队列状态显示为“已取消”。
 - 关闭 SFTP 标签时会先取消该标签未完成传输任务，再关闭后端 SFTP 会话。
 
-## 待完成任务
-
 ### 任务 27：SFTP 批量操作
 
-- 支持文件列表多选。
-- 支持批量下载、删除、压缩和复制路径。
+- 文件列表支持多选。
+- 支持批量下载、删除、复制路径。
+- 支持把选中项压缩到同一个 `.tar.gz` 包中。
+
+## 待完成任务
+
+- 连接编辑器字段完善，覆盖密码、私钥路径、私钥口令和分组。
 
 ## 自动验证命令
 
@@ -273,7 +276,6 @@ cargo clippy --manifest-path src-tauri\Cargo.toml --all-targets -- -D warnings
 - SSH tunnel。
 - SFTP sudo 写入。
 - SFTP 传输任务暂停和恢复。
-- SFTP 批量选择和批量操作。
 - 完整数据库管理。
 - Redis 管理。
 - Docker / Kubernetes 管理。
@@ -283,6 +285,5 @@ cargo clippy --manifest-path src-tauri\Cargo.toml --all-targets -- -D warnings
 
 1. 做真实 SSH、SFTP 和右键菜单手动验收。
 2. 修复手动验收暴露的问题。
-3. 实现任务 27：SFTP 批量选择和批量操作。
-4. 完善连接编辑器字段，覆盖密码、私钥、私钥口令和 sudo 使用说明。
-5. 开始第二阶段：数据库连接管理、Redis 管理、SSH tunnel、跳板机、Docker 等能力。
+3. 完善连接编辑器字段，覆盖密码、私钥、私钥口令和 sudo 使用说明。
+4. 开始第二阶段：数据库连接管理、Redis 管理、SSH tunnel、跳板机、Docker 等能力。

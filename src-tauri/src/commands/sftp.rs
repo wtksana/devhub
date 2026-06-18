@@ -5,10 +5,11 @@ use crate::core::settings_store::SettingsStore;
 use crate::models::sftp::{
     CreateDirectoryRequest, DeletePathRequest, ListDirectoryRequest, LocalPathKindRequest,
     LocalPathKindResponse, OpenSftpSessionRequest, RenamePathRequest, SftpArchiveRequest,
-    SftpDownloadDirectoryRequest, SftpDownloadFileRequest, SftpEntry, SftpReadTextFileRequest,
-    SftpSessionPathRequest, SftpSessionRenameRequest, SftpSessionRequest, SftpSessionResponse,
-    SftpTextFileResponse, SftpTransferProgress, SftpTransferRequest, SftpUploadDirectoryRequest,
-    SftpUploadFileRequest, SftpWriteTextFileRequest, SftpWriteTextFileResponse,
+    SftpCompressPathsRequest, SftpDownloadDirectoryRequest, SftpDownloadFileRequest, SftpEntry,
+    SftpReadTextFileRequest, SftpSessionPathRequest, SftpSessionRenameRequest, SftpSessionRequest,
+    SftpSessionResponse, SftpTextFileResponse, SftpTransferProgress, SftpTransferRequest,
+    SftpUploadDirectoryRequest, SftpUploadFileRequest, SftpWriteTextFileRequest,
+    SftpWriteTextFileResponse,
 };
 use crate::ssh::sftp_manager::{self, SftpSessionManager};
 
@@ -126,6 +127,17 @@ pub async fn compress_sftp_path(
 ) -> Result<(), String> {
     sessions
         .compress_path(&request.session_id, &request.path)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn compress_sftp_paths(
+    sessions: State<'_, SftpSessionManager>,
+    request: SftpCompressPathsRequest,
+) -> Result<(), String> {
+    sessions
+        .compress_paths(&request.session_id, &request.archive_name, &request.paths)
         .await
         .map_err(|error| error.to_string())
 }

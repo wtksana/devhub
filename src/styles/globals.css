@@ -951,6 +951,21 @@ p {
   background: var(--panel-raised);
 }
 
+.sftp-workspace .sftp-selection-cell {
+  width: 34px;
+  padding: 0 8px;
+  text-align: center;
+}
+
+.sftp-workspace .sftp-selection-cell input {
+  width: 14px;
+  height: 14px;
+}
+
+.sftp-entry-row--selected {
+  background: color-mix(in srgb, var(--accent) 14%, var(--panel));
+}
+
 .sftp-entry-name {
   font-weight: 500;
 }

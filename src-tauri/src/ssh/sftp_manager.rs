@@ -306,6 +306,17 @@ impl SftpSessionManager {
         .await
     }
 
+    pub async fn compress_paths(
+        &self,
+        session_id: &str,
+        archive_name: &str,
+        paths: &[String],
+    ) -> SessionResult<()> {
+        let command = build_compress_paths_command(archive_name, paths)?;
+        self.with_ssh(session_id, |ssh| run_remote_command(ssh, &command))
+            .await
+    }
+
     pub async fn extract_archive(&self, session_id: &str, path: &str) -> SessionResult<()> {
         self.with_ssh(session_id, |ssh| {
             run_remote_command(ssh, &build_extract_command(path))
@@ -726,6 +737,44 @@ fn build_compress_command(path: &str) -> String {
     )
 }
 
+fn build_compress_paths_command(archive_name: &str, paths: &[String]) -> SessionResult<String> {
+    if paths.is_empty() {
+        return Err(SftpSessionError::Io("no paths selected".to_string()));
+    }
+    let (parent, first_name) = split_remote_parent_name(&paths[0]);
+    let mut names = vec![first_name];
+    for path in &paths[1..] {
+        let (next_parent, name) = split_remote_parent_name(path);
+        if next_parent != parent {
+            return Err(SftpSessionError::Io(
+                "selected paths must be in the same directory".to_string(),
+            ));
+        }
+        names.push(name);
+    }
+    let archive_name = normalize_archive_name(archive_name);
+    let sources = names
+        .iter()
+        .map(|name| shell_quote(name))
+        .collect::<Vec<_>>()
+        .join(" ");
+    Ok(format!(
+        "cd {} && tar -czf {} {}",
+        shell_quote(&parent),
+        shell_quote(&archive_name),
+        sources,
+    ))
+}
+
+fn normalize_archive_name(name: &str) -> String {
+    let trimmed_name = name.trim();
+    if trimmed_name.ends_with(".tar.gz") || trimmed_name.ends_with(".tgz") {
+        trimmed_name.to_string()
+    } else {
+        format!("{trimmed_name}.tar.gz")
+    }
+}
+
 fn build_extract_command(path: &str) -> String {
     let (parent, name) = split_remote_parent_name(path);
     format!(
@@ -991,6 +1040,40 @@ mod tests {
         assert_eq!(
             build_compress_command("/data/today's logs"),
             "cd '/data' && tar -czf 'today'\\''s logs.tar.gz' 'today'\\''s logs'"
+        );
+    }
+
+    #[test]
+    fn builds_batch_archive_command_for_entries_in_the_same_directory() {
+        assert_eq!(
+            build_compress_paths_command(
+                "selected.tar.gz",
+                &["/data/app.log".to_string(), "/data/logs".to_string()],
+            )
+            .unwrap(),
+            "cd '/data' && tar -czf 'selected.tar.gz' 'app.log' 'logs'"
+        );
+        assert_eq!(
+            build_compress_paths_command(
+                "selected",
+                &["/data/app.log".to_string(), "/data/logs".to_string()],
+            )
+            .unwrap(),
+            "cd '/data' && tar -czf 'selected.tar.gz' 'app.log' 'logs'"
+        );
+    }
+
+    #[test]
+    fn rejects_batch_archive_paths_from_different_directories() {
+        let error = build_compress_paths_command(
+            "selected.tar.gz",
+            &["/data/app.log".to_string(), "/var/logs".to_string()],
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "io error: selected paths must be in the same directory"
         );
     }
 

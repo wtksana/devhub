@@ -1193,6 +1193,7 @@ describe("SftpWorkspace", () => {
   });
 
   it("cancels a running transfer from the transfer queue", async () => {
+    let rejectDownload!: (error: Error) => void;
     callBackendMock.mockImplementation((command) => {
       if (command === "open_sftp_session") return Promise.resolve({ session_id: "sftp-session-1" });
       if (command === "list_sftp_directory") {
@@ -1205,7 +1206,11 @@ describe("SftpWorkspace", () => {
           },
         ]);
       }
-      if (command === "download_sftp_file") return new Promise(() => undefined);
+      if (command === "download_sftp_file") {
+        return new Promise((_, reject) => {
+          rejectDownload = reject;
+        });
+      }
       if (command === "cancel_sftp_transfer") return Promise.resolve(undefined);
       return Promise.resolve(undefined);
     });
@@ -1224,6 +1229,18 @@ describe("SftpWorkspace", () => {
       });
     });
     expect(screen.getByText("app.log 已取消")).toBeInTheDocument();
+
+    const listCallCountBeforeCancelSettles = callBackendMock.mock.calls.filter(
+      ([command]) => command === "list_sftp_directory",
+    ).length;
+    rejectDownload(new Error("transfer canceled"));
+
+    await waitFor(() => {
+      const listCallCount = callBackendMock.mock.calls.filter(
+        ([command]) => command === "list_sftp_directory",
+      ).length;
+      expect(listCallCount).toBe(listCallCountBeforeCancelSettles + 1);
+    });
   });
 
   it("cancels running transfers when the sftp workspace unmounts", async () => {
@@ -1330,6 +1347,143 @@ describe("SftpWorkspace", () => {
     expect(screen.getByRole("menuitem", { name: "重命名" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "复制路径" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "删除" })).toBeInTheDocument();
+  });
+
+  it("shows batch actions for selected entries and copies selected paths", async () => {
+    mockOpenSession([
+      {
+        name: "app.log",
+        path: "/app.log",
+        kind: "file",
+        size: 128,
+      },
+      {
+        name: "logs",
+        path: "/logs",
+        kind: "directory",
+        size: 4096,
+      },
+    ]);
+
+    render(<SftpWorkspace connectionId="prod-web-01" />);
+
+    await waitForInitialLoad();
+    await userEvent.click(screen.getByRole("checkbox", { name: "选择 app.log" }));
+    await userEvent.click(screen.getByRole("checkbox", { name: "选择 logs" }));
+    await userEvent.pointer({ keys: "[MouseRight]", target: await screen.findByText("app.log") });
+
+    expect(menuItemLabels()).toEqual([
+      "刷新",
+      "下载选中项",
+      "压缩选中项",
+      "复制选中路径",
+      "删除选中项",
+      "新建文件",
+      "新建文件夹",
+      "上传文件",
+      "上传文件夹",
+    ]);
+
+    await userEvent.click(screen.getByRole("menuitem", { name: "复制选中路径" }));
+
+    expect(writeClipboardTextMock).toHaveBeenCalledWith("/app.log\r\n/logs");
+  });
+
+  it("deletes selected entries after a batch confirmation", async () => {
+    mockOpenSession([
+      {
+        name: "app.log",
+        path: "/app.log",
+        kind: "file",
+        size: 128,
+      },
+      {
+        name: "logs",
+        path: "/logs",
+        kind: "directory",
+        size: 4096,
+      },
+    ]);
+    callBackendMock.mockResolvedValueOnce(undefined);
+    callBackendMock.mockResolvedValueOnce(undefined);
+    callBackendMock.mockResolvedValueOnce([]);
+
+    render(<SftpWorkspace connectionId="prod-web-01" />);
+
+    await waitForInitialLoad();
+    await userEvent.click(screen.getByRole("checkbox", { name: "选择 app.log" }));
+    await userEvent.click(screen.getByRole("checkbox", { name: "选择 logs" }));
+    await userEvent.pointer({ keys: "[MouseRight]", target: await screen.findByText("app.log") });
+    await userEvent.click(screen.getByRole("menuitem", { name: "删除选中项" }));
+
+    expect(screen.getByRole("dialog", { name: "确认删除" })).toBeInTheDocument();
+    expect(screen.getByText("确认删除 2 个选中项？该操作不可逆！")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "确认" }));
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("delete_sftp_path", {
+        request: { session_id: "sftp-session-1", path: "/app.log" },
+      });
+      expect(callBackendMock).toHaveBeenCalledWith("delete_sftp_path", {
+        request: { session_id: "sftp-session-1", path: "/logs" },
+      });
+      expect(callBackendMock).toHaveBeenCalledWith("list_sftp_directory", {
+        request: { session_id: "sftp-session-1", path: "/" },
+      });
+    });
+  });
+
+  it("compresses selected entries into one archive", async () => {
+    mockOpenSession([
+      {
+        name: "app.log",
+        path: "/app.log",
+        kind: "file",
+        size: 128,
+      },
+      {
+        name: "logs",
+        path: "/logs",
+        kind: "directory",
+        size: 4096,
+      },
+    ]);
+    callBackendMock.mockResolvedValueOnce(undefined);
+    callBackendMock.mockResolvedValueOnce([
+      {
+        name: "selected.tar.gz",
+        path: "/selected.tar.gz",
+        kind: "file",
+        size: 256,
+      },
+    ]);
+
+    render(<SftpWorkspace connectionId="prod-web-01" />);
+
+    await waitForInitialLoad();
+    await userEvent.click(screen.getByRole("checkbox", { name: "选择 app.log" }));
+    await userEvent.click(screen.getByRole("checkbox", { name: "选择 logs" }));
+    await userEvent.pointer({ keys: "[MouseRight]", target: await screen.findByText("app.log") });
+    await userEvent.click(screen.getByRole("menuitem", { name: "压缩选中项" }));
+
+    expect(screen.getByRole("dialog", { name: "压缩选中项" })).toBeInTheDocument();
+    const archiveNameInput = screen.getByLabelText("名称");
+    await userEvent.clear(archiveNameInput);
+    await userEvent.type(archiveNameInput, "selected.tar.gz");
+    await userEvent.click(screen.getByRole("button", { name: "确认" }));
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("compress_sftp_paths", {
+        request: {
+          session_id: "sftp-session-1",
+          archive_name: "selected.tar.gz",
+          paths: ["/app.log", "/logs"],
+        },
+      });
+    });
+    expect(callBackendMock).not.toHaveBeenCalledWith("compress_sftp_path", expect.anything());
+    expect(await screen.findByText("selected.tar.gz")).toBeInTheDocument();
   });
 
   it("compresses an entry and refreshes the current directory", async () => {

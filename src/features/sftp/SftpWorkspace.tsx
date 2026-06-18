@@ -49,6 +49,10 @@ type PendingUpload = {
   name: string;
   remotePath: string;
 };
+type PendingBatchArchive = {
+  archiveName: string;
+  entries: SftpEntry[];
+};
 type LocalPathKindResponse = {
   kind: "file" | "directory";
   name: string;
@@ -238,6 +242,10 @@ function getDeleteConfirmationText(entry: SftpEntry) {
   return `确认删除 ${entry.name}${entry.kind === "directory" ? " 文件夹及其中全部内容" : ""}？该操作不可逆！`;
 }
 
+function getBatchDeleteConfirmationText(entries: SftpEntry[]) {
+  return `确认删除 ${entries.length} 个选中项？该操作不可逆！`;
+}
+
 function isArchiveEntry(entry: SftpEntry) {
   return entry.kind === "file" && (entry.name.endsWith(".tar.gz") || entry.name.endsWith(".tgz"));
 }
@@ -306,9 +314,14 @@ export function SftpWorkspace({
   const [deleteCandidate, setDeleteCandidate] = useState<SftpEntry | null>(
     null,
   );
+  const [batchDeleteCandidates, setBatchDeleteCandidates] = useState<
+    SftpEntry[]
+  >([]);
   const [pendingUpload, setPendingUpload] = useState<PendingUpload | null>(
     null,
   );
+  const [pendingBatchArchive, setPendingBatchArchive] =
+    useState<PendingBatchArchive | null>(null);
   const [textFile, setTextFile] = useState<SftpTextFile | null>(null);
   const [confirmTextClose, setConfirmTextClose] = useState(false);
   const [confirmTextOverwrite, setConfirmTextOverwrite] = useState(false);
@@ -316,6 +329,9 @@ export function SftpWorkspace({
     useState<EditorDialogLayout | null>(null);
   const [isDragOverFileList, setIsDragOverFileList] = useState(false);
   const [transferTasks, setTransferTasks] = useState<TransferTask[]>([]);
+  const [selectedEntryPaths, setSelectedEntryPaths] = useState<Set<string>>(
+    () => new Set(),
+  );
   const initialLoadSessionRef = useRef<string | null>(null);
   const transferSeqRef = useRef(0);
   const runningTransferIdsRef = useRef<Set<string>>(new Set());
@@ -332,12 +348,17 @@ export function SftpWorkspace({
       return sort.direction === "asc" ? result : -result;
     });
   }, [entries, sort]);
+  const selectedEntries = useMemo(
+    () => entries.filter((entry) => selectedEntryPaths.has(entry.path)),
+    [entries, selectedEntryPaths],
+  );
 
   useEffect(() => {
     if (!connectionId) {
       setSessionId(null);
       setEntries([]);
       setError(null);
+      setSelectedEntryPaths(new Set());
       return;
     }
 
@@ -349,13 +370,16 @@ export function SftpWorkspace({
     setAddressPath("/");
     setEntries([]);
     setError(null);
+    setSelectedEntryPaths(new Set());
     setIsLoading(false);
     setBackStack([]);
     setForwardStack([]);
     initialLoadSessionRef.current = null;
     setDialog(null);
     setDeleteCandidate(null);
+    setBatchDeleteCandidates([]);
     setPendingUpload(null);
+    setPendingBatchArchive(null);
     setTextFile(null);
     setConfirmTextClose(false);
     setConfirmTextOverwrite(false);
@@ -428,6 +452,16 @@ export function SftpWorkspace({
       void unlisten.then((dispose) => dispose());
     };
   }, [entries, path, sessionId]);
+
+  useEffect(() => {
+    setSelectedEntryPaths((current) => {
+      const availablePaths = new Set(entries.map((entry) => entry.path));
+      const next = new Set(
+        [...current].filter((entryPath) => availablePaths.has(entryPath)),
+      );
+      return next.size === current.size ? current : next;
+    });
+  }, [entries]);
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -633,10 +667,22 @@ export function SftpWorkspace({
   }
 
   async function deleteEntry(entry: SftpEntry) {
+    await deleteEntries([entry]);
+  }
+
+  async function deleteEntries(targetEntries: SftpEntry[]) {
     if (!sessionId) return;
     try {
-      await callBackend("delete_sftp_path", {
-        request: { session_id: sessionId, path: entry.path },
+      for (const entry of targetEntries) {
+        await callBackend("delete_sftp_path", {
+          request: { session_id: sessionId, path: entry.path },
+        });
+      }
+      setSelectedEntryPaths((current) => {
+        const deletedPaths = new Set(targetEntries.map((entry) => entry.path));
+        return new Set(
+          [...current].filter((entryPath) => !deletedPaths.has(entryPath)),
+        );
       });
       await refresh();
     } catch (caught) {
@@ -648,6 +694,39 @@ export function SftpWorkspace({
     if (!deleteCandidate) return;
     await deleteEntry(deleteCandidate);
     setDeleteCandidate(null);
+  }
+
+  async function confirmBatchDeleteEntries() {
+    if (!batchDeleteCandidates.length) return;
+    const candidates = batchDeleteCandidates;
+    setBatchDeleteCandidates([]);
+    await deleteEntries(candidates);
+  }
+
+  function toggleEntrySelection(entry: SftpEntry) {
+    setSelectedEntryPaths((current) => {
+      const next = new Set(current);
+      if (next.has(entry.path)) {
+        next.delete(entry.path);
+      } else {
+        next.add(entry.path);
+      }
+      return next;
+    });
+  }
+
+  function selectAllVisibleEntries(checked: boolean) {
+    setSelectedEntryPaths((current) => {
+      const next = new Set(current);
+      for (const entry of sortedEntries) {
+        if (checked) {
+          next.add(entry.path);
+        } else {
+          next.delete(entry.path);
+        }
+      }
+      return next;
+    });
   }
 
   function updateTransferTask(id: string, patch: Partial<TransferTask>) {
@@ -782,6 +861,7 @@ export function SftpWorkspace({
       const message = caught instanceof Error ? caught.message : String(caught);
       if (message === "transfer canceled") {
         updateTransferTask(taskId, { status: "canceled" });
+        await refresh();
       } else {
         updateTransferTask(taskId, { status: "failed", error: message });
         setError(message);
@@ -797,11 +877,44 @@ export function SftpWorkspace({
   }
 
   async function compressEntry(entry: SftpEntry) {
+    await compressEntries([entry]);
+  }
+
+  async function compressEntries(targetEntries: SftpEntry[]) {
     if (!sessionId) return;
-    try {
-      await callBackend("compress_sftp_path", {
-        request: { session_id: sessionId, path: entry.path },
+    if (targetEntries.length > 1) {
+      setPendingBatchArchive({
+        archiveName: "selected.tar.gz",
+        entries: targetEntries,
       });
+      return;
+    }
+    try {
+      for (const entry of targetEntries) {
+        await callBackend("compress_sftp_path", {
+          request: { session_id: sessionId, path: entry.path },
+        });
+      }
+      await refresh();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    }
+  }
+
+  async function confirmBatchArchive(event: React.FormEvent) {
+    event.preventDefault();
+    if (!sessionId || !pendingBatchArchive) return;
+    const archiveName = pendingBatchArchive.archiveName.trim();
+    if (!archiveName) return;
+    try {
+      await callBackend("compress_sftp_paths", {
+        request: {
+          session_id: sessionId,
+          archive_name: archiveName,
+          paths: pendingBatchArchive.entries.map((entry) => entry.path),
+        },
+      });
+      setPendingBatchArchive(null);
       await refresh();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
@@ -947,6 +1060,11 @@ export function SftpWorkspace({
     if (!sessionId) return;
     const localPath = await pickDownloadPath(entry.name);
     if (!localPath) return;
+    await downloadFileToPath(entry, localPath);
+  }
+
+  async function downloadFileToPath(entry: SftpEntry, localPath: string) {
+    if (!sessionId) return;
     const taskId = nextTransferId();
     trackRunningTransfer(taskId);
     setTransferTasks((tasks) => [
@@ -972,6 +1090,7 @@ export function SftpWorkspace({
       const message = caught instanceof Error ? caught.message : String(caught);
       if (message === "transfer canceled") {
         updateTransferTask(taskId, { status: "canceled" });
+        await refresh();
       } else {
         updateTransferTask(taskId, { status: "failed", error: message });
         setError(message);
@@ -984,6 +1103,11 @@ export function SftpWorkspace({
     const selectedDirectory = await pickDownloadDirectory();
     if (!selectedDirectory) return;
     const localPath = joinLocalPath(selectedDirectory, entry.name);
+    await downloadDirectoryToPath(entry, localPath);
+  }
+
+  async function downloadDirectoryToPath(entry: SftpEntry, localPath: string) {
+    if (!sessionId) return;
     const taskId = nextTransferId();
     trackRunningTransfer(taskId);
     setTransferTasks((tasks) => [
@@ -1010,9 +1134,31 @@ export function SftpWorkspace({
       const message = caught instanceof Error ? caught.message : String(caught);
       if (message === "transfer canceled") {
         updateTransferTask(taskId, { status: "canceled" });
+        await refresh();
       } else {
         updateTransferTask(taskId, { status: "failed", error: message });
         setError(message);
+      }
+    }
+  }
+
+  async function downloadEntries(targetEntries: SftpEntry[]) {
+    if (!sessionId || targetEntries.length === 0) return;
+    if (targetEntries.length === 1) {
+      const [entry] = targetEntries;
+      await (entry.kind === "directory"
+        ? downloadDirectory(entry)
+        : downloadFile(entry));
+      return;
+    }
+    const selectedDirectory = await pickDownloadDirectory();
+    if (!selectedDirectory) return;
+    for (const entry of targetEntries) {
+      const localPath = joinLocalPath(selectedDirectory, entry.name);
+      if (entry.kind === "directory") {
+        await downloadDirectoryToPath(entry, localPath);
+      } else {
+        await downloadFileToPath(entry, localPath);
       }
     }
   }
@@ -1061,6 +1207,43 @@ export function SftpWorkspace({
   function openEntryContextMenu(event: React.MouseEvent, entry: SftpEntry) {
     event.preventDefault();
     event.stopPropagation();
+    const menuTargetEntries = selectedEntryPaths.has(entry.path)
+      ? selectedEntries
+      : [entry];
+    const isBatchMenu = menuTargetEntries.length > 1;
+    if (isBatchMenu) {
+      const items: ContextMenuItem[] = [
+        { label: "刷新", onSelect: () => void refresh() },
+        {
+          label: "下载选中项",
+          onSelect: () => void downloadEntries(menuTargetEntries),
+        },
+        {
+          label: "压缩选中项",
+          onSelect: () => void compressEntries(menuTargetEntries),
+        },
+        {
+          label: "复制选中路径",
+          onSelect: () =>
+            void writeClipboardText(
+              menuTargetEntries.map((selectedEntry) => selectedEntry.path).join("\r\n"),
+            ),
+        },
+        {
+          label: "删除选中项",
+          onSelect: () => setBatchDeleteCandidates(menuTargetEntries),
+        },
+        { type: "separator" },
+        { type: "label", label: "在当前目录下：" },
+        ...currentDirectoryCreateMenuItems(),
+      ];
+      setContextMenu({
+        x: event.clientX,
+        y: event.clientY,
+        items,
+      });
+      return;
+    }
     const items: ContextMenuItem[] = [
       { label: "刷新", onSelect: () => void refresh() },
       {
@@ -1171,6 +1354,17 @@ export function SftpWorkspace({
         <table>
           <thead>
             <tr>
+              <th className="sftp-selection-cell">
+                <input
+                  type="checkbox"
+                  aria-label="选择全部可见项"
+                  checked={
+                    sortedEntries.length > 0 &&
+                    sortedEntries.every((entry) => selectedEntryPaths.has(entry.path))
+                  }
+                  onChange={(event) => selectAllVisibleEntries(event.target.checked)}
+                />
+              </th>
               <th>
                 <button
                   type="button"
@@ -1206,6 +1400,11 @@ export function SftpWorkspace({
             {sortedEntries.map((entry) => (
               <tr
                 key={entry.path}
+                className={
+                  selectedEntryPaths.has(entry.path)
+                    ? "sftp-entry-row--selected"
+                    : undefined
+                }
                 onDoubleClick={() => {
                   if (entry.kind === "directory") {
                     void navigateTo(entry.path);
@@ -1215,6 +1414,16 @@ export function SftpWorkspace({
                 }}
                 onContextMenu={(event) => openEntryContextMenu(event, entry)}
               >
+                <td className="sftp-selection-cell">
+                  <input
+                    type="checkbox"
+                    aria-label={`选择 ${entry.name}`}
+                    checked={selectedEntryPaths.has(entry.path)}
+                    onChange={() => toggleEntrySelection(entry)}
+                    onDoubleClick={(event) => event.stopPropagation()}
+                    onClick={(event) => event.stopPropagation()}
+                  />
+                </td>
                 <td>
                   <span className={getEntryNameClassName(entry)}>
                     {entry.name}
@@ -1308,6 +1517,93 @@ export function SftpWorkspace({
               </div>
             </div>
           </section>
+        </div>
+      ) : null}
+      {batchDeleteCandidates.length ? (
+        <div
+          className="connection-dialog__backdrop"
+          role="presentation"
+          onPointerDown={() => setBatchDeleteCandidates([])}
+        >
+          <section
+            className="connection-dialog sftp-dialog"
+            role="dialog"
+            aria-label="确认删除"
+            onPointerDown={(event) => event.stopPropagation()}
+          >
+            <div className="connection-form">
+              <header className="connection-dialog__header">
+                <h2>确认删除</h2>
+                <button
+                  type="button"
+                  onClick={() => setBatchDeleteCandidates([])}
+                  aria-label="关闭"
+                >
+                  ×
+                </button>
+              </header>
+              <p>{getBatchDeleteConfirmationText(batchDeleteCandidates)}</p>
+              <div className="sftp-dialog__actions">
+                <button type="button" onClick={() => setBatchDeleteCandidates([])}>
+                  取消
+                </button>
+                <button
+                  type="button"
+                  className="sftp-dialog__danger-button"
+                  onClick={() => void confirmBatchDeleteEntries()}
+                >
+                  确认
+                </button>
+              </div>
+            </div>
+          </section>
+        </div>
+      ) : null}
+      {pendingBatchArchive ? (
+        <div
+          className="connection-dialog__backdrop"
+          role="presentation"
+          onPointerDown={() => setPendingBatchArchive(null)}
+        >
+          <form
+            className="connection-dialog sftp-dialog"
+            role="dialog"
+            aria-label="压缩选中项"
+            onSubmit={(event) => void confirmBatchArchive(event)}
+            onPointerDown={(event) => event.stopPropagation()}
+          >
+            <div className="connection-form">
+              <header className="connection-dialog__header">
+                <h2>压缩选中项</h2>
+                <button
+                  type="button"
+                  onClick={() => setPendingBatchArchive(null)}
+                  aria-label="关闭"
+                >
+                  ×
+                </button>
+              </header>
+              <label>
+                压缩包名称
+                <input
+                  value={pendingBatchArchive.archiveName}
+                  onChange={(event) =>
+                    setPendingBatchArchive({
+                      ...pendingBatchArchive,
+                      archiveName: event.target.value,
+                    })
+                  }
+                  aria-label="名称"
+                />
+              </label>
+              <div className="sftp-dialog__actions">
+                <button type="button" onClick={() => setPendingBatchArchive(null)}>
+                  取消
+                </button>
+                <button type="submit">确认</button>
+              </div>
+            </div>
+          </form>
         </div>
       ) : null}
       {pendingUpload ? (

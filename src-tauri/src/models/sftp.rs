@@ -29,6 +29,13 @@ pub struct SftpArchiveRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SftpCompressPathsRequest {
+    pub session_id: String,
+    pub archive_name: String,
+    pub paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SftpReadTextFileRequest {
     pub session_id: String,
     pub path: String,
