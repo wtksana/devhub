@@ -7,12 +7,14 @@ use thiserror::Error;
 
 use crate::core::credential_store::CredentialStore;
 use crate::core::settings_store::SettingsStore;
-use crate::models::settings::{ConnectionAuthSettings, ConnectionSettings};
+use crate::models::settings::{ConnectionAuthSettings, ConnectionSettings, SshConnectionSettings};
 
 #[derive(Debug, Error)]
 pub enum SshClientError {
     #[error("connection not found: {0}")]
     ConnectionNotFound(String),
+    #[error("connection is not an ssh connection: {0}")]
+    NotSshConnection(String),
     #[error("credential error: {0}")]
     Credential(String),
     #[error("settings error: {0}")]
@@ -45,14 +47,26 @@ pub fn load_connection(
     settings
         .connections
         .iter()
-        .find(|item| item.id == connection_id)
+        .find(|item| item.id() == connection_id)
         .cloned()
         .ok_or_else(|| SshClientError::ConnectionNotFound(connection_id.to_string()))
 }
 
+pub fn load_ssh_connection(
+    settings_store: &SettingsStore,
+    connection_id: &str,
+) -> Result<SshConnectionSettings> {
+    match load_connection(settings_store, connection_id)? {
+        ConnectionSettings::Ssh(connection) => Ok(connection),
+        ConnectionSettings::Redis(_) => {
+            Err(SshClientError::NotSshConnection(connection_id.to_string()))
+        }
+    }
+}
+
 pub fn resolve_auth(
     _credential_store: &CredentialStore,
-    connection: &ConnectionSettings,
+    connection: &SshConnectionSettings,
 ) -> Result<ResolvedAuth> {
     match &connection.auth {
         ConnectionAuthSettings::Password { password } => {
@@ -69,7 +83,7 @@ pub fn resolve_auth(
 }
 
 pub fn connect_authenticated(
-    connection: &ConnectionSettings,
+    connection: &SshConnectionSettings,
     auth: ResolvedAuth,
     read_timeout: Duration,
     write_timeout: Duration,
@@ -95,8 +109,8 @@ pub fn connect_from_stores(
     connection_id: &str,
     read_timeout: Duration,
     write_timeout: Duration,
-) -> Result<(Session, ConnectionSettings)> {
-    let connection = load_connection(settings_store, connection_id)?;
+) -> Result<(Session, SshConnectionSettings)> {
+    let connection = load_ssh_connection(settings_store, connection_id)?;
     let auth = resolve_auth(credential_store, &connection)?;
     let ssh = connect_authenticated(&connection, auth, read_timeout, write_timeout)?;
     Ok((ssh, connection))

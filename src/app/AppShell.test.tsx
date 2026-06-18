@@ -43,6 +43,16 @@ const remoteConnection = {
   },
 };
 
+const redisConnection = {
+  kind: "redis" as const,
+  id: "redis-local",
+  name: "本地 Redis",
+  host: "127.0.0.1",
+  port: 6379,
+  database: 1,
+  password: "redis-password",
+};
+
 vi.mock("../features/settings/useSettings", () => ({
   useSettings: () => ({
     settings,
@@ -182,12 +192,28 @@ describe("AppShell", () => {
     expect(shell).toHaveStyle({
       fontFamily: "Zed Sans",
       fontSize: "15px",
+      "--ui-font-family": "Zed Sans",
       "--ui-font-size": "15px",
       "--ui-font-size-small": "14px",
       "--ui-font-size-large": "17px",
       "--terminal-font-family": "Maple Mono",
       "--terminal-font-size": "16px",
       "--connection-sidebar-width": "280px",
+    });
+  });
+
+  it("applies default font settings to shell CSS variables", () => {
+    render(<AppShell />);
+
+    expect(screen.getByRole("main")).toHaveStyle({
+      fontFamily: "Consolas",
+      fontSize: "16px",
+      "--ui-font-family": "Consolas",
+      "--ui-font-size": "16px",
+      "--ui-font-size-small": "15px",
+      "--ui-font-size-large": "18px",
+      "--terminal-font-family": "Consolas",
+      "--terminal-font-size": "14px",
     });
   });
 
@@ -227,6 +253,44 @@ describe("AppShell", () => {
 
     expect(screen.queryByRole("button", { name: "生产 Web" })).not.toBeInTheDocument();
     expect(callBackendMock).toHaveBeenCalledWith("close_terminal", { sessionId: "session-1" });
+  });
+
+  it("opens a Redis workspace tab from a Redis connection", async () => {
+    settings = {
+      ...createSettings(),
+      connections: [redisConnection],
+    };
+    callBackendMock.mockImplementation((command) => {
+      if (command === "list_redis_keys") {
+        return Promise.resolve({
+          total_count: 1,
+          entries: [
+            { key: "user:1", key_type: "hash", ttl: -1 },
+          ],
+        });
+      }
+      return Promise.resolve({ session_id: "session-1" });
+    });
+
+    render(<AppShell />);
+
+    await userEvent.dblClick(screen.getByText("本地 Redis").closest("li") as HTMLElement);
+
+    expect(within(screen.getByLabelText("工作区标签")).getByRole("button", { name: "本地 Redis" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByLabelText("Redis key 列表")).toBeInTheDocument();
+    await userEvent.click(await screen.findByRole("button", { name: "展开 user" }));
+    await screen.findByText("user:1");
+    expect(callBackendMock).toHaveBeenCalledWith("list_redis_keys", {
+      request: {
+        connection_id: "redis-local",
+        database: 1,
+        pattern: "*",
+        count: 5000,
+      },
+    });
   });
 
   it("toggles panels from the status bar", async () => {

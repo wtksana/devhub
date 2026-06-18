@@ -88,7 +88,7 @@ fn reject_sensitive_fields(value: &Value, path: &[String]) -> Result<(), Setting
                 let mut next_path = path.to_vec();
                 next_path.push(key.clone());
                 if FORBIDDEN_KEYS.contains(&key.as_str())
-                    && !is_allowed_connection_secret_path(&next_path)
+                    && !is_allowed_connection_secret_path(&next_path, object)
                 {
                     return Err(SettingsStoreError::SensitiveField(key.clone()));
                 }
@@ -108,9 +108,19 @@ fn reject_sensitive_fields(value: &Value, path: &[String]) -> Result<(), Setting
     Ok(())
 }
 
-fn is_allowed_connection_secret_path(path: &[String]) -> bool {
-    path.len() == 4
+fn is_allowed_connection_secret_path(
+    path: &[String],
+    parent: &serde_json::Map<String, Value>,
+) -> bool {
+    (path.len() == 4
         && path[0] == "connections"
         && path[2] == "auth"
-        && (path[3] == "password" || path[3] == "passphrase")
+        && (path[3] == "password" || path[3] == "passphrase"))
+        || (path.len() == 3
+            && path[0] == "connections"
+            && path[2] == "password"
+            && parent
+                .get("kind")
+                .and_then(Value::as_str)
+                .is_some_and(|kind| kind == "redis"))
 }

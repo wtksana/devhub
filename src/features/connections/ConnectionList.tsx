@@ -1,8 +1,10 @@
 import { useMemo, useState, type FormEvent } from "react";
-import type { ConnectionAuthSettings, ConnectionSettings } from "../settings/settingsTypes";
+import type { ConnectionAuthSettings, ConnectionSettings, SshConnectionSettings } from "../settings/settingsTypes";
 import { ContextMenu, type ContextMenuState } from "../../app/ContextMenu";
 import { pickPrivateKeyFile } from "../../lib/fileDialog";
+import { callBackend } from "../../lib/tauri";
 import sshConnectionIcon from "../../assets/icons/devicon--powershell.png";
+import redisConnectionIcon from "../../assets/icons/devicon--redis.png";
 import { useI18n } from "../../i18n/useI18n";
 
 interface ConnectionListProps {
@@ -10,6 +12,7 @@ interface ConnectionListProps {
   onOpenTerminal: (connectionId: string) => void;
   onOpenNewTerminal: (connectionId: string) => void;
   onOpenSftp: (connectionId: string) => void;
+  onOpenRedis: (connectionId: string) => void;
   onAddConnection: (connection: ConnectionSettings) => void;
   onUpdateConnection: (connection: ConnectionSettings) => void;
   connectionGroups: string[];
@@ -19,9 +22,18 @@ interface ConnectionListProps {
 const localConnectionId = "local";
 const ungroupedName = "未分组";
 type ConnectionSortMode = "name" | "last_connected_at" | "connection_count";
+type ConnectionKind = "ssh" | "redis";
 
-function createConnectionId(host: string) {
-  return `ssh-${host.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "connection"}-${Date.now()}`;
+function connectionKind(connection: ConnectionSettings): ConnectionKind {
+  return connection.kind === "redis" ? "redis" : "ssh";
+}
+
+function isSshConnection(connection: ConnectionSettings): connection is SshConnectionSettings {
+  return connection.kind !== "redis";
+}
+
+function createConnectionId(kind: ConnectionKind, host: string) {
+  return `${kind}-${host.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "connection"}-${Date.now()}`;
 }
 
 type ConnectionDialogMode = "add" | "edit" | "copy";
@@ -83,6 +95,7 @@ export function ConnectionList({
   onOpenTerminal,
   onOpenNewTerminal,
   onOpenSftp,
+  onOpenRedis,
   onAddConnection,
   onUpdateConnection,
   connectionGroups,
@@ -93,11 +106,13 @@ export function ConnectionList({
   const [sourceConnection, setSourceConnection] = useState<ConnectionSettings | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [isGroupDialogOpen, setIsGroupDialogOpen] = useState(false);
+  const [kind, setKind] = useState<ConnectionKind>("ssh");
   const [name, setName] = useState("");
   const [newGroupName, setNewGroupName] = useState("");
   const [group, setGroup] = useState("");
   const [host, setHost] = useState("");
   const [port, setPort] = useState(22);
+  const [database, setDatabase] = useState(0);
   const [username, setUsername] = useState("");
   const [authType, setAuthType] = useState<ConnectionAuthSettings["type"]>("password");
   const [password, setPassword] = useState("");
@@ -105,6 +120,8 @@ export function ConnectionList({
   const [privateKeyPassphrase, setPrivateKeyPassphrase] = useState("");
   const [groupSortMode, setGroupSortMode] = useState<ConnectionSortMode>("name");
   const [connectionSortMode, setConnectionSortMode] = useState<ConnectionSortMode>("name");
+  const [redisTestMessage, setRedisTestMessage] = useState("");
+  const [connectionDialogMessage, setConnectionDialogMessage] = useState("");
   const groupNames = useMemo(
     () =>
       Array.from(
@@ -139,6 +156,11 @@ export function ConnectionList({
   }, [connectionSortMode, connections, groupNames, groupSortMode]);
 
   function dialogTitle(mode: ConnectionDialogMode) {
+    if (kind === "redis") {
+      if (mode === "edit") return t("connections.edit_redis");
+      if (mode === "copy") return t("connections.copy_redis");
+      return t("connections.add_redis");
+    }
     if (mode === "edit") return t("connections.edit_ssh");
     if (mode === "copy") return t("connections.copy_ssh");
     return t("connections.add_ssh");
@@ -148,8 +170,36 @@ export function ConnectionList({
     return groupName === ungroupedName ? t("connections.ungrouped") : groupName;
   }
 
+  function redisConnectionFromForm(id: string): ConnectionSettings {
+    return {
+      kind: "redis",
+      ...(group.trim() ? { group: group.trim() } : {}),
+      id,
+      name: name.trim(),
+      host: host.trim(),
+      port,
+      database,
+      ...(password ? { password } : {}),
+    };
+  }
+
   function submitConnection(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (kind === "redis") {
+      const nextConnection = redisConnectionFromForm(
+        dialogMode === "edit" && sourceConnection ? sourceConnection.id : createConnectionId("redis", host),
+      );
+
+      if (dialogMode === "edit") {
+        onUpdateConnection(nextConnection);
+      } else {
+        onAddConnection(nextConnection);
+      }
+
+      closeConnectionDialog();
+      return;
+    }
+
     const auth: ConnectionAuthSettings =
       authType === "private_key"
         ? {
@@ -163,7 +213,7 @@ export function ConnectionList({
           };
     const nextConnection: ConnectionSettings = {
       ...(group.trim() ? { group: group.trim() } : {}),
-      id: dialogMode === "edit" && sourceConnection ? sourceConnection.id : createConnectionId(host),
+      id: dialogMode === "edit" && sourceConnection ? sourceConnection.id : createConnectionId("ssh", host),
       name: name.trim(),
       host: host.trim(),
       port,
@@ -181,12 +231,24 @@ export function ConnectionList({
   }
 
   function openConnectionDialog(mode: ConnectionDialogMode, connection?: ConnectionSettings) {
+    const nextKind = connection ? connectionKind(connection) : "ssh";
     setDialogMode(mode);
     setSourceConnection(connection ?? null);
+    setKind(nextKind);
     setName(connection?.name ?? "");
     setGroup(connection?.group ?? "");
     setHost(connection?.host ?? "");
-    setPort(connection?.port ?? 22);
+    setPort(connection?.port ?? (nextKind === "redis" ? 6379 : 22));
+    if (connection?.kind === "redis") {
+      setDatabase(connection.database);
+      setUsername("");
+      setAuthType("password");
+      setPassword(connection.password ?? "");
+      setPrivateKeyPath("");
+      setPrivateKeyPassphrase("");
+      return;
+    }
+    setDatabase(0);
     setUsername(connection?.username ?? "");
     setAuthType(connection?.auth.type ?? "password");
     setPassword(connection?.auth.type === "password" ? connection.auth.password : "");
@@ -197,15 +259,64 @@ export function ConnectionList({
   function closeConnectionDialog() {
     setDialogMode(null);
     setSourceConnection(null);
+    setKind("ssh");
     setName("");
     setGroup("");
     setHost("");
     setPort(22);
+    setDatabase(0);
     setUsername("");
     setAuthType("password");
     setPassword("");
     setPrivateKeyPath("");
     setPrivateKeyPassphrase("");
+    setConnectionDialogMessage("");
+  }
+
+  async function testRedisConnection(connectionId: string) {
+    const connectionName = connections.find((connection) => connection.id === connectionId)?.name ?? connectionId;
+    setRedisTestMessage(t("connections.test_running", { name: connectionName }));
+    try {
+      const result = await callBackend<string>("test_redis_connection", { connectionId });
+      setRedisTestMessage(t("connections.test_success", { name: connectionName, message: result }));
+    } catch (error) {
+      setRedisTestMessage(t("connections.test_failed", { name: connectionName, message: String(error) }));
+    }
+  }
+
+  async function testRedisConnectionForm() {
+    const connection = redisConnectionFromForm(sourceConnection?.id ?? "redis-form-test");
+    const connectionName = connection.name || connection.id;
+    const validationMessage = validateRedisConnection(connection);
+    if (validationMessage) {
+      setConnectionDialogMessage(validationMessage);
+      return;
+    }
+
+    setConnectionDialogMessage(t("connections.test_running", { name: connectionName }));
+    try {
+      const result = await callBackend<string>("test_redis_connection_config", { connection });
+      setConnectionDialogMessage(t("connections.test_success", { name: connectionName, message: result }));
+    } catch (error) {
+      setConnectionDialogMessage(t("connections.test_failed", { name: connectionName, message: String(error) }));
+    }
+  }
+
+  function validateRedisConnection(connection: ConnectionSettings) {
+    if (connection.kind !== "redis") return "";
+    if (!connection.name) return t("connections.validation_name_required");
+    if (!connection.host) return t("connections.validation_host_required");
+    if (!Number.isInteger(connection.port) || connection.port < 1 || connection.port > 65535) return t("connections.validation_port_invalid");
+    if (!Number.isInteger(connection.database) || connection.database < 0) return t("connections.validation_database_invalid");
+    return "";
+  }
+
+  function activateConnection(connection: ConnectionSettings) {
+    if (connectionKind(connection) === "redis") {
+      onOpenRedis(connection.id);
+      return;
+    }
+    onOpenTerminal(connection.id);
   }
 
   async function choosePrivateKeyFile() {
@@ -245,9 +356,13 @@ export function ConnectionList({
       x: event.clientX,
       y: event.clientY,
       items: [
-        { label: t("connections.open"), onSelect: () => onOpenTerminal(connection.id) },
-        { label: t("connections.open_new_tab"), onSelect: () => onOpenNewTerminal(connection.id) },
-        { label: "SFTP", onSelect: () => onOpenSftp(connection.id) },
+        ...(connectionKind(connection) === "redis"
+          ? [{ label: t("connections.test_connection"), onSelect: () => void testRedisConnection(connection.id) }]
+          : [
+              { label: t("connections.open"), onSelect: () => onOpenTerminal(connection.id) },
+              { label: t("connections.open_new_tab"), onSelect: () => onOpenNewTerminal(connection.id) },
+              { label: "SFTP", onSelect: () => onOpenSftp(connection.id) },
+            ]),
         { label: t("connections.edit"), onSelect: () => openConnectionDialog("edit", connection) },
         { label: t("connections.copy"), onSelect: () => openConnectionDialog("copy", connection) },
         { type: "separator" },
@@ -299,6 +414,11 @@ export function ConnectionList({
           {t("connections.add")}
         </button>
       </header>
+      {redisTestMessage ? (
+        <p className="connection-list__status" role="status">
+          {redisTestMessage}
+        </p>
+      ) : null}
       {dialogMode ? (
         <div className="connection-dialog__backdrop">
           <div className="connection-dialog" role="dialog" aria-modal="true" aria-labelledby="connection-dialog-title">
@@ -309,6 +429,22 @@ export function ConnectionList({
                   ×
                 </button>
               </header>
+              <label>
+                <span>{t("connections.type")}</span>
+                <select
+                  aria-label={t("connections.type")}
+                  value={kind}
+                  onChange={(event) => {
+                    const nextKind = event.target.value as ConnectionKind;
+                    setKind(nextKind);
+                    setPort(nextKind === "redis" ? 6379 : 22);
+                  }}
+                  disabled={dialogMode === "edit"}
+                >
+                  <option value="ssh">{t("connections.type_ssh")}</option>
+                  <option value="redis">{t("connections.type_redis")}</option>
+                </select>
+              </label>
               <label>
                 <span>{t("connections.name")}</span>
                 <input aria-label={t("connections.name")} value={name} onChange={(event) => setName(event.target.value)} required />
@@ -343,63 +479,104 @@ export function ConnectionList({
                   required
                 />
               </label>
-              <label>
-                <span>{t("connections.username")}</span>
-                <input aria-label={t("connections.username")} value={username} onChange={(event) => setUsername(event.target.value)} required />
-              </label>
-              <label>
-                <span>{t("connections.auth_type")}</span>
-                <select
-                  aria-label={t("connections.auth_type")}
-                  value={authType}
-                  onChange={(event) => setAuthType(event.target.value as ConnectionAuthSettings["type"])}
-                >
-                  <option value="password">{t("connections.password")}</option>
-                  <option value="private_key">{t("connections.private_key")}</option>
-                </select>
-              </label>
-              {authType === "password" ? (
-                <label>
-                  <span>{t("connections.password")}</span>
-                  <input
-                    aria-label={t("connections.password")}
-                    type="password"
-                    value={password}
-                    onChange={(event) => setPassword(event.target.value)}
-                  />
-                </label>
-              ) : (
+              {kind === "redis" ? (
                 <>
                   <label>
-                    <span>{t("connections.private_key_path")}</span>
-                    <div className="connection-form__inline-field">
-                      <input
-                        aria-label={t("connections.private_key_path")}
-                        value={privateKeyPath}
-                        onChange={(event) => setPrivateKeyPath(event.target.value)}
-                        required
-                      />
-                      <button type="button" onClick={() => void choosePrivateKeyFile()}>
-                        {t("connections.pick_private_key")}
-                      </button>
-                    </div>
+                    <span>{t("connections.database")}</span>
+                    <input
+                      aria-label={t("connections.database")}
+                      type="number"
+                      min={0}
+                      value={database}
+                      onChange={(event) => setDatabase(Number(event.target.value))}
+                      required
+                    />
                   </label>
                   <label>
-                    <span>{t("connections.private_key_passphrase")}</span>
+                    <span>{t("connections.redis_password")}</span>
                     <input
-                      aria-label={t("connections.private_key_passphrase")}
+                      aria-label={t("connections.redis_password")}
                       type="password"
-                      value={privateKeyPassphrase}
-                      onChange={(event) => setPrivateKeyPassphrase(event.target.value)}
+                      value={password}
+                      onChange={(event) => setPassword(event.target.value)}
                     />
                   </label>
                 </>
+              ) : (
+                <>
+                  <label>
+                    <span>{t("connections.username")}</span>
+                    <input aria-label={t("connections.username")} value={username} onChange={(event) => setUsername(event.target.value)} required />
+                  </label>
+                  <label>
+                    <span>{t("connections.auth_type")}</span>
+                    <select
+                      aria-label={t("connections.auth_type")}
+                      value={authType}
+                      onChange={(event) => setAuthType(event.target.value as ConnectionAuthSettings["type"])}
+                    >
+                      <option value="password">{t("connections.password")}</option>
+                      <option value="private_key">{t("connections.private_key")}</option>
+                    </select>
+                  </label>
+                  {authType === "password" ? (
+                    <label>
+                      <span>{t("connections.password")}</span>
+                      <input
+                        aria-label={t("connections.password")}
+                        type="password"
+                        value={password}
+                        onChange={(event) => setPassword(event.target.value)}
+                      />
+                    </label>
+                  ) : (
+                    <>
+                      <label>
+                        <span>{t("connections.private_key_path")}</span>
+                        <div className="connection-form__inline-field">
+                          <input
+                            aria-label={t("connections.private_key_path")}
+                            value={privateKeyPath}
+                            onChange={(event) => setPrivateKeyPath(event.target.value)}
+                            required
+                          />
+                          <button type="button" onClick={() => void choosePrivateKeyFile()}>
+                            {t("connections.pick_private_key")}
+                          </button>
+                        </div>
+                      </label>
+                      <label>
+                        <span>{t("connections.private_key_passphrase")}</span>
+                        <input
+                          aria-label={t("connections.private_key_passphrase")}
+                          type="password"
+                          value={privateKeyPassphrase}
+                          onChange={(event) => setPrivateKeyPassphrase(event.target.value)}
+                        />
+                      </label>
+                    </>
+                  )}
+                </>
               )}
+              {connectionDialogMessage ? (
+                <p className="connection-dialog__status" role="status">
+                  {connectionDialogMessage}
+                </p>
+              ) : null}
               <footer>
-                <button type="button" onClick={closeConnectionDialog}>
-                  {t("connections.cancel")}
-                </button>
-                <button type="submit">{t("connections.save")}</button>
+                <div>
+                  {kind === "redis" ? (
+                    <button type="button" onClick={() => void testRedisConnectionForm()}>
+                      {t("connections.test_connection")}
+                    </button>
+                  ) : null}
+                </div>
+                <div>
+                  <button type="button" onClick={closeConnectionDialog}>
+                    {t("connections.cancel")}
+                  </button>
+                  <button type="submit">{t("connections.save")}</button>
+                </div>
               </footer>
             </form>
           </div>
@@ -455,15 +632,20 @@ export function ConnectionList({
               {groupConnections.map((connection) => (
                 <li
                   key={connection.id}
-                  onDoubleClick={() => onOpenTerminal(connection.id)}
+                  onDoubleClick={() => activateConnection(connection)}
                   onContextMenu={(event) => openConnectionContextMenu(event, connection)}
                 >
                   <strong>
-                    <img src={sshConnectionIcon} alt={t("connections.ssh_icon")} />
+                    <img
+                      src={connectionKind(connection) === "redis" ? redisConnectionIcon : sshConnectionIcon}
+                      alt={connectionKind(connection) === "redis" ? t("connections.redis_icon") : t("connections.ssh_icon")}
+                    />
                     {connection.name}
                   </strong>
                   <span>
-                    {connection.username}@{connection.host}:{connection.port}
+                    {isSshConnection(connection)
+                      ? `${connection.username}@${connection.host}:${connection.port}`
+                      : `redis://${connection.host}:${connection.port}/${connection.database}`}
                   </span>
                 </li>
               ))}

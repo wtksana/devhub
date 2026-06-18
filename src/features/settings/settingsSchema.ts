@@ -17,19 +17,23 @@ function assertNoSensitiveKeys(value: unknown, path: string[] = []): void {
 
   for (const [key, child] of Object.entries(value)) {
     const nextPath = [...path, key];
-    if (forbiddenSensitiveKeys.includes(key) && !isAllowedSensitivePath(nextPath)) {
+    if (forbiddenSensitiveKeys.includes(key) && !isAllowedSensitivePath(nextPath, value)) {
       throw new Error(`sensitive field is not allowed in settings.json: ${[...path, key].join(".")}`);
     }
     assertNoSensitiveKeys(child, nextPath);
   }
 }
 
-function isAllowedSensitivePath(path: string[]): boolean {
+function isAllowedSensitivePath(path: string[], parent: unknown): boolean {
   return (
-    path.length === 4 &&
-    path[0] === "connections" &&
-    path[2] === "auth" &&
-    (path[3] === "password" || path[3] === "passphrase")
+    (path.length === 4 &&
+      path[0] === "connections" &&
+      path[2] === "auth" &&
+      (path[3] === "password" || path[3] === "passphrase")) ||
+    (path.length === 3 &&
+      path[0] === "connections" &&
+      path[2] === "password" &&
+      Boolean(parent && typeof parent === "object" && !Array.isArray(parent) && "kind" in parent && parent.kind === "redis"))
   );
 }
 
@@ -45,19 +49,35 @@ const authSchema = z.discriminatedUnion("type", [
   }),
 ]);
 
-const connectionSchema = z.object({
+const groupSchema = z
+  .string()
+  .nullable()
+  .optional()
+  .transform((value) => value ?? undefined);
+
+const sshConnectionSchema = z.object({
+  kind: z.literal("ssh").optional(),
   id: z.string().min(1),
   name: z.string().min(1),
-  group: z
-    .string()
-    .nullable()
-    .optional()
-    .transform((value) => value ?? undefined),
+  group: groupSchema,
   host: z.string().min(1),
   port: z.number().int().min(1).max(65535),
   username: z.string().min(1),
   auth: authSchema,
 });
+
+const redisConnectionSchema = z.object({
+  kind: z.literal("redis"),
+  id: z.string().min(1),
+  name: z.string().min(1),
+  group: groupSchema,
+  host: z.string().min(1),
+  port: z.number().int().min(1).max(65535),
+  database: z.number().int().min(0),
+  password: z.string().optional(),
+});
+
+const connectionSchema = z.union([redisConnectionSchema, sshConnectionSchema]);
 
 export const devHubSettingsSchema = z.object({
   appearance: z.object({

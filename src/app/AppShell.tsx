@@ -5,7 +5,9 @@ import { DockPanel } from "./DockPanel";
 import { StatusBar } from "./StatusBar";
 import { WorkspaceTabs, type WorkspaceTabItem } from "./WorkspaceTabs";
 import { ConnectionList } from "../features/connections/ConnectionList";
+import { RedisWorkspace } from "../features/redis/RedisWorkspace";
 import { SettingsPanel } from "../features/settings/SettingsPanel";
+import type { RedisConnectionSettings } from "../features/settings/settingsTypes";
 import { SftpWorkspace } from "../features/sftp/SftpWorkspace";
 import { useSettings } from "../features/settings/useSettings";
 import { TerminalWorkspace } from "../features/terminal/TerminalWorkspace";
@@ -26,11 +28,21 @@ interface SftpWorkspaceTab extends WorkspaceTabItem {
   connectionId: string;
 }
 
-type AppWorkspaceTab = SettingsWorkspaceTab | TerminalWorkspaceTab | SftpWorkspaceTab;
+interface RedisWorkspaceTab extends WorkspaceTabItem {
+  kind: "redis";
+  connectionId: string;
+}
+
+type AppWorkspaceTab = SettingsWorkspaceTab | TerminalWorkspaceTab | SftpWorkspaceTab | RedisWorkspaceTab;
 
 function connectionTitle(connectionId: string, settings: ReturnType<typeof useSettings>["settings"], localTitle: string) {
   if (connectionId === "local") return localTitle;
   return settings.connections.find((connection) => connection.id === connectionId)?.name ?? connectionId;
+}
+
+function redisConnection(connectionId: string, settings: ReturnType<typeof useSettings>["settings"]): RedisConnectionSettings | null {
+  const connection = settings.connections.find((item) => item.id === connectionId);
+  return connection?.kind === "redis" ? connection : null;
 }
 
 export function AppShell() {
@@ -129,6 +141,23 @@ function AppShellContent({ settingsState }: { settingsState: ReturnType<typeof u
     setActiveTabId(tabId);
   }
 
+  function openRedisTab(connectionId: string) {
+    const tabId = `redis:${connectionId}`;
+    setWorkspaceTabs((tabs) => {
+      if (tabs.some((tab) => tab.id === tabId)) return tabs;
+      return [
+        ...tabs,
+        {
+          id: tabId,
+          kind: "redis",
+          connectionId,
+          title: connectionTitle(connectionId, settings, t("connections.type_redis")),
+        },
+      ];
+    });
+    setActiveTabId(tabId);
+  }
+
   function openSettingsTab() {
     setWorkspaceTabs((tabs) => {
       if (tabs.some((tab) => tab.id === "settings")) return tabs;
@@ -220,6 +249,7 @@ function AppShellContent({ settingsState }: { settingsState: ReturnType<typeof u
       style={{
         fontFamily: settings.appearance.ui_font_family,
         fontSize: `${uiFontSize}px`,
+        "--ui-font-family": settings.appearance.ui_font_family,
         "--ui-font-size": `${uiFontSize}px`,
         "--ui-font-size-small": `${Math.max(10, uiFontSize - 1)}px`,
         "--ui-font-size-large": `${uiFontSize + 2}px`,
@@ -262,6 +292,9 @@ function AppShellContent({ settingsState }: { settingsState: ReturnType<typeof u
               onOpenSftp={(connectionId) => {
                 openSftpTab(connectionId);
               }}
+              onOpenRedis={(connectionId) => {
+                openRedisTab(connectionId);
+              }}
             />
           </DockPanel>
         ) : null}
@@ -286,6 +319,12 @@ function AppShellContent({ settingsState }: { settingsState: ReturnType<typeof u
               ) : null}
               {tab.kind === "sftp" ? (
                 <SftpWorkspace connectionId={tab.connectionId} sizeUnit={settings.sftp.file_size_unit} />
+              ) : null}
+              {tab.kind === "redis" ? (
+                <RedisWorkspace
+                  connectionId={tab.connectionId}
+                  initialDatabase={redisConnection(tab.connectionId, settings)?.database ?? 0}
+                />
               ) : null}
               {tab.kind === "settings" ? <SettingsPanel settingsState={settingsState} /> : null}
             </div>

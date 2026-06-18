@@ -430,6 +430,9 @@ impl From<SshClientError> for SftpSessionError {
             SshClientError::ConnectionNotFound(connection_id) => {
                 SftpSessionError::ConnectionNotFound(connection_id)
             }
+            SshClientError::NotSshConnection(connection_id) => SftpSessionError::Settings(format!(
+                "connection is not an ssh connection: {connection_id}"
+            )),
             SshClientError::Credential(message) => SftpSessionError::Credential(message),
             SshClientError::Settings(message) => SftpSessionError::Settings(message),
             SshClientError::Ssh(message) => SftpSessionError::Ssh(message),

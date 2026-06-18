@@ -1,4 +1,6 @@
-use serde::{Deserialize, Serialize};
+use serde::de::Error as DeError;
+use serde::ser::SerializeStruct;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AppearanceSettings {
@@ -49,7 +51,9 @@ pub enum ConnectionAuthSettings {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct ConnectionSettings {
+pub struct SshConnectionSettings {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
     pub id: String,
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -58,6 +62,88 @@ pub struct ConnectionSettings {
     pub port: u16,
     pub username: String,
     pub auth: ConnectionAuthSettings,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RedisConnectionSettings {
+    pub id: String,
+    pub name: String,
+    pub group: Option<String>,
+    pub host: String,
+    pub port: u16,
+    pub database: u16,
+    pub password: Option<String>,
+}
+
+impl Serialize for RedisConnectionSettings {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut state = serializer.serialize_struct("RedisConnectionSettings", 8)?;
+        state.serialize_field("kind", "redis")?;
+        state.serialize_field("id", &self.id)?;
+        state.serialize_field("name", &self.name)?;
+        if let Some(group) = &self.group {
+            state.serialize_field("group", group)?;
+        }
+        state.serialize_field("host", &self.host)?;
+        state.serialize_field("port", &self.port)?;
+        state.serialize_field("database", &self.database)?;
+        if let Some(password) = &self.password {
+            state.serialize_field("password", password)?;
+        }
+        state.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for RedisConnectionSettings {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct RedisConnectionSettingsValue {
+            kind: String,
+            id: String,
+            name: String,
+            group: Option<String>,
+            host: String,
+            port: u16,
+            database: u16,
+            password: Option<String>,
+        }
+
+        let value = RedisConnectionSettingsValue::deserialize(deserializer)?;
+        if value.kind != "redis" {
+            return Err(D::Error::custom("expected redis connection kind"));
+        }
+        Ok(Self {
+            id: value.id,
+            name: value.name,
+            group: value.group,
+            host: value.host,
+            port: value.port,
+            database: value.database,
+            password: value.password,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum ConnectionSettings {
+    Redis(RedisConnectionSettings),
+    Ssh(SshConnectionSettings),
+}
+
+impl ConnectionSettings {
+    pub fn id(&self) -> &str {
+        match self {
+            ConnectionSettings::Redis(connection) => &connection.id,
+            ConnectionSettings::Ssh(connection) => &connection.id,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

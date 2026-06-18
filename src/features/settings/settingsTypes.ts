@@ -32,7 +32,8 @@ export interface PrivateKeyAuthSettings {
 
 export type ConnectionAuthSettings = PasswordAuthSettings | PrivateKeyAuthSettings;
 
-export interface ConnectionSettings {
+export interface SshConnectionSettings {
+  kind?: "ssh";
   id: string;
   name: string;
   group?: string;
@@ -41,6 +42,19 @@ export interface ConnectionSettings {
   username: string;
   auth: ConnectionAuthSettings;
 }
+
+export interface RedisConnectionSettings {
+  kind: "redis";
+  id: string;
+  name: string;
+  group?: string;
+  host: string;
+  port: number;
+  database: number;
+  password?: string;
+}
+
+export type ConnectionSettings = SshConnectionSettings | RedisConnectionSettings;
 
 export interface DevHubSettings {
   appearance: AppearanceSettings;

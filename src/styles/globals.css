@@ -1,9 +1,15 @@
 :root {
-  font-family: Inter, "Segoe UI", sans-serif;
+  font-family: Consolas, "Segoe UI", sans-serif;
   color: #abb2bf;
   background: #282c34;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
+  --ui-font-family: Consolas;
+  --ui-font-size: 16px;
+  --ui-font-size-small: 15px;
+  --ui-font-size-large: 18px;
+  --terminal-font-family: Consolas;
+  --terminal-font-size: 14px;
   --bg: #282c34;
   --panel: #21252b;
   --panel-soft: #252931;
@@ -176,7 +182,7 @@ p {
   overflow: hidden;
   background: var(--bg);
   color: var(--text);
-  font-size: var(--ui-font-size, 13px);
+  font-size: var(--ui-font-size, 16px);
 }
 
 .app-shell[data-theme="light"] {
@@ -351,7 +357,7 @@ p {
   height: 24px;
   padding: 0 9px;
   color: var(--muted);
-  font-size: var(--ui-font-size-small, 12px);
+  font-size: var(--ui-font-size-small, 15px);
   line-height: 24px;
 }
 
@@ -588,7 +594,16 @@ p {
   list-style: none;
   margin: 0;
   padding: 6px;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.connection-list__status {
+  margin: 0;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--muted);
+  font-size: var(--ui-font-size-small, 15px);
 }
 
 .connection-dialog__backdrop {
@@ -627,7 +642,7 @@ p {
 
 .connection-form label span {
   color: var(--muted);
-  font-size: var(--ui-font-size-small, 12px);
+  font-size: var(--ui-font-size-small, 15px);
 }
 
 .connection-form__inline-field {
@@ -669,17 +684,33 @@ p {
   background: transparent;
 }
 
+.connection-dialog__status {
+  margin: 0;
+  padding: 7px 9px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: var(--panel-soft);
+  color: var(--muted);
+  font-size: var(--ui-font-size-small, 15px);
+}
+
 .connection-form footer {
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
   gap: 8px;
   padding-top: 2px;
+}
+
+.connection-form footer > div {
+  display: flex;
+  gap: 8px;
 }
 
 .connection-groups {
   flex: 1 1 auto;
   min-height: 0;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -716,6 +747,7 @@ p {
 .connection-list li {
   display: grid;
   gap: 5px;
+  min-width: 0;
   padding: 8px;
   border-radius: 6px;
   cursor: default;
@@ -730,7 +762,7 @@ p {
   align-items: center;
   gap: 7px;
   min-width: 0;
-  font-size: var(--ui-font-size, 13px);
+  font-size: var(--ui-font-size, 16px);
 }
 
 .connection-list strong img {
@@ -749,6 +781,13 @@ p {
   line-height: 1.5;
 }
 
+.connection-list li > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .empty-state,
 .workspace-empty {
   display: grid;
@@ -763,11 +802,12 @@ p {
 
 .workspace-empty h2 {
   color: var(--text);
-  font-size: var(--ui-font-size-large, 15px);
+  font-size: var(--ui-font-size-large, 18px);
 }
 
 .settings-panel,
 .sftp-workspace,
+.redis-workspace,
 .terminal-workspace {
   min-height: 0;
   overflow: auto;
@@ -874,8 +914,9 @@ p {
 .settings-json h2,
 .settings-section h2,
 .keymap-editor h2,
-.sftp-workspace h2 {
-  font-size: var(--ui-font-size, 13px);
+.sftp-workspace h2,
+.redis-workspace h2 {
+  font-size: var(--ui-font-size, 16px);
   font-weight: 650;
 }
 
@@ -904,7 +945,7 @@ p {
 
 .settings-row__meta h3 {
   margin-bottom: 5px;
-  font-size: var(--ui-font-size, 13px);
+  font-size: var(--ui-font-size, 16px);
   font-weight: 600;
 }
 
@@ -940,7 +981,8 @@ p {
 }
 
 .settings-json header,
-.sftp-workspace > header {
+.sftp-workspace > header,
+.redis-workspace > header {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -949,7 +991,8 @@ p {
 }
 
 .settings-json header h2,
-.sftp-workspace > header h2 {
+.sftp-workspace > header h2,
+.redis-workspace > header h2 {
   margin: 0 auto 0 0;
 }
 
@@ -974,16 +1017,145 @@ p {
   overflow: hidden;
 }
 
-.sftp-workspace > header {
+.sftp-workspace > header,
+.redis-workspace > header {
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--panel);
 }
 
-.sftp-workspace input {
-  width: min(460px, 50vw);
+.sftp-workspace input,
+.redis-workspace input {
+  width: min(260px, 50vw);
   height: 26px;
   padding: 0 8px;
+}
+
+.redis-workspace {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  height: 100%;
+  overflow: hidden;
+}
+
+.redis-workspace > header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.redis-workspace > header label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: var(--ui-font-size-small, 15px);
+}
+
+.redis-workspace > header input[aria-label="Redis 数据库"],
+.redis-workspace > header input[aria-label="Redis database"] {
+  width: 64px;
+}
+
+.redis-workspace > header input[aria-label="Key 分隔符"],
+.redis-workspace > header input[aria-label="Key separator"] {
+  width: 64px;
+}
+
+.redis-toolbar__count {
+  min-width: max-content;
+  color: var(--muted);
+  font-size: var(--ui-font-size-small, 15px);
+}
+
+.redis-toolbar__limit {
+  flex: 0 0 auto;
+}
+
+.redis-workspace > header .redis-toolbar__limit input {
+  width: 82px;
+}
+
+.redis-toolbar__keyword {
+  flex: 0 0 240px;
+  width: 240px;
+  margin-left: auto;
+}
+
+.redis-toolbar__keyword input {
+  width: 240px;
+}
+
+.redis-table-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+}
+
+.redis-workspace table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.redis-workspace th,
+.redis-workspace td {
+  height: 30px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--border-subtle);
+  text-align: left;
+}
+
+.redis-workspace th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  color: var(--muted);
+  font-weight: 500;
+  background: var(--panel-soft);
+}
+
+.redis-workspace tbody tr:hover {
+  background: var(--panel-raised);
+}
+
+.redis-folder-row {
+  color: var(--text);
+  background: color-mix(in srgb, var(--panel-soft) 58%, transparent);
+}
+
+.redis-folder-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  height: 30px;
+  border: 0;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  background: transparent;
+  cursor: pointer;
+}
+
+.redis-folder-button span:first-child {
+  width: 10px;
+  color: var(--muted);
+  font-family: var(--terminal-font-family);
+}
+
+.redis-key-name {
+  display: inline-block;
+  color: var(--accent);
+  font-family: var(--terminal-font-family);
+}
+
+.redis-empty {
+  padding: 14px 10px;
+  color: var(--muted);
 }
 
 .sftp-table-scroll {
@@ -1175,7 +1347,7 @@ p {
   min-height: 420px;
   resize: vertical;
   font-family: var(--ui-font-family);
-  font-size: 13px;
+  font-size: var(--ui-font-size, 16px);
   line-height: 1.5;
 }
 
@@ -1255,16 +1427,16 @@ p {
   min-height: 0;
   overflow: hidden;
   background: var(--bg);
-  font-family: var(--terminal-font-family);
-  font-size: var(--terminal-font-size);
+  font-family: var(--terminal-font-family, Consolas);
+  font-size: var(--terminal-font-size, 14px);
 }
 
 .terminal-tab .xterm {
   width: 100% !important;
   height: 100% !important;
   background: var(--terminal-background) !important;
-  font-family: var(--terminal-font-family) !important;
-  font-size: var(--terminal-font-size);
+  font-family: var(--terminal-font-family, Consolas) !important;
+  font-size: var(--terminal-font-size, 14px);
 }
 
 .terminal-tab .xterm-viewport,

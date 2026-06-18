@@ -15,10 +15,10 @@ use uuid::Uuid;
 
 use crate::core::credential_store::CredentialStore;
 use crate::core::settings_store::SettingsStore;
-use crate::models::settings::ConnectionSettings;
+use crate::models::settings::SshConnectionSettings;
 use crate::models::terminal::TerminalOutputEvent;
 use crate::ssh::client::{
-    connect_authenticated, load_connection, resolve_auth, ResolvedAuth, SshClientError,
+    connect_authenticated, load_ssh_connection, resolve_auth, ResolvedAuth, SshClientError,
 };
 
 const TERMINAL_OUTPUT_EVENT: &str = "terminal://output";
@@ -106,7 +106,7 @@ impl SessionManager {
                 .await;
         }
 
-        let connection = load_connection(settings_store, &connection_id)?;
+        let connection = load_ssh_connection(settings_store, &connection_id)?;
         let auth = resolve_auth(credential_store, &connection)?;
         let session_id = Uuid::new_v4().to_string();
         let (tx, input_rx) = mpsc::channel(INPUT_CHANNEL_SIZE);
@@ -333,7 +333,7 @@ fn run_local_worker(
 fn spawn_ssh_worker(
     app: AppHandle,
     session_id: String,
-    connection: ConnectionSettings,
+    connection: SshConnectionSettings,
     auth: crate::ssh::client::ResolvedAuth,
     mut input_rx: mpsc::Receiver<TerminalWorkerMessage>,
     cols: u16,
@@ -357,7 +357,7 @@ fn spawn_ssh_worker(
 fn run_ssh_worker(
     app: &AppHandle,
     session_id: &str,
-    connection: ConnectionSettings,
+    connection: SshConnectionSettings,
     auth: ResolvedAuth,
     input_rx: &mut mpsc::Receiver<TerminalWorkerMessage>,
     cols: u16,
@@ -509,6 +509,9 @@ impl From<SshClientError> for TerminalSessionError {
             SshClientError::ConnectionNotFound(connection_id) => {
                 TerminalSessionError::ConnectionNotFound(connection_id)
             }
+            SshClientError::NotSshConnection(connection_id) => TerminalSessionError::Settings(
+                format!("connection is not an ssh connection: {connection_id}"),
+            ),
             SshClientError::Credential(message) => TerminalSessionError::Credential(message),
             SshClientError::Settings(message) => TerminalSessionError::Settings(message),
             SshClientError::Ssh(message) => TerminalSessionError::Ssh(message),

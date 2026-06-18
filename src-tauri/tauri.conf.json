@@ -16,6 +16,7 @@
         "width": 1280,
         "height": 720,
         "decorations": false,
+        "visible": false,
         "backgroundColor": "#282c34"
       }
     ],

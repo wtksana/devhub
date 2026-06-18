@@ -1,11 +1,12 @@
 use crate::core::credential_store::CredentialStore;
-use crate::models::settings::{ConnectionAuthSettings, ConnectionSettings};
+use crate::models::settings::{ConnectionAuthSettings, SshConnectionSettings};
 use crate::ssh::client::{resolve_auth, ResolvedAuth};
 
 #[test]
 fn resolves_password_auth_from_plain_settings_password() {
     let credential_store = CredentialStore::new("devhub-test");
-    let connection = ConnectionSettings {
+    let connection = SshConnectionSettings {
+        kind: None,
         id: "dev".to_string(),
         name: "Dev".to_string(),
         group: None,

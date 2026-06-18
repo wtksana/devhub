@@ -1,0 +1,181 @@
+import "@testing-library/jest-dom/vitest";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { I18nProvider } from "../../i18n/I18nProvider";
+import { callBackend } from "../../lib/tauri";
+import { RedisWorkspace } from "./RedisWorkspace";
+
+vi.mock("../../lib/tauri", () => ({
+  callBackend: vi.fn(),
+}));
+
+const callBackendMock = vi.mocked(callBackend);
+
+describe("RedisWorkspace", () => {
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+  });
+
+  function renderRedisWorkspace(props: React.ComponentProps<typeof RedisWorkspace>) {
+    return render(
+      <I18nProvider language="zh-CN">
+        <RedisWorkspace {...props} />
+      </I18nProvider>,
+    );
+  }
+
+  it("loads Redis keys for the selected connection and database", async () => {
+    callBackendMock.mockResolvedValueOnce({
+      total_count: 12000,
+      entries: [
+        { key: "user:1", key_type: "hash", ttl: -1 },
+        { key: "cache:token", key_type: "string", ttl: 3600 },
+      ],
+    });
+
+    renderRedisWorkspace({ connectionId: "redis-local", initialDatabase: 1 });
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("list_redis_keys", {
+        request: {
+          connection_id: "redis-local",
+          database: 1,
+          pattern: "*",
+          count: 5000,
+        },
+      });
+    });
+    expect(screen.getByLabelText("Redis key 列表")).toBeInTheDocument();
+    await userEvent.click(await screen.findByRole("button", { name: "展开 user" }));
+    await userEvent.click(screen.getByRole("button", { name: "展开 cache" }));
+    expect(await screen.findByText("user:1")).toBeInTheDocument();
+    expect(screen.getByText("hash")).toBeInTheDocument();
+    expect(screen.getByText("永不过期")).toBeInTheDocument();
+    expect(screen.getByText("3600")).toBeInTheDocument();
+    expect(screen.getByText("共 12000 条数据，已加载 2 条")).toBeInTheDocument();
+    expect(screen.getByLabelText("加载数量")).toHaveValue(5000);
+  });
+
+  it("refreshes Redis keys with the edited database, fuzzy keyword, and load limit", async () => {
+    callBackendMock.mockResolvedValueOnce({ total_count: 0, entries: [] });
+    callBackendMock.mockResolvedValueOnce({
+      total_count: 320,
+      entries: [
+        { key: "session:1", key_type: "string", ttl: -1 },
+      ],
+    });
+
+    renderRedisWorkspace({ connectionId: "redis-local", initialDatabase: 0 });
+
+    await waitFor(() => expect(callBackendMock).toHaveBeenCalledTimes(1));
+    await userEvent.clear(screen.getByLabelText("Redis 数据库"));
+    await userEvent.type(screen.getByLabelText("Redis 数据库"), "2");
+    expect(screen.queryByLabelText("Key pattern")).not.toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText("关键字模糊匹配"), "session");
+    await userEvent.clear(screen.getByLabelText("加载数量"));
+    await userEvent.type(screen.getByLabelText("加载数量"), "2000");
+    await userEvent.click(screen.getByRole("button", { name: "刷新" }));
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenLastCalledWith("list_redis_keys", {
+        request: {
+          connection_id: "redis-local",
+          database: 2,
+          pattern: "*session*",
+          count: 2000,
+        },
+      });
+    });
+    await userEvent.click(await screen.findByRole("button", { name: "展开 session" }));
+    expect(await screen.findByText("session:1")).toBeInTheDocument();
+    expect(screen.getByText("共 320 条数据，已加载 1 条")).toBeInTheDocument();
+  });
+
+  it("groups loaded keys by the editable separator", async () => {
+    callBackendMock.mockResolvedValueOnce({
+      total_count: 4,
+      entries: [
+        { key: "user:1", key_type: "hash", ttl: -1 },
+        { key: "user:2", key_type: "string", ttl: 120 },
+        { key: "order_item_1", key_type: "string", ttl: -1 },
+        { key: "plain", key_type: "string", ttl: -1 },
+      ],
+    });
+
+    renderRedisWorkspace({ connectionId: "redis-local", initialDatabase: 0 });
+
+    expect(await screen.findByRole("button", { name: "展开 user" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Key 分隔符")).toHaveValue(":");
+    expect(screen.queryByText("user:1")).not.toBeInTheDocument();
+    expect(screen.queryByText("user:2")).not.toBeInTheDocument();
+    expect(screen.getByText("plain")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "展开 user" }));
+    expect(screen.getByText("user:1")).toBeInTheDocument();
+    expect(screen.getByText("user:2")).toBeInTheDocument();
+
+    await userEvent.clear(screen.getByLabelText("Key 分隔符"));
+    await userEvent.type(screen.getByLabelText("Key 分隔符"), "_");
+
+    expect(await screen.findByRole("button", { name: "展开 order" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "展开 order/item" })).not.toBeInTheDocument();
+    expect(screen.queryByText("order_item_1")).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "展开 order" }));
+    await userEvent.click(screen.getByRole("button", { name: "展开 order/item" }));
+    expect(screen.getByText("order_item_1")).toBeInTheDocument();
+  });
+
+  it("keeps keys with the same folder prefix together when scan results are interleaved", async () => {
+    callBackendMock.mockResolvedValueOnce({
+      total_count: 5,
+      entries: [
+        { key: "dev:dict:first", key_type: "string", ttl: -1 },
+        { key: "prod:dict:value", key_type: "string", ttl: -1 },
+        { key: "dev:dict:second", key_type: "string", ttl: -1 },
+        { key: "dev:dict:nested:value", key_type: "string", ttl: -1 },
+        { key: "prod:dict:next", key_type: "string", ttl: -1 },
+      ],
+    });
+
+    renderRedisWorkspace({ connectionId: "redis-local", initialDatabase: 0 });
+
+    expect(await screen.findByRole("button", { name: "展开 dev" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "展开 prod" })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "展开 dev" }));
+    await userEvent.click(screen.getByRole("button", { name: "展开 dev/dict" }));
+    await userEvent.click(screen.getByRole("button", { name: "展开 prod" }));
+
+    const rows = screen.getAllByRole("row").map((row) => row.textContent ?? "");
+    const devIndex = rows.findIndex((row) => row.includes("dev"));
+    const devFirstIndex = rows.findIndex((row) => row.includes("dev:dict:first"));
+    const devSecondIndex = rows.findIndex((row) => row.includes("dev:dict:second"));
+    const nestedIndex = rows.findIndex((row) => row.includes("nested"));
+    const prodIndex = rows.findIndex((row) => row.includes("prod"));
+
+    expect(devIndex).toBeLessThan(devFirstIndex);
+    expect(devFirstIndex).toBeLessThan(devSecondIndex);
+    expect(devSecondIndex).toBeLessThan(nestedIndex);
+    expect(nestedIndex).toBeLessThan(prodIndex);
+  });
+
+  it("shows an empty state and load errors", async () => {
+    callBackendMock.mockResolvedValueOnce({ total_count: 0, entries: [] });
+
+    const { rerender } = renderRedisWorkspace({ connectionId: "redis-local", initialDatabase: 0 });
+
+    expect(await screen.findByText("没有匹配的 key")).toBeInTheDocument();
+
+    callBackendMock.mockRejectedValueOnce(new Error("NOAUTH Authentication required"));
+    rerender(
+      <I18nProvider language="zh-CN">
+        <RedisWorkspace connectionId="redis-prod" initialDatabase={0} />
+      </I18nProvider>,
+    );
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("NOAUTH Authentication required");
+  });
+});

@@ -35,6 +35,8 @@ describe("settings schema", () => {
       ],
     });
 
+    expect(settings.connections[0].kind).not.toBe("redis");
+    if (settings.connections[0].kind === "redis") throw new Error("expected SSH connection");
     expect(settings.connections[0].auth.type).toBe("private_key");
     expect(settings.sftp.file_size_unit).toBe("auto");
     expect(settings.connection_groups).toEqual(["production"]);
@@ -84,9 +86,46 @@ describe("settings schema", () => {
       ],
     });
 
+    if (settings.connections[0].kind === "redis") throw new Error("expected SSH connection");
     expect(settings.connections[0].auth).toEqual({
       type: "password",
       password: "plain-password",
+    });
+  });
+
+  it("accepts Redis connections with the real password in settings json", () => {
+    const settings = parseSettings({
+      appearance: {
+        theme: "dark",
+        ui_font_family: "Consolas",
+        ui_font_size: 16,
+        terminal_font_family: "Consolas",
+        terminal_font_size: 14,
+      },
+      layout: {
+        connection_sidebar_width: 280,
+      },
+      connections: [
+        {
+          kind: "redis",
+          id: "redis-local",
+          name: "Local Redis",
+          host: "127.0.0.1",
+          port: 6379,
+          database: 0,
+          password: "redis-password",
+        },
+      ],
+    });
+
+    expect(settings.connections[0]).toEqual({
+      kind: "redis",
+      id: "redis-local",
+      name: "Local Redis",
+      host: "127.0.0.1",
+      port: 6379,
+      database: 0,
+      password: "redis-password",
     });
   });
 
