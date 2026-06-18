@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ContextMenu, type ContextMenuState } from "../../app/ContextMenu";
+import type { ContextMenuItem } from "../../app/ContextMenu";
 import { writeClipboardText } from "../../lib/clipboard";
-import { pickDownloadPath, pickUploadFile } from "../../lib/fileDialog";
+import {
+  pickDownloadDirectory,
+  pickDownloadPath,
+  pickUploadDirectory,
+  pickUploadFile,
+} from "../../lib/fileDialog";
 import { callBackend } from "../../lib/tauri";
 import { listenSftpTransferProgress } from "../../lib/tauriEvents";
 import type { SftpFileSizeUnit } from "../settings/settingsTypes";
@@ -16,10 +22,21 @@ interface SftpWorkspaceProps {
 type SortKey = "name" | "size";
 type SortDirection = "asc" | "desc";
 type SftpDialogState =
-  | { kind: "create-directory"; title: "新建文件夹"; initialValue: ""; entry?: undefined }
-  | { kind: "create-file"; title: "新建文件"; initialValue: ""; entry?: undefined }
+  | {
+      kind: "create-directory";
+      title: "新建文件夹";
+      initialValue: "";
+      entry?: undefined;
+    }
+  | {
+      kind: "create-file";
+      title: "新建文件";
+      initialValue: "";
+      entry?: undefined;
+    }
   | { kind: "rename"; title: "重命名"; initialValue: string; entry: SftpEntry };
 type PendingUpload = {
+  kind: "file" | "directory";
   localPath: string;
   name: string;
   remotePath: string;
@@ -37,11 +54,15 @@ function normalizeRemotePath(value: string) {
 function joinRemotePath(parent: string, name: string) {
   const normalizedName = name.trim().replace(/\\/g, "/").replace(/^\/+/, "");
   if (!normalizedName) return normalizeRemotePath(parent);
-  return parent === "/" ? `/${normalizedName}` : `${parent.replace(/\/+$/, "")}/${normalizedName}`;
+  return parent === "/"
+    ? `/${normalizedName}`
+    : `${parent.replace(/\/+$/, "")}/${normalizedName}`;
 }
 
 function siblingRemotePath(path: string, nextName: string) {
-  const parent = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) || "/" : "/";
+  const parent = path.includes("/")
+    ? path.slice(0, path.lastIndexOf("/")) || "/"
+    : "/";
   return joinRemotePath(parent, nextName);
 }
 
@@ -62,14 +83,21 @@ function getEntryNameClassName(entry: SftpEntry) {
 }
 
 function getDeleteConfirmationText(entry: SftpEntry) {
-  return `确认删除 ${entry.name}${entry.kind === "directory" ? " 文件夹" : ""}？`;
+  return `确认删除 ${entry.name}${entry.kind === "directory" ? " 文件夹及其中全部内容" : ""}？该操作不可逆！`;
 }
 
 function localFileName(path: string) {
   return path.split(/[\\/]/).filter(Boolean).pop() ?? "未命名文件";
 }
 
-export function SftpWorkspace({ connectionId, sizeUnit = "bytes" }: SftpWorkspaceProps) {
+function joinLocalPath(parent: string, name: string) {
+  return `${parent.replace(/[\\/]+$/, "")}\\${name}`;
+}
+
+export function SftpWorkspace({
+  connectionId,
+  sizeUnit = "bytes",
+}: SftpWorkspaceProps) {
   const [path, setPath] = useState("/");
   const [addressPath, setAddressPath] = useState("/");
   const [entries, setEntries] = useState<SftpEntry[]>([]);
@@ -78,12 +106,19 @@ export function SftpWorkspace({ connectionId, sizeUnit = "bytes" }: SftpWorkspac
   const [isLoading, setIsLoading] = useState(false);
   const [backStack, setBackStack] = useState<string[]>([]);
   const [forwardStack, setForwardStack] = useState<string[]>([]);
-  const [sort, setSort] = useState<{ key: SortKey; direction: SortDirection } | null>(null);
+  const [sort, setSort] = useState<{
+    key: SortKey;
+    direction: SortDirection;
+  } | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [dialog, setDialog] = useState<SftpDialogState | null>(null);
   const [dialogName, setDialogName] = useState("");
-  const [deleteCandidate, setDeleteCandidate] = useState<SftpEntry | null>(null);
-  const [pendingUpload, setPendingUpload] = useState<PendingUpload | null>(null);
+  const [deleteCandidate, setDeleteCandidate] = useState<SftpEntry | null>(
+    null,
+  );
+  const [pendingUpload, setPendingUpload] = useState<PendingUpload | null>(
+    null,
+  );
   const [transferTasks, setTransferTasks] = useState<TransferTask[]>([]);
   const initialLoadSessionRef = useRef<string | null>(null);
   const transferSeqRef = useRef(0);
@@ -163,24 +198,30 @@ export function SftpWorkspace({ connectionId, sizeUnit = "bytes" }: SftpWorkspac
     };
   }, []);
 
-  const loadPath = useCallback(async (nextPath: string) => {
-    if (!sessionId) return;
-    const normalizedPath = normalizeRemotePath(nextPath);
-    setIsLoading(true);
-    try {
-      const nextEntries = await callBackend<SftpEntry[]>("list_sftp_directory", {
-        request: { session_id: sessionId, path: normalizedPath },
-      });
-      setEntries(nextEntries);
-      setError(null);
-      return normalizedPath;
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
-      return null;
-    } finally {
-      setIsLoading(false);
-    }
-  }, [sessionId]);
+  const loadPath = useCallback(
+    async (nextPath: string) => {
+      if (!sessionId) return;
+      const normalizedPath = normalizeRemotePath(nextPath);
+      setIsLoading(true);
+      try {
+        const nextEntries = await callBackend<SftpEntry[]>(
+          "list_sftp_directory",
+          {
+            request: { session_id: sessionId, path: normalizedPath },
+          },
+        );
+        setEntries(nextEntries);
+        setError(null);
+        return normalizedPath;
+      } catch (caught) {
+        setError(caught instanceof Error ? caught.message : String(caught));
+        return null;
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [sessionId],
+  );
 
   useEffect(() => {
     if (!sessionId || initialLoadSessionRef.current === sessionId) return;
@@ -283,7 +324,11 @@ export function SftpWorkspace({ connectionId, sizeUnit = "bytes" }: SftpWorkspac
     if (!sessionId) return;
     try {
       await callBackend("rename_sftp_path", {
-        request: { session_id: sessionId, from: entry.path, to: siblingRemotePath(entry.path, nextName) },
+        request: {
+          session_id: sessionId,
+          from: entry.path,
+          to: siblingRemotePath(entry.path, nextName),
+        },
       });
       await refresh();
     } catch (caught) {
@@ -325,7 +370,9 @@ export function SftpWorkspace({ connectionId, sizeUnit = "bytes" }: SftpWorkspac
   }
 
   function updateTransferTask(id: string, patch: Partial<TransferTask>) {
-    setTransferTasks((tasks) => tasks.map((task) => (task.id === id ? { ...task, ...patch } : task)));
+    setTransferTasks((tasks) =>
+      tasks.map((task) => (task.id === id ? { ...task, ...patch } : task)),
+    );
   }
 
   function nextTransferId() {
@@ -340,26 +387,53 @@ export function SftpWorkspace({ connectionId, sizeUnit = "bytes" }: SftpWorkspac
     const name = localFileName(localPath);
     const remotePath = joinRemotePath(path, name);
     if (entries.some((entry) => entry.name === name)) {
-      setPendingUpload({ localPath, name, remotePath });
+      setPendingUpload({ kind: "file", localPath, name, remotePath });
       return;
     }
-    await uploadSelectedFile({ localPath, name, remotePath }, false);
+    await uploadSelectedFile(
+      { kind: "file", localPath, name, remotePath },
+      false,
+    );
+  }
+
+  async function uploadDirectory() {
+    if (!sessionId) return;
+    const localPath = await pickUploadDirectory();
+    if (!localPath) return;
+    const name = localFileName(localPath);
+    const remotePath = joinRemotePath(path, name);
+    if (entries.some((entry) => entry.name === name)) {
+      setPendingUpload({ kind: "directory", localPath, name, remotePath });
+      return;
+    }
+    await uploadSelectedFile(
+      { kind: "directory", localPath, name, remotePath },
+      false,
+    );
   }
 
   async function uploadSelectedFile(upload: PendingUpload, overwrite: boolean) {
     if (!sessionId) return;
     const taskId = nextTransferId();
-    setTransferTasks((tasks) => [{ id: taskId, name: upload.name, direction: "upload", status: "running" }, ...tasks]);
+    setTransferTasks((tasks) => [
+      { id: taskId, name: upload.name, direction: "upload", status: "running" },
+      ...tasks,
+    ]);
     try {
-      await callBackend("upload_sftp_file", {
-        request: {
-          session_id: sessionId,
-          transfer_id: taskId,
-          local_path: upload.localPath,
-          remote_path: upload.remotePath,
-          overwrite,
+      await callBackend(
+        upload.kind === "directory"
+          ? "upload_sftp_directory"
+          : "upload_sftp_file",
+        {
+          request: {
+            session_id: sessionId,
+            transfer_id: taskId,
+            local_path: upload.localPath,
+            remote_path: upload.remotePath,
+            overwrite,
+          },
         },
-      });
+      );
       updateTransferTask(taskId, { status: "completed", progress: 100 });
       await refresh();
     } catch (caught) {
@@ -381,10 +455,23 @@ export function SftpWorkspace({ connectionId, sizeUnit = "bytes" }: SftpWorkspac
     const localPath = await pickDownloadPath(entry.name);
     if (!localPath) return;
     const taskId = nextTransferId();
-    setTransferTasks((tasks) => [{ id: taskId, name: entry.name, direction: "download", status: "running" }, ...tasks]);
+    setTransferTasks((tasks) => [
+      {
+        id: taskId,
+        name: entry.name,
+        direction: "download",
+        status: "running",
+      },
+      ...tasks,
+    ]);
     try {
       await callBackend("download_sftp_file", {
-        request: { session_id: sessionId, transfer_id: taskId, remote_path: entry.path, local_path: localPath },
+        request: {
+          session_id: sessionId,
+          transfer_id: taskId,
+          remote_path: entry.path,
+          local_path: localPath,
+        },
       });
       updateTransferTask(taskId, { status: "completed", progress: 100 });
     } catch (caught) {
@@ -394,28 +481,110 @@ export function SftpWorkspace({ connectionId, sizeUnit = "bytes" }: SftpWorkspac
     }
   }
 
+  async function downloadDirectory(entry: SftpEntry) {
+    if (!sessionId) return;
+    const selectedDirectory = await pickDownloadDirectory();
+    if (!selectedDirectory) return;
+    const localPath = joinLocalPath(selectedDirectory, entry.name);
+    const taskId = nextTransferId();
+    setTransferTasks((tasks) => [
+      {
+        id: taskId,
+        name: entry.name,
+        direction: "download",
+        status: "running",
+      },
+      ...tasks,
+    ]);
+    try {
+      await callBackend("download_sftp_directory", {
+        request: {
+          session_id: sessionId,
+          transfer_id: taskId,
+          remote_path: entry.path,
+          local_path: localPath,
+          overwrite: false,
+        },
+      });
+      updateTransferTask(taskId, { status: "completed", progress: 100 });
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : String(caught);
+      updateTransferTask(taskId, { status: "failed", error: message });
+      setError(message);
+    }
+  }
+
+  function currentDirectoryMenuItems(): ContextMenuItem[] {
+    return [
+      { label: "刷新", onSelect: () => void refresh() },
+      ...currentDirectoryCreateMenuItems(),
+    ];
+  }
+
+  function currentDirectoryCreateMenuItems(): ContextMenuItem[] {
+    return [
+      {
+        label: "新建文件",
+        onSelect: () =>
+          openDialog({
+            kind: "create-file",
+            title: "新建文件",
+            initialValue: "",
+          }),
+      },
+      {
+        label: "新建文件夹",
+        onSelect: () =>
+          openDialog({
+            kind: "create-directory",
+            title: "新建文件夹",
+            initialValue: "",
+          }),
+      },
+      { label: "上传文件", onSelect: () => void uploadFile() },
+      { label: "上传文件夹", onSelect: () => void uploadDirectory() },
+    ];
+  }
+
   function openBlankContextMenu(event: React.MouseEvent) {
     event.preventDefault();
     setContextMenu({
       x: event.clientX,
       y: event.clientY,
-      items: [
-        { label: "上传文件", onSelect: () => void uploadFile() },
-        { label: "刷新", onSelect: () => void refresh() },
-        { label: "新建文件夹", onSelect: () => openDialog({ kind: "create-directory", title: "新建文件夹", initialValue: "" }) },
-        { label: "新建文件", onSelect: () => openDialog({ kind: "create-file", title: "新建文件", initialValue: "" }) },
-      ],
+      items: currentDirectoryMenuItems(),
     });
   }
 
   function openEntryContextMenu(event: React.MouseEvent, entry: SftpEntry) {
     event.preventDefault();
     event.stopPropagation();
-    const items = [
-      { label: "下载", onSelect: () => void downloadFile(entry) },
-      { label: "重命名", onSelect: () => openDialog({ kind: "rename", title: "重命名", initialValue: entry.name, entry }) },
-      { label: "复制路径", onSelect: () => void writeClipboardText(entry.path) },
+    const items: ContextMenuItem[] = [
+      { label: "刷新", onSelect: () => void refresh() },
+      {
+        label: "下载",
+        onSelect: () =>
+          void (entry.kind === "directory"
+            ? downloadDirectory(entry)
+            : downloadFile(entry)),
+      },
+      {
+        label: "重命名",
+        onSelect: () =>
+          openDialog({
+            kind: "rename",
+            title: "重命名",
+            initialValue: entry.name,
+            entry,
+          }),
+      },
+      {
+        label: "复制路径",
+        onSelect: () => void writeClipboardText(entry.path),
+      },
       { label: "删除", onSelect: () => setDeleteCandidate(entry) },
+      { type: "separator" },
+      { type: "label", label: "在当前目录下：" },
+      ...currentDirectoryCreateMenuItems(),
     ];
     setContextMenu({
       x: event.clientX,
@@ -437,10 +606,18 @@ export function SftpWorkspace({ connectionId, sizeUnit = "bytes" }: SftpWorkspac
     <section className="sftp-workspace">
       <header>
         <h2>SFTP</h2>
-        <button type="button" onClick={() => void goBack()} disabled={!backStack.length}>
+        <button
+          type="button"
+          onClick={() => void goBack()}
+          disabled={!backStack.length}
+        >
           后退
         </button>
-        <button type="button" onClick={() => void goForward()} disabled={!forwardStack.length}>
+        <button
+          type="button"
+          onClick={() => void goForward()}
+          disabled={!forwardStack.length}
+        >
           前进
         </button>
         <input
@@ -457,24 +634,45 @@ export function SftpWorkspace({ connectionId, sizeUnit = "bytes" }: SftpWorkspac
         <button type="button" onClick={() => void refresh()}>
           刷新
         </button>
-        <button type="button" onClick={() => openDialog({ kind: "create-directory", title: "新建文件夹", initialValue: "" })}>
+        <button
+          type="button"
+          onClick={() =>
+            openDialog({
+              kind: "create-directory",
+              title: "新建文件夹",
+              initialValue: "",
+            })
+          }
+        >
           新建目录
         </button>
       </header>
       {error ? <p role="alert">{error}</p> : null}
       {isLoading ? <p role="status">加载中...</p> : null}
-      <div className="sftp-table-scroll" aria-label="SFTP 文件列表" onContextMenu={openBlankContextMenu}>
+      <div
+        className="sftp-table-scroll"
+        aria-label="SFTP 文件列表"
+        onContextMenu={openBlankContextMenu}
+      >
         <table>
           <thead>
             <tr>
               <th>
-                <button type="button" aria-label="按名称排序" onClick={() => toggleSort("name")}>
+                <button
+                  type="button"
+                  aria-label="按名称排序"
+                  onClick={() => toggleSort("name")}
+                >
                   名称
                 </button>
               </th>
               <th>类型</th>
               <th>
-                <button type="button" aria-label="按大小排序" onClick={() => toggleSort("size")}>
+                <button
+                  type="button"
+                  aria-label="按大小排序"
+                  onClick={() => toggleSort("size")}
+                >
                   大小
                 </button>
               </th>
@@ -493,7 +691,9 @@ export function SftpWorkspace({ connectionId, sizeUnit = "bytes" }: SftpWorkspac
                 onContextMenu={(event) => openEntryContextMenu(event, entry)}
               >
                 <td>
-                  <span className={getEntryNameClassName(entry)}>{entry.name}</span>
+                  <span className={getEntryNameClassName(entry)}>
+                    {entry.name}
+                  </span>
                 </td>
                 <td>{entry.kind}</td>
                 <td>{formatFileSize(entry.size, sizeUnit)}</td>
@@ -502,12 +702,15 @@ export function SftpWorkspace({ connectionId, sizeUnit = "bytes" }: SftpWorkspac
             ))}
           </tbody>
         </table>
-        <div className="sftp-blank-action-area" aria-label="SFTP 空白操作区" onContextMenu={openBlankContextMenu} />
       </div>
       <TransferQueue tasks={transferTasks} />
       <ContextMenu menu={contextMenu} onClose={() => setContextMenu(null)} />
       {dialog ? (
-        <div className="connection-dialog__backdrop" role="presentation" onPointerDown={closeDialog}>
+        <div
+          className="connection-dialog__backdrop"
+          role="presentation"
+          onPointerDown={closeDialog}
+        >
           <form
             className="connection-dialog sftp-dialog"
             role="dialog"
@@ -542,7 +745,11 @@ export function SftpWorkspace({ connectionId, sizeUnit = "bytes" }: SftpWorkspac
         </div>
       ) : null}
       {deleteCandidate ? (
-        <div className="connection-dialog__backdrop" role="presentation" onPointerDown={() => setDeleteCandidate(null)}>
+        <div
+          className="connection-dialog__backdrop"
+          role="presentation"
+          onPointerDown={() => setDeleteCandidate(null)}
+        >
           <section
             className="connection-dialog sftp-dialog"
             role="dialog"
@@ -552,7 +759,11 @@ export function SftpWorkspace({ connectionId, sizeUnit = "bytes" }: SftpWorkspac
             <div className="connection-form">
               <header className="connection-dialog__header">
                 <h2>确认删除</h2>
-                <button type="button" onClick={() => setDeleteCandidate(null)} aria-label="关闭">
+                <button
+                  type="button"
+                  onClick={() => setDeleteCandidate(null)}
+                  aria-label="关闭"
+                >
                   ×
                 </button>
               </header>
@@ -561,7 +772,11 @@ export function SftpWorkspace({ connectionId, sizeUnit = "bytes" }: SftpWorkspac
                 <button type="button" onClick={() => setDeleteCandidate(null)}>
                   取消
                 </button>
-                <button type="button" className="sftp-dialog__danger-button" onClick={() => void confirmDeleteEntry()}>
+                <button
+                  type="button"
+                  className="sftp-dialog__danger-button"
+                  onClick={() => void confirmDeleteEntry()}
+                >
                   确认
                 </button>
               </div>
@@ -570,7 +785,11 @@ export function SftpWorkspace({ connectionId, sizeUnit = "bytes" }: SftpWorkspac
         </div>
       ) : null}
       {pendingUpload ? (
-        <div className="connection-dialog__backdrop" role="presentation" onPointerDown={() => setPendingUpload(null)}>
+        <div
+          className="connection-dialog__backdrop"
+          role="presentation"
+          onPointerDown={() => setPendingUpload(null)}
+        >
           <section
             className="connection-dialog sftp-dialog"
             role="dialog"
@@ -580,7 +799,11 @@ export function SftpWorkspace({ connectionId, sizeUnit = "bytes" }: SftpWorkspac
             <div className="connection-form">
               <header className="connection-dialog__header">
                 <h2>确认覆盖</h2>
-                <button type="button" onClick={() => setPendingUpload(null)} aria-label="关闭">
+                <button
+                  type="button"
+                  onClick={() => setPendingUpload(null)}
+                  aria-label="关闭"
+                >
                   ×
                 </button>
               </header>
@@ -589,7 +812,11 @@ export function SftpWorkspace({ connectionId, sizeUnit = "bytes" }: SftpWorkspac
                 <button type="button" onClick={() => setPendingUpload(null)}>
                   取消
                 </button>
-                <button type="button" className="sftp-dialog__danger-button" onClick={() => void confirmUploadOverwrite()}>
+                <button
+                  type="button"
+                  className="sftp-dialog__danger-button"
+                  onClick={() => void confirmUploadOverwrite()}
+                >
                   覆盖
                 </button>
               </div>

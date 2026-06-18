@@ -4,9 +4,9 @@ use crate::core::credential_store::CredentialStore;
 use crate::core::settings_store::SettingsStore;
 use crate::models::sftp::{
     CreateDirectoryRequest, DeletePathRequest, ListDirectoryRequest, OpenSftpSessionRequest,
-    RenamePathRequest, SftpEntry, SftpSessionPathRequest, SftpSessionRenameRequest,
-    SftpDownloadFileRequest, SftpSessionRequest, SftpSessionResponse, SftpTransferProgress,
-    SftpUploadFileRequest,
+    RenamePathRequest, SftpDownloadDirectoryRequest, SftpDownloadFileRequest, SftpEntry,
+    SftpSessionPathRequest, SftpSessionRenameRequest, SftpSessionRequest, SftpSessionResponse,
+    SftpTransferProgress, SftpUploadDirectoryRequest, SftpUploadFileRequest,
 };
 use crate::ssh::sftp_manager::{self, SftpSessionManager};
 
@@ -131,6 +131,60 @@ pub async fn download_sftp_file(
             &request.session_id,
             &request.remote_path,
             &request.local_path,
+            move |progress| {
+                let _ = app.emit(
+                    "sftp-transfer-progress",
+                    SftpTransferProgress {
+                        transfer_id: transfer_id.clone(),
+                        progress,
+                    },
+                );
+            },
+        )
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn upload_sftp_directory(
+    app: AppHandle,
+    sessions: State<'_, SftpSessionManager>,
+    request: SftpUploadDirectoryRequest,
+) -> Result<(), String> {
+    let transfer_id = request.transfer_id.clone();
+    sessions
+        .upload_directory(
+            &request.session_id,
+            &request.local_path,
+            &request.remote_path,
+            request.overwrite,
+            move |progress| {
+                let _ = app.emit(
+                    "sftp-transfer-progress",
+                    SftpTransferProgress {
+                        transfer_id: transfer_id.clone(),
+                        progress,
+                    },
+                );
+            },
+        )
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn download_sftp_directory(
+    app: AppHandle,
+    sessions: State<'_, SftpSessionManager>,
+    request: SftpDownloadDirectoryRequest,
+) -> Result<(), String> {
+    let transfer_id = request.transfer_id.clone();
+    sessions
+        .download_directory(
+            &request.session_id,
+            &request.remote_path,
+            &request.local_path,
+            request.overwrite,
             move |progress| {
                 let _ = app.emit(
                     "sftp-transfer-progress",

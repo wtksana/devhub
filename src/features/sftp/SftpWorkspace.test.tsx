@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SftpWorkspace } from "./SftpWorkspace";
 import { callBackend } from "../../lib/tauri";
 import { writeClipboardText } from "../../lib/clipboard";
-import { pickDownloadPath, pickUploadFile } from "../../lib/fileDialog";
+import { pickDownloadDirectory, pickDownloadPath, pickUploadDirectory, pickUploadFile } from "../../lib/fileDialog";
 import { listenSftpTransferProgress } from "../../lib/tauriEvents";
 
 vi.mock("../../lib/tauri", () => ({
@@ -17,7 +17,9 @@ vi.mock("../../lib/clipboard", () => ({
 
 vi.mock("../../lib/fileDialog", () => ({
   pickUploadFile: vi.fn(),
+  pickUploadDirectory: vi.fn(),
   pickDownloadPath: vi.fn(),
+  pickDownloadDirectory: vi.fn(),
 }));
 
 vi.mock("../../lib/tauriEvents", () => ({
@@ -27,7 +29,9 @@ vi.mock("../../lib/tauriEvents", () => ({
 const callBackendMock = vi.mocked(callBackend);
 const writeClipboardTextMock = vi.mocked(writeClipboardText);
 const pickUploadFileMock = vi.mocked(pickUploadFile);
+const pickUploadDirectoryMock = vi.mocked(pickUploadDirectory);
 const pickDownloadPathMock = vi.mocked(pickDownloadPath);
+const pickDownloadDirectoryMock = vi.mocked(pickDownloadDirectory);
 const listenSftpTransferProgressMock = vi.mocked(listenSftpTransferProgress);
 
 describe("SftpWorkspace", () => {
@@ -50,6 +54,10 @@ describe("SftpWorkspace", () => {
   function mockOpenSession(entries: unknown[] = []) {
     callBackendMock.mockResolvedValueOnce({ session_id: "sftp-session-1" });
     callBackendMock.mockResolvedValueOnce(entries);
+  }
+
+  function menuItemLabels() {
+    return screen.getAllByRole("menuitem").map((item) => item.textContent);
   }
 
   async function waitForInitialLoad() {
@@ -336,7 +344,9 @@ describe("SftpWorkspace", () => {
     await waitForInitialLoad();
     await userEvent.pointer({ keys: "[MouseRight]", target: screen.getByLabelText("SFTP 文件列表") });
 
+    expect(menuItemLabels()).toEqual(["刷新", "新建文件", "新建文件夹", "上传文件", "上传文件夹"]);
     expect(screen.getByRole("menuitem", { name: "上传文件" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "上传文件夹" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "刷新" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "新建文件夹" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "新建文件" })).toBeInTheDocument();
@@ -437,6 +447,39 @@ describe("SftpWorkspace", () => {
     });
   });
 
+  it("uploads a selected local directory into the current directory", async () => {
+    mockOpenSession();
+    pickUploadDirectoryMock.mockResolvedValue("C:\\Users\\ttat\\Desktop\\logs");
+    callBackendMock.mockResolvedValueOnce(undefined);
+    callBackendMock.mockResolvedValueOnce([
+      {
+        name: "logs",
+        path: "/logs",
+        kind: "directory",
+        size: 4096,
+      },
+    ]);
+
+    render(<SftpWorkspace connectionId="prod-web-01" />);
+
+    await waitForInitialLoad();
+    await userEvent.pointer({ keys: "[MouseRight]", target: screen.getByLabelText("SFTP 文件列表") });
+    await userEvent.click(screen.getByRole("menuitem", { name: "上传文件夹" }));
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("upload_sftp_directory", {
+        request: {
+          session_id: "sftp-session-1",
+          transfer_id: "transfer-1",
+          local_path: "C:\\Users\\ttat\\Desktop\\logs",
+          remote_path: "/logs",
+          overwrite: false,
+        },
+      });
+    });
+    expect(screen.getByText("logs 上传完成")).toBeInTheDocument();
+  });
+
   it("downloads a remote file to the selected local path", async () => {
     mockOpenSession([
       {
@@ -519,7 +562,7 @@ describe("SftpWorkspace", () => {
     resolveDownload();
   });
 
-  it("shows blank area actions from the reserved table action area", async () => {
+  it("shows current directory actions in an entry context menu", async () => {
     mockOpenSession([
       {
         name: "file-a.log",
@@ -532,12 +575,30 @@ describe("SftpWorkspace", () => {
     render(<SftpWorkspace connectionId="prod-web-01" />);
 
     await waitForInitialLoad();
-    await userEvent.pointer({ keys: "[MouseRight]", target: screen.getByLabelText("SFTP 空白操作区") });
+    await userEvent.pointer({ keys: "[MouseRight]", target: await screen.findByText("file-a.log") });
 
+    expect(menuItemLabels()).toEqual([
+      "刷新",
+      "下载",
+      "重命名",
+      "复制路径",
+      "删除",
+      "新建文件",
+      "新建文件夹",
+      "上传文件",
+      "上传文件夹",
+    ]);
+    expect(screen.getByRole("menuitem", { name: "下载" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "重命名" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "复制路径" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "删除" })).toBeInTheDocument();
+    expect(screen.getByText("在当前目录下：")).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "上传文件" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "上传文件夹" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "刷新" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "新建文件夹" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "新建文件" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("SFTP 空白操作区")).not.toBeInTheDocument();
   });
 
   it("shows directory actions without an open menu item", async () => {
@@ -561,6 +622,38 @@ describe("SftpWorkspace", () => {
     expect(screen.getByRole("menuitem", { name: "重命名" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "复制路径" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "删除" })).toBeInTheDocument();
+  });
+
+  it("downloads a remote directory into the selected local directory", async () => {
+    mockOpenSession([
+      {
+        name: "logs",
+        path: "/logs",
+        kind: "directory",
+        size: 4096,
+      },
+    ]);
+    pickDownloadDirectoryMock.mockResolvedValue("C:\\Users\\ttat\\Downloads");
+    callBackendMock.mockResolvedValueOnce(undefined);
+
+    render(<SftpWorkspace connectionId="prod-web-01" />);
+
+    await waitForInitialLoad();
+    await userEvent.pointer({ keys: "[MouseRight]", target: await screen.findByText("logs") });
+    await userEvent.click(screen.getByRole("menuitem", { name: "下载" }));
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("download_sftp_directory", {
+        request: {
+          session_id: "sftp-session-1",
+          transfer_id: "transfer-1",
+          remote_path: "/logs",
+          local_path: "C:\\Users\\ttat\\Downloads\\logs",
+          overwrite: false,
+        },
+      });
+    });
+    expect(screen.getByText("logs 下载完成")).toBeInTheDocument();
   });
 
   it("marks symlink entries with the link color class", async () => {
@@ -628,7 +721,7 @@ describe("SftpWorkspace", () => {
     await userEvent.pointer({ keys: "[MouseRight]", target: screen.getByText("server.log") });
     await userEvent.click(screen.getByRole("menuitem", { name: "删除" }));
     expect(screen.getByRole("dialog", { name: "确认删除" })).toBeInTheDocument();
-    expect(screen.getByText("确认删除 server.log？")).toBeInTheDocument();
+    expect(screen.getByText("确认删除 server.log？该操作不可逆！")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "确认" }));
 
     await waitFor(() => {
@@ -659,7 +752,7 @@ describe("SftpWorkspace", () => {
     await userEvent.click(screen.getByRole("menuitem", { name: "删除" }));
 
     expect(screen.getByRole("dialog", { name: "确认删除" })).toBeInTheDocument();
-    expect(screen.getByText("确认删除 test 文件夹？")).toBeInTheDocument();
+    expect(screen.getByText("确认删除 test 文件夹及其中全部内容？该操作不可逆！")).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: "确认" }));
 

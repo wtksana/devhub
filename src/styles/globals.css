@@ -308,6 +308,20 @@ p {
   background: var(--panel-raised);
 }
 
+.context-menu__separator {
+  height: 1px;
+  margin: 5px 2px;
+  background: var(--border-subtle);
+}
+
+.context-menu__label {
+  height: 24px;
+  padding: 0 9px;
+  color: var(--muted);
+  font-size: var(--ui-font-size-small, 12px);
+  line-height: 24px;
+}
+
 .app-shell__body {
   display: grid;
   grid-template-columns: var(--connection-sidebar-width, 280px) minmax(0, 1fr);
@@ -933,11 +947,6 @@ p {
 .sftp-entry-name--link,
 .sftp-entry-name--symlink {
   color: var(--success);
-}
-
-.sftp-blank-action-area {
-  flex: 1 0 40px;
-  min-height: 40px;
 }
 
 .sftp-dialog {

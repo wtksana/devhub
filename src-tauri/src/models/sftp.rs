@@ -46,6 +46,24 @@ pub struct SftpDownloadFileRequest {
     pub local_path: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SftpUploadDirectoryRequest {
+    pub session_id: String,
+    pub transfer_id: String,
+    pub local_path: String,
+    pub remote_path: String,
+    pub overwrite: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SftpDownloadDirectoryRequest {
+    pub session_id: String,
+    pub transfer_id: String,
+    pub remote_path: String,
+    pub local_path: String,
+    pub overwrite: bool,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct SftpTransferProgress {
     pub transfer_id: String,

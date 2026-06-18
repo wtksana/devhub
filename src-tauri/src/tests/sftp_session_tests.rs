@@ -47,10 +47,39 @@ async fn file_operations_reject_missing_sftp_session() {
         .create_file("missing-session", "/tmp/new-file")
         .await;
     let upload_result = manager
-        .upload_file("missing-session", "C:/tmp/local.txt", "/tmp/remote.txt", false, |_| {})
+        .upload_file(
+            "missing-session",
+            "C:/tmp/local.txt",
+            "/tmp/remote.txt",
+            false,
+            |_| {},
+        )
         .await;
     let download_result = manager
-        .download_file("missing-session", "/tmp/remote.txt", "C:/tmp/local.txt", |_| {})
+        .download_file(
+            "missing-session",
+            "/tmp/remote.txt",
+            "C:/tmp/local.txt",
+            |_| {},
+        )
+        .await;
+    let upload_directory_result = manager
+        .upload_directory(
+            "missing-session",
+            "C:/tmp/local-directory",
+            "/tmp/remote-directory",
+            false,
+            |_| {},
+        )
+        .await;
+    let download_directory_result = manager
+        .download_directory(
+            "missing-session",
+            "/tmp/remote-directory",
+            "C:/tmp/local-directory",
+            false,
+            |_| {},
+        )
         .await;
 
     assert_eq!(
@@ -75,6 +104,14 @@ async fn file_operations_reject_missing_sftp_session() {
     );
     assert_eq!(
         download_result.unwrap_err().to_string(),
+        "sftp session not found: missing-session"
+    );
+    assert_eq!(
+        upload_directory_result.unwrap_err().to_string(),
+        "sftp session not found: missing-session"
+    );
+    assert_eq!(
+        download_directory_result.unwrap_err().to_string(),
         "sftp session not found: missing-session"
     );
 }

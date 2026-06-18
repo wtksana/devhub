@@ -1,6 +1,20 @@
 import { useEffect } from "react";
 
-export interface ContextMenuItem {
+export type ContextMenuItem =
+  | {
+      type?: "action";
+      label: string;
+      onSelect: () => void;
+    }
+  | {
+      type: "separator";
+    }
+  | {
+      type: "label";
+      label: string;
+    };
+
+export interface ContextMenuActionItem {
   label: string;
   onSelect: () => void;
 }
@@ -51,19 +65,31 @@ export function ContextMenu({ menu, onClose }: ContextMenuProps) {
       onContextMenu={(event) => event.preventDefault()}
       onPointerDown={(event) => event.stopPropagation()}
     >
-      {menu.items.map((item) => (
-        <button
-          key={item.label}
-          type="button"
-          role="menuitem"
-          onClick={() => {
-            item.onSelect();
-            onClose();
-          }}
-        >
-          {item.label}
-        </button>
-      ))}
+      {menu.items.map((item, index) => {
+        if (item.type === "separator") {
+          return <div key={`separator-${index}`} className="context-menu__separator" role="separator" />;
+        }
+        if (item.type === "label") {
+          return (
+            <div key={`label-${index}-${item.label}`} className="context-menu__label">
+              {item.label}
+            </div>
+          );
+        }
+        return (
+          <button
+            key={`action-${index}-${item.label}`}
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              item.onSelect();
+              onClose();
+            }}
+          >
+            {item.label}
+          </button>
+        );
+      })}
     </div>
   );
 }
