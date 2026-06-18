@@ -12,7 +12,7 @@ use uuid::Uuid;
 
 use crate::core::credential_store::CredentialStore;
 use crate::core::settings_store::SettingsStore;
-use crate::models::sftp::SftpEntry;
+use crate::models::sftp::{SftpEntry, SftpTextFileResponse, SftpWriteTextFileResponse};
 use crate::ssh::client::{connect_from_stores, SshClientError};
 
 type Result<T> = std::result::Result<T, String>;
@@ -33,6 +33,10 @@ pub enum SftpSessionError {
     Io(String),
     #[error("remote path already exists: {0}")]
     RemotePathExists(String),
+    #[error("remote file is too large: {size} bytes, max {max_bytes} bytes")]
+    RemoteFileTooLarge { size: u64, max_bytes: u64 },
+    #[error("remote file changed: {0}")]
+    RemoteFileChanged(String),
 }
 
 type SessionResult<T> = std::result::Result<T, SftpSessionError>;
@@ -44,7 +48,7 @@ pub struct SftpSessionManager {
 
 struct ManagedSftpSession {
     _connection_id: String,
-    _ssh: Option<Session>,
+    ssh: Option<Session>,
     sftp: Option<Sftp>,
 }
 
@@ -75,7 +79,7 @@ impl SftpSessionManager {
             let sftp = ssh.sftp()?;
             Ok::<ManagedSftpSession, SftpSessionError>(ManagedSftpSession {
                 _connection_id: connection_id,
-                _ssh: Some(ssh),
+                ssh: Some(ssh),
                 sftp: Some(sftp),
             })
         })
@@ -236,6 +240,75 @@ impl SftpSessionManager {
         .await
     }
 
+    pub async fn compress_path(&self, session_id: &str, path: &str) -> SessionResult<()> {
+        self.with_ssh(session_id, |ssh| {
+            run_remote_command(ssh, &build_compress_command(path))
+        })
+        .await
+    }
+
+    pub async fn extract_archive(&self, session_id: &str, path: &str) -> SessionResult<()> {
+        self.with_ssh(session_id, |ssh| {
+            run_remote_command(ssh, &build_extract_command(path))
+        })
+        .await
+    }
+
+    pub async fn read_text_file(
+        &self,
+        session_id: &str,
+        path: &str,
+        max_bytes: u64,
+    ) -> SessionResult<SftpTextFileResponse> {
+        self.with_sftp(session_id, |sftp| {
+            let remote_path = Path::new(path);
+            let stat = sftp.stat(remote_path)?;
+            let size = stat.size.unwrap_or_default();
+            if size > max_bytes {
+                return Err(SftpSessionError::RemoteFileTooLarge { size, max_bytes });
+            }
+            let mut file = sftp.open(remote_path)?;
+            let mut bytes = Vec::new();
+            file.read_to_end(&mut bytes)?;
+            let content = String::from_utf8(bytes)
+                .map_err(|error| SftpSessionError::Io(error.to_string()))?;
+            Ok(SftpTextFileResponse {
+                path: path.to_string(),
+                content,
+                size,
+                modified_at: stat.mtime.map(|value| value.to_string()),
+            })
+        })
+        .await
+    }
+
+    pub async fn write_text_file(
+        &self,
+        session_id: &str,
+        path: &str,
+        content: &str,
+        expected_modified_at: Option<&str>,
+        overwrite: bool,
+    ) -> SessionResult<SftpWriteTextFileResponse> {
+        self.with_sftp(session_id, |sftp| {
+            let remote_path = Path::new(path);
+            let current_stat = sftp.stat(remote_path)?;
+            let current_modified_at = current_stat.mtime.map(|value| value.to_string());
+            if !overwrite && expected_modified_at != current_modified_at.as_deref() {
+                return Err(SftpSessionError::RemoteFileChanged(path.to_string()));
+            }
+            let mut file = sftp.create(remote_path)?;
+            file.write_all(content.as_bytes())?;
+            let stat = sftp.stat(remote_path)?;
+            Ok(SftpWriteTextFileResponse {
+                path: path.to_string(),
+                size: stat.size.unwrap_or(content.len() as u64),
+                modified_at: stat.mtime.map(|value| value.to_string()),
+            })
+        })
+        .await
+    }
+
     async fn with_sftp<T>(
         &self,
         session_id: &str,
@@ -252,13 +325,30 @@ impl SftpSessionManager {
 
         operation(sftp)
     }
+
+    async fn with_ssh<T>(
+        &self,
+        session_id: &str,
+        operation: impl FnOnce(&Session) -> SessionResult<T>,
+    ) -> SessionResult<T> {
+        let sessions = self.sessions.lock().await;
+        let Some(session) = sessions.get(session_id) else {
+            return Err(SftpSessionError::SessionNotFound(session_id.to_string()));
+        };
+
+        let Some(ssh) = session.ssh.as_ref() else {
+            return Err(SftpSessionError::SessionNotFound(session_id.to_string()));
+        };
+
+        operation(ssh)
+    }
 }
 
 impl ManagedSftpSession {
     fn placeholder(connection_id: String) -> Self {
         Self {
             _connection_id: connection_id,
-            _ssh: None,
+            ssh: None,
             sftp: None,
         }
     }
@@ -547,6 +637,79 @@ fn remote_child_path(parent: &Path, name: &OsStr) -> PathBuf {
     ))
 }
 
+fn build_compress_command(path: &str) -> String {
+    let (parent, name) = split_remote_parent_name(path);
+    format!(
+        "cd {} && tar -czf {} {}",
+        shell_quote(&parent),
+        shell_quote(&format!("{name}.tar.gz")),
+        shell_quote(&name),
+    )
+}
+
+fn build_extract_command(path: &str) -> String {
+    let (parent, name) = split_remote_parent_name(path);
+    format!(
+        "cd {} && tar -xzf {}",
+        shell_quote(&parent),
+        shell_quote(&name),
+    )
+}
+
+fn split_remote_parent_name(path: &str) -> (String, String) {
+    let trimmed_path = path.trim_end_matches('/');
+    let normalized_path = if trimmed_path.is_empty() {
+        "/"
+    } else {
+        trimmed_path
+    };
+    let Some(index) = normalized_path.rfind('/') else {
+        return (".".to_string(), normalized_path.to_string());
+    };
+    let name = normalized_path[index + 1..].to_string();
+    let parent = if index == 0 {
+        "/".to_string()
+    } else {
+        normalized_path[..index].to_string()
+    };
+    (parent, name)
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+fn run_remote_command(ssh: &Session, command: &str) -> SessionResult<()> {
+    let mut channel = ssh.channel_session()?;
+    channel.exec(command)?;
+
+    let mut stdout = String::new();
+    channel.read_to_string(&mut stdout)?;
+
+    let mut stderr = String::new();
+    channel.stderr().read_to_string(&mut stderr)?;
+
+    channel.wait_close()?;
+    let exit_status = channel.exit_status()?;
+    if exit_status == 0 {
+        return Ok(());
+    }
+
+    let message = stderr.trim();
+    if !message.is_empty() {
+        return Err(SftpSessionError::Ssh(message.to_string()));
+    }
+
+    let message = stdout.trim();
+    if !message.is_empty() {
+        return Err(SftpSessionError::Ssh(message.to_string()));
+    }
+
+    Err(SftpSessionError::Ssh(format!(
+        "remote command failed with exit status {exit_status}"
+    )))
+}
+
 #[cfg(test)]
 #[derive(Debug, PartialEq, Eq)]
 enum RemoteDeleteOperation {
@@ -706,6 +869,26 @@ mod tests {
                 RemoteDeleteOperation::Directory(PathBuf::from("/data/logs/archive")),
                 RemoteDeleteOperation::Directory(PathBuf::from("/data/logs")),
             ]
+        );
+    }
+
+    #[test]
+    fn builds_archive_commands_in_the_remote_parent_directory() {
+        assert_eq!(
+            build_compress_command("/data/logs"),
+            "cd '/data' && tar -czf 'logs.tar.gz' 'logs'"
+        );
+        assert_eq!(
+            build_extract_command("/data/logs.tar.gz"),
+            "cd '/data' && tar -xzf 'logs.tar.gz'"
+        );
+    }
+
+    #[test]
+    fn quotes_archive_commands_for_shell_paths() {
+        assert_eq!(
+            build_compress_command("/data/today's logs"),
+            "cd '/data' && tar -czf 'today'\\''s logs.tar.gz' 'today'\\''s logs'"
         );
     }
 }

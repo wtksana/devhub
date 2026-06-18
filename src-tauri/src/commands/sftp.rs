@@ -4,9 +4,11 @@ use crate::core::credential_store::CredentialStore;
 use crate::core::settings_store::SettingsStore;
 use crate::models::sftp::{
     CreateDirectoryRequest, DeletePathRequest, ListDirectoryRequest, OpenSftpSessionRequest,
-    RenamePathRequest, SftpDownloadDirectoryRequest, SftpDownloadFileRequest, SftpEntry,
-    SftpSessionPathRequest, SftpSessionRenameRequest, SftpSessionRequest, SftpSessionResponse,
-    SftpTransferProgress, SftpUploadDirectoryRequest, SftpUploadFileRequest,
+    RenamePathRequest, SftpArchiveRequest, SftpDownloadDirectoryRequest, SftpDownloadFileRequest,
+    SftpEntry, SftpReadTextFileRequest, SftpSessionPathRequest, SftpSessionRenameRequest,
+    SftpSessionRequest, SftpSessionResponse, SftpTextFileResponse, SftpTransferProgress,
+    SftpUploadDirectoryRequest, SftpUploadFileRequest, SftpWriteTextFileRequest,
+    SftpWriteTextFileResponse,
 };
 use crate::ssh::sftp_manager::{self, SftpSessionManager};
 
@@ -88,6 +90,56 @@ pub async fn create_sftp_file(
 ) -> Result<(), String> {
     sessions
         .create_file(&request.session_id, &request.path)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn compress_sftp_path(
+    sessions: State<'_, SftpSessionManager>,
+    request: SftpArchiveRequest,
+) -> Result<(), String> {
+    sessions
+        .compress_path(&request.session_id, &request.path)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn extract_sftp_archive(
+    sessions: State<'_, SftpSessionManager>,
+    request: SftpArchiveRequest,
+) -> Result<(), String> {
+    sessions
+        .extract_archive(&request.session_id, &request.path)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn read_sftp_text_file(
+    sessions: State<'_, SftpSessionManager>,
+    request: SftpReadTextFileRequest,
+) -> Result<SftpTextFileResponse, String> {
+    sessions
+        .read_text_file(&request.session_id, &request.path, request.max_bytes)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn write_sftp_text_file(
+    sessions: State<'_, SftpSessionManager>,
+    request: SftpWriteTextFileRequest,
+) -> Result<SftpWriteTextFileResponse, String> {
+    sessions
+        .write_text_file(
+            &request.session_id,
+            &request.path,
+            &request.content,
+            request.expected_modified_at.as_deref(),
+            request.overwrite,
+        )
         .await
         .map_err(|error| error.to_string())
 }

@@ -23,6 +23,43 @@ pub struct SftpSessionPathRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SftpArchiveRequest {
+    pub session_id: String,
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SftpReadTextFileRequest {
+    pub session_id: String,
+    pub path: String,
+    pub max_bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SftpWriteTextFileRequest {
+    pub session_id: String,
+    pub path: String,
+    pub content: String,
+    pub expected_modified_at: Option<String>,
+    pub overwrite: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SftpTextFileResponse {
+    pub path: String,
+    pub content: String,
+    pub size: u64,
+    pub modified_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SftpWriteTextFileResponse {
+    pub path: String,
+    pub size: u64,
+    pub modified_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SftpSessionRenameRequest {
     pub session_id: String,
     pub from: String,

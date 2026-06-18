@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import { ContextMenu, type ContextMenuState } from "../../app/ContextMenu";
 import type { ContextMenuItem } from "../../app/ContextMenu";
 import { writeClipboardText } from "../../lib/clipboard";
@@ -19,7 +26,7 @@ interface SftpWorkspaceProps {
   sizeUnit?: SftpFileSizeUnit;
 }
 
-type SortKey = "name" | "size";
+type SortKey = "name" | "size" | "modified_at";
 type SortDirection = "asc" | "desc";
 type SftpDialogState =
   | {
@@ -41,6 +48,117 @@ type PendingUpload = {
   name: string;
   remotePath: string;
 };
+type SftpTextFile = {
+  path: string;
+  name: string;
+  content: string;
+  originalContent: string;
+  size: number;
+  modifiedAt: string | null;
+  status: string | null;
+};
+type SftpReadTextFileResponse = {
+  path: string;
+  content: string;
+  size: number;
+  modified_at?: string | null;
+};
+type SftpWriteTextFileResponse = {
+  path: string;
+  size: number;
+  modified_at?: string | null;
+};
+type EditorDialogLayout = {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+};
+type EditorDialogInteraction =
+  | {
+      kind: "move";
+      startX: number;
+      startY: number;
+      startLeft: number;
+      startTop: number;
+      startWidth: number;
+      startHeight: number;
+    }
+  | {
+      kind: "resize";
+      startX: number;
+      startY: number;
+      startLeft: number;
+      startTop: number;
+      startWidth: number;
+      startHeight: number;
+    };
+
+const TEXT_FILE_MAX_BYTES = 5 * 1024 * 1024;
+const EDITOR_DIALOG_MIN_WIDTH = 560;
+const EDITOR_DIALOG_MIN_HEIGHT = 360;
+const EDITOR_DIALOG_VIEWPORT_MARGIN = 24;
+const TEXT_FILE_EXTENSIONS = new Set([
+  ".conf",
+  ".css",
+  ".env",
+  ".go",
+  ".html",
+  ".ini",
+  ".java",
+  ".js",
+  ".json",
+  ".log",
+  ".md",
+  ".properties",
+  ".py",
+  ".rs",
+  ".sh",
+  ".sql",
+  ".toml",
+  ".ts",
+  ".tsx",
+  ".txt",
+  ".xml",
+  ".yaml",
+  ".yml",
+]);
+const TEXT_FILE_NAMES = new Set([
+  ".bash_profile",
+  ".bash_login",
+  ".bash_logout",
+  ".bashrc",
+  ".cshrc",
+  ".gitconfig",
+  ".gitignore",
+  ".inputrc",
+  ".kshrc",
+  ".profile",
+  ".ssh_config",
+  ".tcshrc",
+  ".vimrc",
+  ".zlogin",
+  ".zlogout",
+  ".zprofile",
+  ".zshenv",
+  ".zshrc",
+  "bash.bashrc",
+  "crontab",
+  "exports",
+  "fstab",
+  "group",
+  "hosts",
+  "hostname",
+  "issue",
+  "motd",
+  "passwd",
+  "profile",
+  "resolv.conf",
+  "shadow",
+  "shells",
+  "sudoers",
+  "sysctl.conf",
+]);
 
 function normalizeRemotePath(value: string) {
   const path = value.trim().replace(/\\/g, "/");
@@ -77,6 +195,35 @@ function formatSizeNumber(value: number) {
   return Number.isInteger(value) ? String(value) : value.toFixed(1);
 }
 
+function formatModifiedTime(value?: string) {
+  if (!value) return "";
+  const timestamp = parseModifiedTime(value);
+  if (timestamp === null) return value;
+  const date = new Date(timestamp);
+  return `${date.getFullYear()}-${padDatePart(date.getMonth() + 1)}-${padDatePart(date.getDate())} ${padDatePart(date.getHours())}:${padDatePart(date.getMinutes())}:${padDatePart(date.getSeconds())}`;
+}
+
+function parseModifiedTime(value?: string) {
+  if (!value) return null;
+  if (/^\d+$/.test(value)) return Number(value) * 1000;
+  const timestamp = Date.parse(value);
+  return Number.isNaN(timestamp) ? null : timestamp;
+}
+
+function padDatePart(value: number) {
+  return String(value).padStart(2, "0");
+}
+
+function compareEntries(left: SftpEntry, right: SftpEntry, key: SortKey) {
+  if (key === "name") return left.name.localeCompare(right.name);
+  if (key === "modified_at") {
+    const leftTime = parseModifiedTime(left.modified_at) ?? 0;
+    const rightTime = parseModifiedTime(right.modified_at) ?? 0;
+    return leftTime - rightTime || left.name.localeCompare(right.name);
+  }
+  return left.size - right.size || left.name.localeCompare(right.name);
+}
+
 function getEntryNameClassName(entry: SftpEntry) {
   const kind = entry.kind === "symlink" ? "link" : entry.kind;
   return `sftp-entry-name sftp-entry-name--${kind}`;
@@ -86,12 +233,50 @@ function getDeleteConfirmationText(entry: SftpEntry) {
   return `确认删除 ${entry.name}${entry.kind === "directory" ? " 文件夹及其中全部内容" : ""}？该操作不可逆！`;
 }
 
+function isArchiveEntry(entry: SftpEntry) {
+  return entry.kind === "file" && (entry.name.endsWith(".tar.gz") || entry.name.endsWith(".tgz"));
+}
+
+function isTextEntry(entry: SftpEntry) {
+  if (entry.kind !== "file") return false;
+  if (entry.name.startsWith(".env")) return true;
+  if (TEXT_FILE_NAMES.has(entry.name.toLowerCase())) return true;
+  const extensionStart = entry.name.lastIndexOf(".");
+  if (extensionStart < 0) return false;
+  return TEXT_FILE_EXTENSIONS.has(entry.name.slice(extensionStart).toLowerCase());
+}
+
 function localFileName(path: string) {
   return path.split(/[\\/]/).filter(Boolean).pop() ?? "未命名文件";
 }
 
 function joinLocalPath(parent: string, name: string) {
   return `${parent.replace(/[\\/]+$/, "")}\\${name}`;
+}
+
+function clampDialogLayout(layout: EditorDialogLayout) {
+  const viewportWidth = window.innerWidth || 1024;
+  const viewportHeight = window.innerHeight || 768;
+  const maxWidth = Math.max(
+    EDITOR_DIALOG_MIN_WIDTH,
+    viewportWidth - EDITOR_DIALOG_VIEWPORT_MARGIN * 2,
+  );
+  const maxHeight = Math.max(
+    EDITOR_DIALOG_MIN_HEIGHT,
+    viewportHeight - EDITOR_DIALOG_VIEWPORT_MARGIN * 2,
+  );
+  const width = Math.min(Math.max(layout.width, EDITOR_DIALOG_MIN_WIDTH), maxWidth);
+  const height = Math.min(Math.max(layout.height, EDITOR_DIALOG_MIN_HEIGHT), maxHeight);
+  const left = Math.min(
+    Math.max(layout.left, EDITOR_DIALOG_VIEWPORT_MARGIN),
+    Math.max(EDITOR_DIALOG_VIEWPORT_MARGIN, viewportWidth - width - EDITOR_DIALOG_VIEWPORT_MARGIN),
+  );
+  const top = Math.min(
+    Math.max(layout.top, EDITOR_DIALOG_VIEWPORT_MARGIN),
+    Math.max(EDITOR_DIALOG_VIEWPORT_MARGIN, viewportHeight - height - EDITOR_DIALOG_VIEWPORT_MARGIN),
+  );
+
+  return { left, top, width, height };
 }
 
 export function SftpWorkspace({
@@ -119,17 +304,23 @@ export function SftpWorkspace({
   const [pendingUpload, setPendingUpload] = useState<PendingUpload | null>(
     null,
   );
+  const [textFile, setTextFile] = useState<SftpTextFile | null>(null);
+  const [confirmTextClose, setConfirmTextClose] = useState(false);
+  const [confirmTextOverwrite, setConfirmTextOverwrite] = useState(false);
+  const [editorDialogLayout, setEditorDialogLayout] =
+    useState<EditorDialogLayout | null>(null);
   const [transferTasks, setTransferTasks] = useState<TransferTask[]>([]);
   const initialLoadSessionRef = useRef<string | null>(null);
   const transferSeqRef = useRef(0);
+  const editorDialogRef = useRef<HTMLElement | null>(null);
+  const editorDialogInteractionRef = useRef<EditorDialogInteraction | null>(
+    null,
+  );
 
   const sortedEntries = useMemo(() => {
     if (!sort) return entries;
     return [...entries].sort((left, right) => {
-      const result =
-        sort.key === "name"
-          ? left.name.localeCompare(right.name)
-          : left.size - right.size || left.name.localeCompare(right.name);
+      const result = compareEntries(left, right, sort.key);
       return sort.direction === "asc" ? result : -result;
     });
   }, [entries, sort]);
@@ -157,6 +348,10 @@ export function SftpWorkspace({
     setDialog(null);
     setDeleteCandidate(null);
     setPendingUpload(null);
+    setTextFile(null);
+    setConfirmTextClose(false);
+    setConfirmTextOverwrite(false);
+    setEditorDialogLayout(null);
     setTransferTasks([]);
     transferSeqRef.current = 0;
 
@@ -195,6 +390,56 @@ export function SftpWorkspace({
     });
     return () => {
       void unlisten.then((dispose) => dispose());
+    };
+  }, []);
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (!textFile || !(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "s") {
+        return;
+      }
+      event.preventDefault();
+      void saveTextFile(false);
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [textFile, sessionId]);
+
+  useEffect(() => {
+    function handlePointerMove(event: PointerEvent) {
+      const interaction = editorDialogInteractionRef.current;
+      if (!interaction) return;
+
+      const deltaX = event.clientX - interaction.startX;
+      const deltaY = event.clientY - interaction.startY;
+      const nextLayout =
+        interaction.kind === "move"
+          ? {
+              left: interaction.startLeft + deltaX,
+              top: interaction.startTop + deltaY,
+              width: interaction.startWidth,
+              height: interaction.startHeight,
+            }
+          : {
+              left: interaction.startLeft,
+              top: interaction.startTop,
+              width: interaction.startWidth + deltaX,
+              height: interaction.startHeight + deltaY,
+            };
+
+      setEditorDialogLayout(clampDialogLayout(nextLayout));
+    }
+
+    function handlePointerUp() {
+      editorDialogInteractionRef.current = null;
+    }
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
     };
   }, []);
 
@@ -280,7 +525,7 @@ export function SftpWorkspace({
           ? current.direction === "asc"
             ? "desc"
             : "asc"
-          : key === "size"
+          : key === "size" || key === "modified_at"
             ? "desc"
             : "asc",
     }));
@@ -450,6 +695,153 @@ export function SftpWorkspace({
     await uploadSelectedFile(upload, true);
   }
 
+  async function compressEntry(entry: SftpEntry) {
+    if (!sessionId) return;
+    try {
+      await callBackend("compress_sftp_path", {
+        request: { session_id: sessionId, path: entry.path },
+      });
+      await refresh();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    }
+  }
+
+  async function extractArchive(entry: SftpEntry) {
+    if (!sessionId) return;
+    try {
+      await callBackend("extract_sftp_archive", {
+        request: { session_id: sessionId, path: entry.path },
+      });
+      await refresh();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    }
+  }
+
+  async function openTextFile(entry: SftpEntry) {
+    if (!sessionId) return;
+    if (!isTextEntry(entry)) {
+      setError("暂不支持内置打开该文件类型");
+      return;
+    }
+    try {
+      const response = await callBackend<SftpReadTextFileResponse>(
+        "read_sftp_text_file",
+        {
+          request: {
+            session_id: sessionId,
+            path: entry.path,
+            max_bytes: TEXT_FILE_MAX_BYTES,
+          },
+        },
+      );
+      setTextFile({
+        path: response.path,
+        name: entry.name,
+        content: response.content,
+        originalContent: response.content,
+        size: response.size,
+        modifiedAt: response.modified_at ?? null,
+        status: null,
+      });
+      setError(null);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    }
+  }
+
+  async function saveTextFile(overwrite: boolean) {
+    if (!sessionId || !textFile) return;
+    try {
+      const response = await callBackend<SftpWriteTextFileResponse>(
+        "write_sftp_text_file",
+        {
+          request: {
+            session_id: sessionId,
+            path: textFile.path,
+            content: textFile.content,
+            expected_modified_at: textFile.modifiedAt,
+            overwrite,
+          },
+        },
+      );
+      setConfirmTextOverwrite(false);
+      setTextFile({
+        ...textFile,
+        originalContent: textFile.content,
+        size: response.size,
+        modifiedAt: response.modified_at ?? null,
+        status: "已保存",
+      });
+      await refresh();
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : String(caught);
+      if (message.startsWith("remote file changed:")) {
+        setConfirmTextOverwrite(true);
+        return;
+      }
+      setError(message);
+    }
+  }
+
+  function requestCloseTextFile() {
+    if (!textFile) return;
+    if (textFile.content !== textFile.originalContent) {
+      setConfirmTextClose(true);
+      return;
+    }
+    setTextFile(null);
+  }
+
+  function closeTextFileWithoutSaving() {
+    setTextFile(null);
+    setConfirmTextClose(false);
+    setConfirmTextOverwrite(false);
+  }
+
+  function getCurrentEditorDialogLayout() {
+    if (editorDialogLayout) return editorDialogLayout;
+    const rect = editorDialogRef.current?.getBoundingClientRect();
+    return {
+      left: rect?.left ?? EDITOR_DIALOG_VIEWPORT_MARGIN,
+      top: rect?.top ?? EDITOR_DIALOG_VIEWPORT_MARGIN,
+      width: rect?.width ?? 880,
+      height: rect?.height ?? 560,
+    };
+  }
+
+  function startEditorDialogMove(event: ReactPointerEvent<HTMLElement>) {
+    if (event.button !== 0) return;
+    const layout = getCurrentEditorDialogLayout();
+    editorDialogInteractionRef.current = {
+      kind: "move",
+      startX: event.clientX,
+      startY: event.clientY,
+      startLeft: layout.left,
+      startTop: layout.top,
+      startWidth: layout.width,
+      startHeight: layout.height,
+    };
+  }
+
+  function startEditorDialogResize(event: ReactPointerEvent<HTMLSpanElement>) {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const layout = getCurrentEditorDialogLayout();
+    editorDialogInteractionRef.current = {
+      kind: "resize",
+      startX: event.clientX,
+      startY: event.clientY,
+      startLeft: layout.left,
+      startTop: layout.top,
+      startWidth: layout.width,
+      startHeight: layout.height,
+    };
+    setEditorDialogLayout(clampDialogLayout(layout));
+  }
+
   async function downloadFile(entry: SftpEntry) {
     if (!sessionId) return;
     const localPath = await pickDownloadPath(entry.name);
@@ -567,6 +959,13 @@ export function SftpWorkspace({
             ? downloadDirectory(entry)
             : downloadFile(entry)),
       },
+      ...(isTextEntry(entry)
+        ? [{ label: "编辑", onSelect: () => void openTextFile(entry) }]
+        : []),
+      { label: "压缩", onSelect: () => void compressEntry(entry) },
+      ...(isArchiveEntry(entry)
+        ? [{ label: "解压缩", onSelect: () => void extractArchive(entry) }]
+        : []),
       {
         label: "重命名",
         onSelect: () =>
@@ -676,6 +1075,15 @@ export function SftpWorkspace({
                   大小
                 </button>
               </th>
+              <th>
+                <button
+                  type="button"
+                  aria-label="按修改时间排序"
+                  onClick={() => toggleSort("modified_at")}
+                >
+                  修改时间
+                </button>
+              </th>
               <th>权限</th>
             </tr>
           </thead>
@@ -686,6 +1094,8 @@ export function SftpWorkspace({
                 onDoubleClick={() => {
                   if (entry.kind === "directory") {
                     void navigateTo(entry.path);
+                  } else {
+                    void openTextFile(entry);
                   }
                 }}
                 onContextMenu={(event) => openEntryContextMenu(event, entry)}
@@ -697,6 +1107,7 @@ export function SftpWorkspace({
                 </td>
                 <td>{entry.kind}</td>
                 <td>{formatFileSize(entry.size, sizeUnit)}</td>
+                <td>{formatModifiedTime(entry.modified_at)}</td>
                 <td>{entry.permissions ?? ""}</td>
               </tr>
             ))}
@@ -818,6 +1229,163 @@ export function SftpWorkspace({
                   onClick={() => void confirmUploadOverwrite()}
                 >
                   覆盖
+                </button>
+              </div>
+            </div>
+          </section>
+        </div>
+      ) : null}
+      {textFile ? (
+        <div
+          className="connection-dialog__backdrop"
+          role="presentation"
+        >
+          <section
+            className="connection-dialog sftp-dialog sftp-editor-dialog"
+            role="dialog"
+            aria-label={`编辑 ${textFile.name}`}
+            ref={editorDialogRef}
+            style={
+              editorDialogLayout
+                ? {
+                    left: `${editorDialogLayout.left}px`,
+                    top: `${editorDialogLayout.top}px`,
+                    width: `${editorDialogLayout.width}px`,
+                    height: `${editorDialogLayout.height}px`,
+                  }
+                : undefined
+            }
+            onPointerDown={(event) => event.stopPropagation()}
+          >
+            <div className="connection-form">
+              <header
+                className="connection-dialog__header sftp-editor-dialog__drag-handle"
+                aria-label="拖动编辑器"
+                onPointerDown={startEditorDialogMove}
+              >
+                <h2>编辑 {textFile.name}</h2>
+                <button
+                  type="button"
+                  onClick={requestCloseTextFile}
+                  aria-label="关闭编辑器"
+                >
+                  ×
+                </button>
+              </header>
+              <label className="sftp-editor-dialog__content">
+                <span className="sftp-editor-dialog__content-header">
+                  <span>文件内容</span>
+                  <span className="sftp-editor-dialog__meta">
+                    <span>{textFile.path}</span>
+                    <span>{formatFileSize(textFile.size, sizeUnit)}</span>
+                    <span>{formatModifiedTime(textFile.modifiedAt ?? undefined)}</span>
+                  </span>
+                </span>
+                <textarea
+                  value={textFile.content}
+                  onChange={(event) =>
+                    setTextFile({
+                      ...textFile,
+                      content: event.target.value,
+                      status: null,
+                    })
+                  }
+                  aria-label="文件内容"
+                />
+              </label>
+              <div className="sftp-dialog__actions">
+                {textFile.status ? <span>{textFile.status}</span> : null}
+                <button type="button" onClick={requestCloseTextFile}>
+                  关闭
+                </button>
+                <button type="button" onClick={() => void saveTextFile(false)}>
+                  保存
+                </button>
+              </div>
+            </div>
+            <span
+              className="sftp-editor-dialog__resize-handle sftp-editor-dialog__resize-handle--corner"
+              aria-label="调整编辑器大小"
+              role="separator"
+              onPointerDown={startEditorDialogResize}
+            />
+          </section>
+        </div>
+      ) : null}
+      {confirmTextClose && textFile ? (
+        <div
+          className="connection-dialog__backdrop"
+          role="presentation"
+          onPointerDown={() => setConfirmTextClose(false)}
+        >
+          <section
+            className="connection-dialog sftp-dialog"
+            role="dialog"
+            aria-label="确认关闭"
+            onPointerDown={(event) => event.stopPropagation()}
+          >
+            <div className="connection-form">
+              <header className="connection-dialog__header">
+                <h2>确认关闭</h2>
+                <button
+                  type="button"
+                  onClick={() => setConfirmTextClose(false)}
+                  aria-label="关闭"
+                >
+                  ×
+                </button>
+              </header>
+              <p>文件 {textFile.name} 有未保存修改，确认关闭？</p>
+              <div className="sftp-dialog__actions">
+                <button type="button" onClick={() => setConfirmTextClose(false)}>
+                  取消
+                </button>
+                <button
+                  type="button"
+                  className="sftp-dialog__danger-button"
+                  onClick={closeTextFileWithoutSaving}
+                >
+                  确认
+                </button>
+              </div>
+            </div>
+          </section>
+        </div>
+      ) : null}
+      {confirmTextOverwrite && textFile ? (
+        <div
+          className="connection-dialog__backdrop"
+          role="presentation"
+          onPointerDown={() => setConfirmTextOverwrite(false)}
+        >
+          <section
+            className="connection-dialog sftp-dialog"
+            role="dialog"
+            aria-label="确认覆盖保存"
+            onPointerDown={(event) => event.stopPropagation()}
+          >
+            <div className="connection-form">
+              <header className="connection-dialog__header">
+                <h2>确认覆盖保存</h2>
+                <button
+                  type="button"
+                  onClick={() => setConfirmTextOverwrite(false)}
+                  aria-label="关闭"
+                >
+                  ×
+                </button>
+              </header>
+              <p>远程文件 {textFile.name} 已被修改，是否覆盖保存？</p>
+              <div className="sftp-dialog__actions">
+                <button type="button" onClick={() => setConfirmTextOverwrite(false)}>
+                  取消
+                </button>
+                <button
+                  type="button"
+                  className="sftp-dialog__danger-button"
+                  onClick={() => void saveTextFile(true)}
+                >
+                  覆盖保存
                 </button>
               </div>
             </div>

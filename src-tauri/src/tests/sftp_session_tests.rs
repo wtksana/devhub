@@ -81,6 +81,22 @@ async fn file_operations_reject_missing_sftp_session() {
             |_| {},
         )
         .await;
+    let compress_result = manager.compress_path("missing-session", "/tmp/logs").await;
+    let extract_result = manager
+        .extract_archive("missing-session", "/tmp/logs.tar.gz")
+        .await;
+    let read_text_result = manager
+        .read_text_file("missing-session", "/tmp/app.log", 5 * 1024 * 1024)
+        .await;
+    let write_text_result = manager
+        .write_text_file(
+            "missing-session",
+            "/tmp/app.log",
+            "hello",
+            Some("1710000000"),
+            false,
+        )
+        .await;
 
     assert_eq!(
         delete_result.unwrap_err().to_string(),
@@ -112,6 +128,22 @@ async fn file_operations_reject_missing_sftp_session() {
     );
     assert_eq!(
         download_directory_result.unwrap_err().to_string(),
+        "sftp session not found: missing-session"
+    );
+    assert_eq!(
+        compress_result.unwrap_err().to_string(),
+        "sftp session not found: missing-session"
+    );
+    assert_eq!(
+        extract_result.unwrap_err().to_string(),
+        "sftp session not found: missing-session"
+    );
+    assert_eq!(
+        read_text_result.unwrap_err().to_string(),
+        "sftp session not found: missing-session"
+    );
+    assert_eq!(
+        write_text_result.unwrap_err().to_string(),
         "sftp session not found: missing-session"
     );
 }

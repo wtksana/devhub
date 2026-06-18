@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SftpWorkspace } from "./SftpWorkspace";
@@ -110,6 +110,7 @@ describe("SftpWorkspace", () => {
         path: "/var/log",
         kind: "directory",
         size: 4096,
+        modified_at: "2026-06-18T10:20:30",
         permissions: "755",
       },
     ]);
@@ -118,6 +119,8 @@ describe("SftpWorkspace", () => {
 
     await waitForInitialLoad();
     expect(await screen.findByText("logs")).toBeInTheDocument();
+    expect(screen.getByText("修改时间")).toBeInTheDocument();
+    expect(screen.getByText("2026-06-18 10:20:30")).toBeInTheDocument();
   });
 
   it("opens a directory by double clicking it", async () => {
@@ -150,6 +153,456 @@ describe("SftpWorkspace", () => {
     });
     expect(screen.getByLabelText("远程路径")).toHaveValue("/var/log");
     expect(await screen.findByText("app.log")).toBeInTheDocument();
+  });
+
+  it("opens a text file in an editor dialog by double clicking it", async () => {
+    mockOpenSession([
+      {
+        name: "app.log",
+        path: "/app.log",
+        kind: "file",
+        size: 128,
+        modified_at: "1710000000",
+      },
+    ]);
+    callBackendMock.mockResolvedValueOnce({
+      path: "/app.log",
+      content: "hello\nworld",
+      size: 11,
+      modified_at: "1710000000",
+    });
+
+    render(<SftpWorkspace connectionId="prod-web-01" />);
+
+    await waitForInitialLoad();
+    await userEvent.dblClick(await screen.findByText("app.log"));
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("read_sftp_text_file", {
+        request: { session_id: "sftp-session-1", path: "/app.log", max_bytes: 5 * 1024 * 1024 },
+      });
+    });
+    const dialog = screen.getByRole("dialog", { name: "编辑 app.log" });
+    expect(dialog).toBeInTheDocument();
+    expect(screen.getByLabelText("文件内容")).toHaveValue("hello\nworld");
+    expect(dialog).toHaveTextContent("/app.log");
+    expect(dialog).toHaveTextContent("11");
+    expect(dialog).toHaveTextContent("2024-03-10 00:00:00");
+  });
+
+  it("moves the text editor dialog by dragging the header and resizes it from the corner", async () => {
+    mockOpenSession([
+      {
+        name: "app.log",
+        path: "/app.log",
+        kind: "file",
+        size: 128,
+      },
+    ]);
+    callBackendMock.mockResolvedValueOnce({
+      path: "/app.log",
+      content: "hello",
+      size: 5,
+      modified_at: "1710000000",
+    });
+
+    render(<SftpWorkspace connectionId="prod-web-01" />);
+
+    await waitForInitialLoad();
+    await userEvent.dblClick(await screen.findByText("app.log"));
+    vi.stubGlobal("innerWidth", 1200);
+    vi.stubGlobal("innerHeight", 900);
+
+    const dialog = screen.getByRole("dialog", { name: "编辑 app.log" });
+    vi.spyOn(dialog, "getBoundingClientRect").mockReturnValue({
+      x: 100,
+      y: 80,
+      width: 640,
+      height: 520,
+      top: 80,
+      right: 740,
+      bottom: 600,
+      left: 100,
+      toJSON: () => ({}),
+    });
+
+    fireEvent.pointerDown(screen.getByLabelText("拖动编辑器"), {
+      pointerId: 1,
+      clientX: 140,
+      clientY: 110,
+    });
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 180, clientY: 150 });
+    fireEvent.pointerUp(window, { pointerId: 1 });
+
+    expect(dialog).toHaveStyle({ left: "140px", top: "120px" });
+
+    fireEvent.pointerDown(screen.getByLabelText("调整编辑器大小"), {
+      pointerId: 2,
+      clientX: 740,
+      clientY: 600,
+    });
+    fireEvent.pointerMove(window, { pointerId: 2, clientX: 820, clientY: 660 });
+    fireEvent.pointerUp(window, { pointerId: 2 });
+
+    expect(dialog).toHaveStyle({ width: "720px", height: "580px" });
+  });
+
+  it("keeps the text editor open when clicking outside it", async () => {
+    mockOpenSession([
+      {
+        name: "app.log",
+        path: "/app.log",
+        kind: "file",
+        size: 128,
+      },
+    ]);
+    callBackendMock.mockResolvedValueOnce({
+      path: "/app.log",
+      content: "hello",
+      size: 5,
+      modified_at: "1710000000",
+    });
+
+    render(<SftpWorkspace connectionId="prod-web-01" />);
+
+    await waitForInitialLoad();
+    await userEvent.dblClick(await screen.findByText("app.log"));
+
+    fireEvent.pointerDown(
+      screen.getByRole("dialog", { name: "编辑 app.log" }).parentElement!,
+    );
+
+    expect(screen.getByRole("dialog", { name: "编辑 app.log" })).toBeInTheDocument();
+  });
+
+  it("keeps the text editor size and position after closing and reopening it", async () => {
+    mockOpenSession([
+      {
+        name: "app.log",
+        path: "/app.log",
+        kind: "file",
+        size: 128,
+      },
+    ]);
+    callBackendMock.mockResolvedValueOnce({
+      path: "/app.log",
+      content: "hello",
+      size: 5,
+      modified_at: "1710000000",
+    });
+    callBackendMock.mockResolvedValueOnce({
+      path: "/app.log",
+      content: "hello again",
+      size: 11,
+      modified_at: "1710000010",
+    });
+
+    render(<SftpWorkspace connectionId="prod-web-01" />);
+
+    await waitForInitialLoad();
+    await userEvent.dblClick(await screen.findByText("app.log"));
+    vi.stubGlobal("innerWidth", 1200);
+    vi.stubGlobal("innerHeight", 900);
+
+    const dialog = screen.getByRole("dialog", { name: "编辑 app.log" });
+    vi.spyOn(dialog, "getBoundingClientRect").mockReturnValue({
+      x: 100,
+      y: 80,
+      width: 640,
+      height: 520,
+      top: 80,
+      right: 740,
+      bottom: 600,
+      left: 100,
+      toJSON: () => ({}),
+    });
+
+    fireEvent.pointerDown(screen.getByLabelText("拖动编辑器"), {
+      pointerId: 1,
+      clientX: 140,
+      clientY: 110,
+    });
+    fireEvent.pointerMove(window, { pointerId: 1, clientX: 180, clientY: 150 });
+    fireEvent.pointerUp(window, { pointerId: 1 });
+    fireEvent.pointerDown(screen.getByLabelText("调整编辑器大小"), {
+      pointerId: 2,
+      clientX: 740,
+      clientY: 600,
+    });
+    fireEvent.pointerMove(window, { pointerId: 2, clientX: 820, clientY: 660 });
+    fireEvent.pointerUp(window, { pointerId: 2 });
+
+    await userEvent.click(screen.getByRole("button", { name: "关闭" }));
+    await userEvent.dblClick(await screen.findByText("app.log"));
+
+    const reopenedDialog = await screen.findByRole("dialog", { name: "编辑 app.log" });
+    expect(reopenedDialog).toHaveStyle({
+      left: "140px",
+      top: "120px",
+      width: "720px",
+      height: "580px",
+    });
+  });
+
+  it("opens a text file from the entry context menu", async () => {
+    mockOpenSession([
+      {
+        name: "app.log",
+        path: "/app.log",
+        kind: "file",
+        size: 128,
+      },
+    ]);
+    callBackendMock.mockResolvedValueOnce({
+      path: "/app.log",
+      content: "hello",
+      size: 5,
+      modified_at: "1710000000",
+    });
+
+    render(<SftpWorkspace connectionId="prod-web-01" />);
+
+    await waitForInitialLoad();
+    await userEvent.pointer({ keys: "[MouseRight]", target: await screen.findByText("app.log") });
+    await userEvent.click(screen.getByRole("menuitem", { name: "编辑" }));
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("read_sftp_text_file", {
+        request: { session_id: "sftp-session-1", path: "/app.log", max_bytes: 5 * 1024 * 1024 },
+      });
+    });
+    expect(screen.getByRole("dialog", { name: "编辑 app.log" })).toBeInTheDocument();
+  });
+
+  it("opens common extensionless linux config files as text", async () => {
+    mockOpenSession([
+      {
+        name: "profile",
+        path: "/etc/profile",
+        kind: "file",
+        size: 128,
+      },
+      {
+        name: ".bashrc",
+        path: "/home/dev/.bashrc",
+        kind: "file",
+        size: 128,
+      },
+    ]);
+    callBackendMock.mockResolvedValueOnce({
+      path: "/etc/profile",
+      content: "export PATH=$PATH:/opt/bin",
+      size: 25,
+      modified_at: "1710000000",
+    });
+
+    render(<SftpWorkspace connectionId="prod-web-01" />);
+
+    await waitForInitialLoad();
+    await userEvent.dblClick(await screen.findByText("profile"));
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("read_sftp_text_file", {
+        request: { session_id: "sftp-session-1", path: "/etc/profile", max_bytes: 5 * 1024 * 1024 },
+      });
+    });
+    expect(screen.getByRole("dialog", { name: "编辑 profile" })).toBeInTheDocument();
+    expect(screen.getByLabelText("文件内容")).toHaveValue("export PATH=$PATH:/opt/bin");
+  });
+
+  it("saves text file changes from the editor dialog", async () => {
+    mockOpenSession([
+      {
+        name: "app.log",
+        path: "/app.log",
+        kind: "file",
+        size: 128,
+        modified_at: "1710000000",
+      },
+    ]);
+    callBackendMock.mockResolvedValueOnce({
+      path: "/app.log",
+      content: "hello",
+      size: 5,
+      modified_at: "1710000000",
+    });
+    callBackendMock.mockResolvedValueOnce({
+      path: "/app.log",
+      size: 11,
+      modified_at: "1710000010",
+    });
+    callBackendMock.mockResolvedValueOnce([
+      {
+        name: "app.log",
+        path: "/app.log",
+        kind: "file",
+        size: 11,
+        modified_at: "1710000010",
+      },
+    ]);
+
+    render(<SftpWorkspace connectionId="prod-web-01" />);
+
+    await waitForInitialLoad();
+    await userEvent.dblClick(await screen.findByText("app.log"));
+    const editor = await screen.findByLabelText("文件内容");
+    await userEvent.clear(editor);
+    await userEvent.type(editor, "hello world");
+    await userEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("write_sftp_text_file", {
+        request: {
+          session_id: "sftp-session-1",
+          path: "/app.log",
+          content: "hello world",
+          expected_modified_at: "1710000000",
+          overwrite: false,
+        },
+      });
+    });
+    expect(screen.getByText("已保存")).toBeInTheDocument();
+  });
+
+  it("saves text file changes with Ctrl+S", async () => {
+    mockOpenSession([
+      {
+        name: "app.log",
+        path: "/app.log",
+        kind: "file",
+        size: 128,
+      },
+    ]);
+    callBackendMock.mockResolvedValueOnce({
+      path: "/app.log",
+      content: "hello",
+      size: 5,
+      modified_at: "1710000000",
+    });
+    callBackendMock.mockResolvedValueOnce({
+      path: "/app.log",
+      size: 11,
+      modified_at: "1710000010",
+    });
+    callBackendMock.mockResolvedValueOnce([]);
+
+    render(<SftpWorkspace connectionId="prod-web-01" />);
+
+    await waitForInitialLoad();
+    await userEvent.dblClick(await screen.findByText("app.log"));
+    const editor = await screen.findByLabelText("文件内容");
+    await userEvent.clear(editor);
+    await userEvent.type(editor, "hello world");
+    await userEvent.keyboard("{Control>}s{/Control}");
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("write_sftp_text_file", {
+        request: {
+          session_id: "sftp-session-1",
+          path: "/app.log",
+          content: "hello world",
+          expected_modified_at: "1710000000",
+          overwrite: false,
+        },
+      });
+    });
+  });
+
+  it("asks to overwrite when saving a text file changed remotely", async () => {
+    mockOpenSession([
+      {
+        name: "app.log",
+        path: "/app.log",
+        kind: "file",
+        size: 128,
+      },
+    ]);
+    callBackendMock.mockResolvedValueOnce({
+      path: "/app.log",
+      content: "hello",
+      size: 5,
+      modified_at: "1710000000",
+    });
+    callBackendMock.mockRejectedValueOnce(new Error("remote file changed: /app.log"));
+    callBackendMock.mockResolvedValueOnce({
+      path: "/app.log",
+      size: 11,
+      modified_at: "1710000010",
+    });
+    callBackendMock.mockResolvedValueOnce([]);
+
+    render(<SftpWorkspace connectionId="prod-web-01" />);
+
+    await waitForInitialLoad();
+    await userEvent.dblClick(await screen.findByText("app.log"));
+    const editor = await screen.findByLabelText("文件内容");
+    await userEvent.clear(editor);
+    await userEvent.type(editor, "hello world");
+    await userEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    expect(await screen.findByRole("dialog", { name: "确认覆盖保存" })).toBeInTheDocument();
+    expect(screen.getByText("远程文件 app.log 已被修改，是否覆盖保存？")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "覆盖保存" }));
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("write_sftp_text_file", {
+        request: {
+          session_id: "sftp-session-1",
+          path: "/app.log",
+          content: "hello world",
+          expected_modified_at: "1710000000",
+          overwrite: true,
+        },
+      });
+    });
+  });
+
+  it("asks before closing a dirty text editor", async () => {
+    mockOpenSession([
+      {
+        name: "app.log",
+        path: "/app.log",
+        kind: "file",
+        size: 128,
+      },
+    ]);
+    callBackendMock.mockResolvedValueOnce({
+      path: "/app.log",
+      content: "hello",
+      size: 5,
+      modified_at: "1710000000",
+    });
+
+    render(<SftpWorkspace connectionId="prod-web-01" />);
+
+    await waitForInitialLoad();
+    await userEvent.dblClick(await screen.findByText("app.log"));
+    const editor = await screen.findByLabelText("文件内容");
+    await userEvent.type(editor, " world");
+    await userEvent.click(screen.getByRole("button", { name: "关闭" }));
+
+    expect(screen.getByRole("dialog", { name: "确认关闭" })).toBeInTheDocument();
+    expect(screen.getByText("文件 app.log 有未保存修改，确认关闭？")).toBeInTheDocument();
+  });
+
+  it("shows an error when double clicking an unsupported file type", async () => {
+    mockOpenSession([
+      {
+        name: "archive.zip",
+        path: "/archive.zip",
+        kind: "file",
+        size: 128,
+      },
+    ]);
+
+    render(<SftpWorkspace connectionId="prod-web-01" />);
+
+    await waitForInitialLoad();
+    await userEvent.dblClick(await screen.findByText("archive.zip"));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("暂不支持内置打开该文件类型");
+    expect(callBackendMock).not.toHaveBeenCalledWith("read_sftp_text_file", expect.anything());
   });
 
   it("jumps to the path entered in the address bar", async () => {
@@ -303,16 +756,54 @@ describe("SftpWorkspace", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "按名称排序" }));
     expect(screen.getAllByRole("row").map((row) => row.textContent)).toEqual([
-      "名称类型大小权限",
+      "名称类型大小修改时间权限",
       "alpha.logfile1024",
       "beta.logfile2048",
     ]);
 
     await userEvent.click(screen.getByRole("button", { name: "按大小排序" }));
     expect(screen.getAllByRole("row").map((row) => row.textContent)).toEqual([
-      "名称类型大小权限",
+      "名称类型大小修改时间权限",
       "beta.logfile2048",
       "alpha.logfile1024",
+    ]);
+  });
+
+  it("sorts directory entries by modified time", async () => {
+    mockOpenSession([
+      {
+        name: "old.log",
+        path: "/old.log",
+        kind: "file",
+        size: 128,
+        modified_at: "2026-06-17T09:00:00",
+      },
+      {
+        name: "new.log",
+        path: "/new.log",
+        kind: "file",
+        size: 128,
+        modified_at: "2026-06-18T10:20:30",
+      },
+    ]);
+
+    render(<SftpWorkspace connectionId="prod-web-01" />);
+
+    await waitForInitialLoad();
+    await screen.findByText("old.log");
+
+    await userEvent.click(screen.getByRole("button", { name: "按修改时间排序" }));
+    expect(screen.getAllByRole("row").map((row) => row.textContent)).toEqual([
+      "名称类型大小修改时间权限",
+      "new.logfile1282026-06-18 10:20:30",
+      "old.logfile1282026-06-17 09:00:00",
+    ]);
+
+    await userEvent.click(screen.getByRole("button", { name: "按修改时间排序" }));
+    expect(screen.getAllByRole("row").map((row) => row.textContent)).toEqual([
+      "名称类型大小修改时间权限",
+      "old.logfile1282026-06-17 09:00:00",
+      "new.logfile1282026-06-18 10:20:30",
     ]);
   });
 
@@ -580,6 +1071,8 @@ describe("SftpWorkspace", () => {
     expect(menuItemLabels()).toEqual([
       "刷新",
       "下载",
+      "编辑",
+      "压缩",
       "重命名",
       "复制路径",
       "删除",
@@ -589,6 +1082,8 @@ describe("SftpWorkspace", () => {
       "上传文件夹",
     ]);
     expect(screen.getByRole("menuitem", { name: "下载" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "压缩" })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "解压缩" })).not.toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "重命名" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "复制路径" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "删除" })).toBeInTheDocument();
@@ -619,9 +1114,78 @@ describe("SftpWorkspace", () => {
     expect(screen.getByText("logs")).toHaveClass("sftp-entry-name--directory");
     expect(screen.queryByRole("menuitem", { name: "打开" })).not.toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "下载" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "压缩" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "重命名" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "复制路径" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "删除" })).toBeInTheDocument();
+  });
+
+  it("compresses an entry and refreshes the current directory", async () => {
+    mockOpenSession([
+      {
+        name: "logs",
+        path: "/logs",
+        kind: "directory",
+        size: 4096,
+      },
+    ]);
+    callBackendMock.mockResolvedValueOnce(undefined);
+    callBackendMock.mockResolvedValueOnce([
+      {
+        name: "logs.tar.gz",
+        path: "/logs.tar.gz",
+        kind: "file",
+        size: 256,
+      },
+    ]);
+
+    render(<SftpWorkspace connectionId="prod-web-01" />);
+
+    await waitForInitialLoad();
+    await userEvent.pointer({ keys: "[MouseRight]", target: await screen.findByText("logs") });
+    await userEvent.click(screen.getByRole("menuitem", { name: "压缩" }));
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("compress_sftp_path", {
+        request: { session_id: "sftp-session-1", path: "/logs" },
+      });
+    });
+    expect(await screen.findByText("logs.tar.gz")).toBeInTheDocument();
+  });
+
+  it("extracts a tar archive and refreshes the current directory", async () => {
+    mockOpenSession([
+      {
+        name: "logs.tar.gz",
+        path: "/logs.tar.gz",
+        kind: "file",
+        size: 256,
+      },
+    ]);
+    callBackendMock.mockResolvedValueOnce(undefined);
+    callBackendMock.mockResolvedValueOnce([
+      {
+        name: "logs",
+        path: "/logs",
+        kind: "directory",
+        size: 4096,
+      },
+    ]);
+
+    render(<SftpWorkspace connectionId="prod-web-01" />);
+
+    await waitForInitialLoad();
+    await userEvent.pointer({ keys: "[MouseRight]", target: await screen.findByText("logs.tar.gz") });
+
+    expect(screen.getByRole("menuitem", { name: "解压缩" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("menuitem", { name: "解压缩" }));
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("extract_sftp_archive", {
+        request: { session_id: "sftp-session-1", path: "/logs.tar.gz" },
+      });
+    });
+    expect(await screen.findByText("logs")).toBeInTheDocument();
   });
 
   it("downloads a remote directory into the selected local directory", async () => {
