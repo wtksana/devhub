@@ -7,8 +7,8 @@ use crate::models::sftp::{
     LocalPathKindResponse, OpenSftpSessionRequest, RenamePathRequest, SftpArchiveRequest,
     SftpDownloadDirectoryRequest, SftpDownloadFileRequest, SftpEntry, SftpReadTextFileRequest,
     SftpSessionPathRequest, SftpSessionRenameRequest, SftpSessionRequest, SftpSessionResponse,
-    SftpTextFileResponse, SftpTransferProgress, SftpUploadDirectoryRequest, SftpUploadFileRequest,
-    SftpWriteTextFileRequest, SftpWriteTextFileResponse,
+    SftpTextFileResponse, SftpTransferProgress, SftpTransferRequest, SftpUploadDirectoryRequest,
+    SftpUploadFileRequest, SftpWriteTextFileRequest, SftpWriteTextFileResponse,
 };
 use crate::ssh::sftp_manager::{self, SftpSessionManager};
 
@@ -182,6 +182,7 @@ pub async fn upload_sftp_file(
             &request.local_path,
             &request.remote_path,
             request.overwrite,
+            &request.transfer_id,
             move |progress| {
                 let _ = app.emit(
                     "sftp-transfer-progress",
@@ -208,6 +209,7 @@ pub async fn download_sftp_file(
             &request.session_id,
             &request.remote_path,
             &request.local_path,
+            &request.transfer_id,
             move |progress| {
                 let _ = app.emit(
                     "sftp-transfer-progress",
@@ -235,6 +237,7 @@ pub async fn upload_sftp_directory(
             &request.local_path,
             &request.remote_path,
             request.overwrite,
+            &request.transfer_id,
             move |progress| {
                 let _ = app.emit(
                     "sftp-transfer-progress",
@@ -262,6 +265,7 @@ pub async fn download_sftp_directory(
             &request.remote_path,
             &request.local_path,
             request.overwrite,
+            &request.transfer_id,
             move |progress| {
                 let _ = app.emit(
                     "sftp-transfer-progress",
@@ -274,6 +278,15 @@ pub async fn download_sftp_directory(
         )
         .await
         .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn cancel_sftp_transfer(
+    sessions: State<'_, SftpSessionManager>,
+    request: SftpTransferRequest,
+) -> Result<(), String> {
+    sessions.cancel_transfer(&request.transfer_id).await;
+    Ok(())
 }
 
 #[tauri::command]

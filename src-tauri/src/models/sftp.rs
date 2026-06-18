@@ -119,6 +119,11 @@ pub struct SftpTransferProgress {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SftpTransferRequest {
+    pub transfer_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SftpSessionResponse {
     pub session_id: String,
 }

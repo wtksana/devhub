@@ -1192,6 +1192,79 @@ describe("SftpWorkspace", () => {
     resolveDownload();
   });
 
+  it("cancels a running transfer from the transfer queue", async () => {
+    callBackendMock.mockImplementation((command) => {
+      if (command === "open_sftp_session") return Promise.resolve({ session_id: "sftp-session-1" });
+      if (command === "list_sftp_directory") {
+        return Promise.resolve([
+          {
+            name: "app.log",
+            path: "/app.log",
+            kind: "file",
+            size: 128,
+          },
+        ]);
+      }
+      if (command === "download_sftp_file") return new Promise(() => undefined);
+      if (command === "cancel_sftp_transfer") return Promise.resolve(undefined);
+      return Promise.resolve(undefined);
+    });
+    pickDownloadPathMock.mockResolvedValue("C:\\Users\\ttat\\Downloads\\app.log");
+
+    render(<SftpWorkspace connectionId="prod-web-01" />);
+
+    await waitForInitialLoad();
+    await userEvent.pointer({ keys: "[MouseRight]", target: await screen.findByText("app.log") });
+    await userEvent.click(screen.getByRole("menuitem", { name: "下载" }));
+    await userEvent.click(await screen.findByRole("button", { name: "取消 app.log 传输" }));
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("cancel_sftp_transfer", {
+        request: { transfer_id: "transfer-1" },
+      });
+    });
+    expect(screen.getByText("app.log 已取消")).toBeInTheDocument();
+  });
+
+  it("cancels running transfers when the sftp workspace unmounts", async () => {
+    callBackendMock.mockImplementation((command) => {
+      if (command === "open_sftp_session") return Promise.resolve({ session_id: "sftp-session-1" });
+      if (command === "list_sftp_directory") {
+        return Promise.resolve([
+          {
+            name: "app.log",
+            path: "/app.log",
+            kind: "file",
+            size: 128,
+          },
+        ]);
+      }
+      if (command === "download_sftp_file") return new Promise(() => undefined);
+      if (command === "cancel_sftp_transfer") return Promise.resolve(undefined);
+      if (command === "close_sftp_session") return Promise.resolve(undefined);
+      return Promise.resolve(undefined);
+    });
+    pickDownloadPathMock.mockResolvedValue("C:\\Users\\ttat\\Downloads\\app.log");
+
+    const { unmount } = render(<SftpWorkspace connectionId="prod-web-01" />);
+
+    await waitForInitialLoad();
+    await userEvent.pointer({ keys: "[MouseRight]", target: await screen.findByText("app.log") });
+    await userEvent.click(screen.getByRole("menuitem", { name: "下载" }));
+    await screen.findByText("app.log 传输中...");
+
+    unmount();
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("cancel_sftp_transfer", {
+        request: { transfer_id: "transfer-1" },
+      });
+      expect(callBackendMock).toHaveBeenCalledWith("close_sftp_session", {
+        request: { session_id: "sftp-session-1" },
+      });
+    });
+  });
+
   it("shows current directory actions in an entry context menu", async () => {
     mockOpenSession([
       {

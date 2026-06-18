@@ -2,7 +2,10 @@ use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use std::time::Duration;
 
 use ssh2::{FileStat, Session, Sftp};
@@ -37,6 +40,8 @@ pub enum SftpSessionError {
     RemoteFileTooLarge { size: u64, max_bytes: u64 },
     #[error("remote file changed: {0}")]
     RemoteFileChanged(String),
+    #[error("transfer canceled")]
+    TransferCanceled,
 }
 
 type SessionResult<T> = std::result::Result<T, SftpSessionError>;
@@ -44,6 +49,7 @@ type SessionResult<T> = std::result::Result<T, SftpSessionError>;
 #[derive(Clone, Default)]
 pub struct SftpSessionManager {
     sessions: Arc<Mutex<HashMap<String, ManagedSftpSession>>>,
+    transfers: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
 }
 
 struct ManagedSftpSession {
@@ -102,6 +108,12 @@ impl SftpSessionManager {
         self.sessions.lock().await.remove(session_id);
     }
 
+    pub async fn cancel_transfer(&self, transfer_id: &str) {
+        if let Some(cancel_flag) = self.transfers.lock().await.get(transfer_id) {
+            cancel_flag.store(true, Ordering::SeqCst);
+        }
+    }
+
     pub async fn list_directory(
         &self,
         session_id: &str,
@@ -150,21 +162,32 @@ impl SftpSessionManager {
         local_path: &str,
         remote_path: &str,
         overwrite: bool,
+        transfer_id: &str,
         on_progress: impl FnMut(u8),
     ) -> SessionResult<()> {
         let local_path = PathBuf::from(local_path);
-        self.with_sftp(session_id, |sftp| {
-            let remote_path_ref = Path::new(remote_path);
-            if !overwrite && sftp.stat(remote_path_ref).is_ok() {
-                return Err(SftpSessionError::RemotePathExists(remote_path.to_string()));
-            }
-            let total_size = std::fs::metadata(&local_path)?.len();
-            let mut local_file = std::fs::File::open(&local_path)?;
-            let mut remote_file = sftp.create(remote_path_ref)?;
-            copy_with_progress(&mut local_file, &mut remote_file, total_size, on_progress)?;
-            Ok(())
-        })
-        .await
+        let cancel_flag = self.register_transfer(transfer_id).await;
+        let result = self
+            .with_sftp(session_id, |sftp| {
+                let remote_path_ref = Path::new(remote_path);
+                if !overwrite && sftp.stat(remote_path_ref).is_ok() {
+                    return Err(SftpSessionError::RemotePathExists(remote_path.to_string()));
+                }
+                let total_size = std::fs::metadata(&local_path)?.len();
+                let mut local_file = std::fs::File::open(&local_path)?;
+                let mut remote_file = sftp.create(remote_path_ref)?;
+                copy_with_progress(
+                    &mut local_file,
+                    &mut remote_file,
+                    total_size,
+                    on_progress,
+                    || cancel_flag.load(Ordering::SeqCst),
+                )?;
+                Ok(())
+            })
+            .await;
+        self.unregister_transfer(transfer_id).await;
+        result
     }
 
     pub async fn download_file(
@@ -172,17 +195,28 @@ impl SftpSessionManager {
         session_id: &str,
         remote_path: &str,
         local_path: &str,
+        transfer_id: &str,
         on_progress: impl FnMut(u8),
     ) -> SessionResult<()> {
         let local_path = PathBuf::from(local_path);
-        self.with_sftp(session_id, |sftp| {
-            let total_size = sftp.stat(Path::new(remote_path))?.size.unwrap_or_default();
-            let mut remote_file = sftp.open(Path::new(remote_path))?;
-            let mut local_file = std::fs::File::create(&local_path)?;
-            copy_with_progress(&mut remote_file, &mut local_file, total_size, on_progress)?;
-            Ok(())
-        })
-        .await
+        let cancel_flag = self.register_transfer(transfer_id).await;
+        let result = self
+            .with_sftp(session_id, |sftp| {
+                let total_size = sftp.stat(Path::new(remote_path))?.size.unwrap_or_default();
+                let mut remote_file = sftp.open(Path::new(remote_path))?;
+                let mut local_file = std::fs::File::create(&local_path)?;
+                copy_with_progress(
+                    &mut remote_file,
+                    &mut local_file,
+                    total_size,
+                    on_progress,
+                    || cancel_flag.load(Ordering::SeqCst),
+                )?;
+                Ok(())
+            })
+            .await;
+        self.unregister_transfer(transfer_id).await;
+        result
     }
 
     pub async fn upload_directory(
@@ -191,25 +225,31 @@ impl SftpSessionManager {
         local_path: &str,
         remote_path: &str,
         overwrite: bool,
+        transfer_id: &str,
         mut on_progress: impl FnMut(u8),
     ) -> SessionResult<()> {
         let local_path = PathBuf::from(local_path);
-        self.with_sftp(session_id, |sftp| {
-            let total_size = local_directory_size(&local_path)?;
-            let mut progress = DirectoryTransferProgress::new(total_size);
-            progress.emit(&mut on_progress);
-            upload_directory_recursive(
-                sftp,
-                &local_path,
-                Path::new(remote_path),
-                overwrite,
-                &mut progress,
-                &mut on_progress,
-            )?;
-            progress.finish(&mut on_progress);
-            Ok(())
-        })
-        .await
+        let cancel_flag = self.register_transfer(transfer_id).await;
+        let result = self
+            .with_sftp(session_id, |sftp| {
+                let total_size = local_directory_size(&local_path)?;
+                let mut progress = DirectoryTransferProgress::new(total_size);
+                progress.emit(&mut on_progress);
+                upload_directory_recursive(
+                    sftp,
+                    &local_path,
+                    Path::new(remote_path),
+                    overwrite,
+                    &mut progress,
+                    &mut on_progress,
+                    &|| cancel_flag.load(Ordering::SeqCst),
+                )?;
+                progress.finish(&mut on_progress);
+                Ok(())
+            })
+            .await;
+        self.unregister_transfer(transfer_id).await;
+        result
     }
 
     pub async fn download_directory(
@@ -218,26 +258,45 @@ impl SftpSessionManager {
         remote_path: &str,
         local_path: &str,
         overwrite: bool,
+        transfer_id: &str,
         mut on_progress: impl FnMut(u8),
     ) -> SessionResult<()> {
         let local_path = PathBuf::from(local_path);
-        self.with_sftp(session_id, |sftp| {
-            let remote_path = Path::new(remote_path);
-            let total_size = remote_directory_size(sftp, remote_path)?;
-            let mut progress = DirectoryTransferProgress::new(total_size);
-            progress.emit(&mut on_progress);
-            download_directory_recursive(
-                sftp,
-                remote_path,
-                &local_path,
-                overwrite,
-                &mut progress,
-                &mut on_progress,
-            )?;
-            progress.finish(&mut on_progress);
-            Ok(())
-        })
-        .await
+        let cancel_flag = self.register_transfer(transfer_id).await;
+        let result = self
+            .with_sftp(session_id, |sftp| {
+                let remote_path = Path::new(remote_path);
+                let total_size = remote_directory_size(sftp, remote_path)?;
+                let mut progress = DirectoryTransferProgress::new(total_size);
+                progress.emit(&mut on_progress);
+                download_directory_recursive(
+                    sftp,
+                    remote_path,
+                    &local_path,
+                    overwrite,
+                    &mut progress,
+                    &mut on_progress,
+                    &|| cancel_flag.load(Ordering::SeqCst),
+                )?;
+                progress.finish(&mut on_progress);
+                Ok(())
+            })
+            .await;
+        self.unregister_transfer(transfer_id).await;
+        result
+    }
+
+    async fn register_transfer(&self, transfer_id: &str) -> Arc<AtomicBool> {
+        let cancel_flag = Arc::new(AtomicBool::new(false));
+        self.transfers
+            .lock()
+            .await
+            .insert(transfer_id.to_string(), Arc::clone(&cancel_flag));
+        cancel_flag
+    }
+
+    async fn unregister_transfer(&self, transfer_id: &str) {
+        self.transfers.lock().await.remove(transfer_id);
     }
 
     pub async fn compress_path(&self, session_id: &str, path: &str) -> SessionResult<()> {
@@ -549,9 +608,12 @@ fn upload_directory_recursive(
     overwrite: bool,
     progress: &mut DirectoryTransferProgress,
     on_progress: &mut impl FnMut(u8),
+    is_canceled: &impl Fn() -> bool,
 ) -> SessionResult<()> {
+    ensure_not_canceled(is_canceled)?;
     ensure_remote_directory(sftp, remote_path)?;
     for entry in std::fs::read_dir(local_path)? {
+        ensure_not_canceled(is_canceled)?;
         let entry = entry?;
         let entry_name = entry.file_name();
         let next_remote_path = remote_child_path(remote_path, &entry_name);
@@ -564,6 +626,7 @@ fn upload_directory_recursive(
                 overwrite,
                 progress,
                 on_progress,
+                is_canceled,
             )?;
         } else if file_type.is_file() {
             if !overwrite && sftp.stat(&next_remote_path).is_ok() {
@@ -573,7 +636,13 @@ fn upload_directory_recursive(
             }
             let mut local_file = std::fs::File::open(entry.path())?;
             let mut remote_file = sftp.create(&next_remote_path)?;
-            copy_with_total_progress(&mut local_file, &mut remote_file, progress, on_progress)?;
+            copy_with_total_progress(
+                &mut local_file,
+                &mut remote_file,
+                progress,
+                on_progress,
+                is_canceled,
+            )?;
         }
     }
     Ok(())
@@ -586,9 +655,12 @@ fn download_directory_recursive(
     overwrite: bool,
     progress: &mut DirectoryTransferProgress,
     on_progress: &mut impl FnMut(u8),
+    is_canceled: &impl Fn() -> bool,
 ) -> SessionResult<()> {
+    ensure_not_canceled(is_canceled)?;
     std::fs::create_dir_all(local_path)?;
     for (entry_path, stat) in sftp.readdir(remote_path)? {
+        ensure_not_canceled(is_canceled)?;
         let Some(entry_name) = entry_path.file_name() else {
             continue;
         };
@@ -602,6 +674,7 @@ fn download_directory_recursive(
                 overwrite,
                 progress,
                 on_progress,
+                is_canceled,
             )?;
         } else if file_type.is_file() {
             if !overwrite && next_local_path.exists() {
@@ -611,7 +684,13 @@ fn download_directory_recursive(
             }
             let mut remote_file = sftp.open(&entry_path)?;
             let mut local_file = std::fs::File::create(&next_local_path)?;
-            copy_with_total_progress(&mut remote_file, &mut local_file, progress, on_progress)?;
+            copy_with_total_progress(
+                &mut remote_file,
+                &mut local_file,
+                progress,
+                on_progress,
+                is_canceled,
+            )?;
         }
     }
     Ok(())
@@ -804,13 +883,16 @@ fn copy_with_total_progress(
     writer: &mut impl Write,
     progress: &mut DirectoryTransferProgress,
     on_progress: &mut impl FnMut(u8),
+    is_canceled: &impl Fn() -> bool,
 ) -> std::io::Result<()> {
     let mut buffer = [0_u8; 64 * 1024];
     loop {
+        ensure_not_canceled_io(is_canceled)?;
         let bytes_read = reader.read(&mut buffer)?;
         if bytes_read == 0 {
             break;
         }
+        ensure_not_canceled_io(is_canceled)?;
         writer.write_all(&buffer[..bytes_read])?;
         progress.add(bytes_read as u64, on_progress);
     }
@@ -822,6 +904,7 @@ fn copy_with_progress(
     writer: &mut impl Write,
     total_size: u64,
     mut on_progress: impl FnMut(u8),
+    is_canceled: impl Fn() -> bool,
 ) -> std::io::Result<()> {
     let mut buffer = [0_u8; 64 * 1024];
     let mut copied = 0_u64;
@@ -829,10 +912,12 @@ fn copy_with_progress(
 
     on_progress(0);
     loop {
+        ensure_not_canceled_io(&is_canceled)?;
         let bytes_read = reader.read(&mut buffer)?;
         if bytes_read == 0 {
             break;
         }
+        ensure_not_canceled_io(&is_canceled)?;
         writer.write_all(&buffer[..bytes_read])?;
         copied += bytes_read as u64;
         let progress = copied
@@ -847,6 +932,23 @@ fn copy_with_progress(
     }
     if last_progress != 100 {
         on_progress(100);
+    }
+    Ok(())
+}
+
+fn ensure_not_canceled(is_canceled: &impl Fn() -> bool) -> SessionResult<()> {
+    if is_canceled() {
+        return Err(SftpSessionError::TransferCanceled);
+    }
+    Ok(())
+}
+
+fn ensure_not_canceled_io(is_canceled: &impl Fn() -> bool) -> std::io::Result<()> {
+    if is_canceled() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Interrupted,
+            "transfer canceled",
+        ));
     }
     Ok(())
 }
@@ -890,5 +992,28 @@ mod tests {
             build_compress_command("/data/today's logs"),
             "cd '/data' && tar -czf 'today'\\''s logs.tar.gz' 'today'\\''s logs'"
         );
+    }
+
+    #[test]
+    fn stops_copy_when_transfer_is_canceled() {
+        use std::cell::Cell;
+
+        let mut reader = std::io::Cursor::new(vec![1_u8; 128 * 1024]);
+        let mut writer = Vec::new();
+        let progress_calls = Cell::new(0);
+
+        let error = copy_with_progress(
+            &mut reader,
+            &mut writer,
+            128 * 1024,
+            |_| {
+                progress_calls.set(progress_calls.get() + 1);
+            },
+            || progress_calls.get() > 0,
+        )
+        .unwrap_err();
+
+        assert_eq!(error.kind(), std::io::ErrorKind::Interrupted);
+        assert_eq!(error.to_string(), "transfer canceled");
     }
 }

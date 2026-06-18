@@ -318,6 +318,7 @@ export function SftpWorkspace({
   const [transferTasks, setTransferTasks] = useState<TransferTask[]>([]);
   const initialLoadSessionRef = useRef<string | null>(null);
   const transferSeqRef = useRef(0);
+  const runningTransferIdsRef = useRef<Set<string>>(new Set());
   const fileListRef = useRef<HTMLDivElement | null>(null);
   const editorDialogRef = useRef<HTMLElement | null>(null);
   const editorDialogInteractionRef = useRef<EditorDialogInteraction | null>(
@@ -361,6 +362,7 @@ export function SftpWorkspace({
     setEditorDialogLayout(null);
     setIsDragOverFileList(false);
     setTransferTasks([]);
+    runningTransferIdsRef.current.clear();
     transferSeqRef.current = 0;
 
     void callBackend<{ session_id: string }>("open_sftp_session", {
@@ -384,6 +386,7 @@ export function SftpWorkspace({
 
     return () => {
       disposed = true;
+      cancelRunningTransfers();
       if (openedSessionId) {
         void callBackend("close_sftp_session", {
           request: { session_id: openedSessionId },
@@ -648,6 +651,9 @@ export function SftpWorkspace({
   }
 
   function updateTransferTask(id: string, patch: Partial<TransferTask>) {
+    if (patch.status && patch.status !== "running") {
+      runningTransferIdsRef.current.delete(id);
+    }
     setTransferTasks((tasks) =>
       tasks.map((task) => (task.id === id ? { ...task, ...patch } : task)),
     );
@@ -656,6 +662,28 @@ export function SftpWorkspace({
   function nextTransferId() {
     transferSeqRef.current += 1;
     return `transfer-${transferSeqRef.current}`;
+  }
+
+  function trackRunningTransfer(id: string) {
+    runningTransferIdsRef.current.add(id);
+  }
+
+  function cancelTransfer(id: string) {
+    runningTransferIdsRef.current.delete(id);
+    updateTransferTask(id, { status: "canceled" });
+    void callBackend("cancel_sftp_transfer", {
+      request: { transfer_id: id },
+    });
+  }
+
+  function cancelRunningTransfers() {
+    const transferIds = Array.from(runningTransferIdsRef.current);
+    runningTransferIdsRef.current.clear();
+    for (const transferId of transferIds) {
+      void callBackend("cancel_sftp_transfer", {
+        request: { transfer_id: transferId },
+      });
+    }
   }
 
   async function uploadFile() {
@@ -728,6 +756,7 @@ export function SftpWorkspace({
   async function uploadSelectedFile(upload: PendingUpload, overwrite: boolean) {
     if (!sessionId) return;
     const taskId = nextTransferId();
+    trackRunningTransfer(taskId);
     setTransferTasks((tasks) => [
       { id: taskId, name: upload.name, direction: "upload", status: "running" },
       ...tasks,
@@ -751,8 +780,12 @@ export function SftpWorkspace({
       await refresh();
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : String(caught);
-      updateTransferTask(taskId, { status: "failed", error: message });
-      setError(message);
+      if (message === "transfer canceled") {
+        updateTransferTask(taskId, { status: "canceled" });
+      } else {
+        updateTransferTask(taskId, { status: "failed", error: message });
+        setError(message);
+      }
     }
   }
 
@@ -915,6 +948,7 @@ export function SftpWorkspace({
     const localPath = await pickDownloadPath(entry.name);
     if (!localPath) return;
     const taskId = nextTransferId();
+    trackRunningTransfer(taskId);
     setTransferTasks((tasks) => [
       {
         id: taskId,
@@ -936,8 +970,12 @@ export function SftpWorkspace({
       updateTransferTask(taskId, { status: "completed", progress: 100 });
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : String(caught);
-      updateTransferTask(taskId, { status: "failed", error: message });
-      setError(message);
+      if (message === "transfer canceled") {
+        updateTransferTask(taskId, { status: "canceled" });
+      } else {
+        updateTransferTask(taskId, { status: "failed", error: message });
+        setError(message);
+      }
     }
   }
 
@@ -947,6 +985,7 @@ export function SftpWorkspace({
     if (!selectedDirectory) return;
     const localPath = joinLocalPath(selectedDirectory, entry.name);
     const taskId = nextTransferId();
+    trackRunningTransfer(taskId);
     setTransferTasks((tasks) => [
       {
         id: taskId,
@@ -969,8 +1008,12 @@ export function SftpWorkspace({
       updateTransferTask(taskId, { status: "completed", progress: 100 });
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : String(caught);
-      updateTransferTask(taskId, { status: "failed", error: message });
-      setError(message);
+      if (message === "transfer canceled") {
+        updateTransferTask(taskId, { status: "canceled" });
+      } else {
+        updateTransferTask(taskId, { status: "failed", error: message });
+        setError(message);
+      }
     }
   }
 
@@ -1186,7 +1229,7 @@ export function SftpWorkspace({
           </tbody>
         </table>
       </div>
-      <TransferQueue tasks={transferTasks} />
+      <TransferQueue tasks={transferTasks} onCancel={cancelTransfer} />
       <ContextMenu menu={contextMenu} onClose={() => setContextMenu(null)} />
       {dialog ? (
         <div

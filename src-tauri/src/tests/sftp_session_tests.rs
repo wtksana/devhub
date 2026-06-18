@@ -52,6 +52,7 @@ async fn file_operations_reject_missing_sftp_session() {
             "C:/tmp/local.txt",
             "/tmp/remote.txt",
             false,
+            "transfer-1",
             |_| {},
         )
         .await;
@@ -60,6 +61,7 @@ async fn file_operations_reject_missing_sftp_session() {
             "missing-session",
             "/tmp/remote.txt",
             "C:/tmp/local.txt",
+            "transfer-2",
             |_| {},
         )
         .await;
@@ -69,6 +71,7 @@ async fn file_operations_reject_missing_sftp_session() {
             "C:/tmp/local-directory",
             "/tmp/remote-directory",
             false,
+            "transfer-3",
             |_| {},
         )
         .await;
@@ -78,6 +81,7 @@ async fn file_operations_reject_missing_sftp_session() {
             "/tmp/remote-directory",
             "C:/tmp/local-directory",
             false,
+            "transfer-4",
             |_| {},
         )
         .await;

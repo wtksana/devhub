@@ -222,12 +222,17 @@
 - 终端打开时先注册输出监听，再创建后端会话。
 - 远端输出早于 `open_terminal` 返回时前端临时缓存，避免偶发只显示 `Connected.`。
 
+### 任务 26：SFTP 传输取消
+
+- 支持在传输队列中取消进行中的上传或下载任务。
+- 后端传输循环按 `transfer_id` 检查取消标记，并在取消时返回 `transfer canceled`。
+- 取消后传输队列状态显示为“已取消”。
+- 关闭 SFTP 标签时会先取消该标签未完成传输任务，再关闭后端 SFTP 会话。
+
 ## 待完成任务
 
-### 任务 26：SFTP 传输取消和批量操作
+### 任务 27：SFTP 批量操作
 
-- 支持取消进行中的上传或下载任务。
-- 关闭 SFTP 标签时取消该标签未完成传输任务。
 - 支持文件列表多选。
 - 支持批量下载、删除、压缩和复制路径。
 
@@ -267,7 +272,7 @@ cargo clippy --manifest-path src-tauri\Cargo.toml --all-targets -- -D warnings
 - SSH agent。
 - SSH tunnel。
 - SFTP sudo 写入。
-- SFTP 传输任务取消、暂停和恢复。
+- SFTP 传输任务暂停和恢复。
 - SFTP 批量选择和批量操作。
 - 完整数据库管理。
 - Redis 管理。
@@ -278,6 +283,6 @@ cargo clippy --manifest-path src-tauri\Cargo.toml --all-targets -- -D warnings
 
 1. 做真实 SSH、SFTP 和右键菜单手动验收。
 2. 修复手动验收暴露的问题。
-3. 实现任务 26：SFTP 传输取消和批量操作。
+3. 实现任务 27：SFTP 批量选择和批量操作。
 4. 完善连接编辑器字段，覆盖密码、私钥、私钥口令和 sudo 使用说明。
 5. 开始第二阶段：数据库连接管理、Redis 管理、SSH tunnel、跳板机、Docker 等能力。
