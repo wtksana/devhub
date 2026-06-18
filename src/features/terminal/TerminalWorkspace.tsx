@@ -1,4 +1,5 @@
 import { TerminalTab } from "./TerminalTab";
+import { useI18n } from "../../i18n/useI18n";
 
 interface TerminalWorkspaceProps {
   connectionId: string | null;
@@ -9,11 +10,13 @@ interface TerminalWorkspaceProps {
 }
 
 export function TerminalWorkspace({ connectionId, fontFamily, fontSize, theme, isActive }: TerminalWorkspaceProps) {
+  const { t } = useI18n();
+
   if (!connectionId) {
     return (
       <section className="workspace-empty">
-        <h2>未选择连接</h2>
-        <p>请先在左侧连接列表中打开终端。</p>
+        <h2>{t("terminal.no_connection")}</h2>
+        <p>{t("terminal.no_connection_hint")}</p>
       </section>
     );
   }

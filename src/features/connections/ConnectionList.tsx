@@ -3,6 +3,7 @@ import type { ConnectionAuthSettings, ConnectionSettings } from "../settings/set
 import { ContextMenu, type ContextMenuState } from "../../app/ContextMenu";
 import { pickPrivateKeyFile } from "../../lib/fileDialog";
 import sshConnectionIcon from "../../assets/icons/devicon--powershell.png";
+import { useI18n } from "../../i18n/useI18n";
 
 interface ConnectionListProps {
   connections: ConnectionSettings[];
@@ -24,12 +25,6 @@ function createConnectionId(host: string) {
 }
 
 type ConnectionDialogMode = "add" | "edit" | "copy";
-
-function dialogTitle(mode: ConnectionDialogMode) {
-  if (mode === "edit") return "编辑 SSH 连接";
-  if (mode === "copy") return "复制 SSH 连接";
-  return "添加 SSH 连接";
-}
 
 function getConnectionMetric(connection: ConnectionSettings, field: "last_connected_at" | "connection_count") {
   return (connection as unknown as Record<string, number | string | undefined>)[field];
@@ -75,11 +70,11 @@ function compareGroups(
   return result === 0 ? leftName.localeCompare(rightName) : result;
 }
 
-function createSortMenuItems(onSelect: (mode: ConnectionSortMode) => void) {
+function createSortMenuItems(onSelect: (mode: ConnectionSortMode) => void, t: ReturnType<typeof useI18n>["t"]) {
   return [
-    { label: "按名称", onSelect: () => onSelect("name") },
-    { label: "按最后连接时间", onSelect: () => onSelect("last_connected_at") },
-    { label: "按连接最多次数", onSelect: () => onSelect("connection_count") },
+    { label: t("connections.sort_name"), onSelect: () => onSelect("name") },
+    { label: t("connections.sort_last_connected"), onSelect: () => onSelect("last_connected_at") },
+    { label: t("connections.sort_most_used"), onSelect: () => onSelect("connection_count") },
   ];
 }
 
@@ -93,6 +88,7 @@ export function ConnectionList({
   connectionGroups,
   onUpdateConnectionGroups,
 }: ConnectionListProps) {
+  const { t } = useI18n();
   const [dialogMode, setDialogMode] = useState<ConnectionDialogMode | null>(null);
   const [sourceConnection, setSourceConnection] = useState<ConnectionSettings | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
@@ -141,6 +137,16 @@ export function ConnectionList({
       ? [[ungroupedName, ungroupedConnections] as const, ...sortedGroups]
       : sortedGroups;
   }, [connectionSortMode, connections, groupNames, groupSortMode]);
+
+  function dialogTitle(mode: ConnectionDialogMode) {
+    if (mode === "edit") return t("connections.edit_ssh");
+    if (mode === "copy") return t("connections.copy_ssh");
+    return t("connections.add_ssh");
+  }
+
+  function groupDisplayName(groupName: string) {
+    return groupName === ungroupedName ? t("connections.ungrouped") : groupName;
+  }
 
   function submitConnection(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -239,17 +245,17 @@ export function ConnectionList({
       x: event.clientX,
       y: event.clientY,
       items: [
-        { label: "连接", onSelect: () => onOpenTerminal(connection.id) },
-        { label: "新标签连接", onSelect: () => onOpenNewTerminal(connection.id) },
+        { label: t("connections.open"), onSelect: () => onOpenTerminal(connection.id) },
+        { label: t("connections.open_new_tab"), onSelect: () => onOpenNewTerminal(connection.id) },
         { label: "SFTP", onSelect: () => onOpenSftp(connection.id) },
-        { label: "编辑", onSelect: () => openConnectionDialog("edit", connection) },
-        { label: "复制", onSelect: () => openConnectionDialog("copy", connection) },
+        { label: t("connections.edit"), onSelect: () => openConnectionDialog("edit", connection) },
+        { label: t("connections.copy"), onSelect: () => openConnectionDialog("copy", connection) },
         { type: "separator" },
         {
           type: "submenu",
-          label: "移动到分组",
+          label: t("connections.move_to_group"),
           items: [
-            { label: ungroupedName, onSelect: () => moveConnectionToGroup(connection, ungroupedName) },
+            { label: t("connections.ungrouped"), onSelect: () => moveConnectionToGroup(connection, ungroupedName) },
             ...groupNames.map((groupName) => ({
               label: groupName,
               onSelect: () => moveConnectionToGroup(connection, groupName),
@@ -268,18 +274,18 @@ export function ConnectionList({
       x: event.clientX,
       y: event.clientY,
       items: [
-        { label: "添加连接", onSelect: () => openConnectionDialog("add") },
-        { label: "添加分组", onSelect: () => setIsGroupDialogOpen(true) },
+        { label: t("connections.add"), onSelect: () => openConnectionDialog("add") },
+        { label: t("connections.add_group"), onSelect: () => setIsGroupDialogOpen(true) },
         { type: "separator" },
         {
           type: "submenu",
-          label: "分组排序",
-          items: createSortMenuItems(setGroupSortMode),
+          label: t("connections.group_sort"),
+          items: createSortMenuItems(setGroupSortMode, t),
         },
         {
           type: "submenu",
-          label: "连接排序",
-          items: createSortMenuItems(setConnectionSortMode),
+          label: t("connections.connection_sort"),
+          items: createSortMenuItems(setConnectionSortMode, t),
         },
       ],
     });
@@ -288,9 +294,9 @@ export function ConnectionList({
   return (
     <section className="connection-list">
       <header>
-        <h2>连接</h2>
+        <h2>{t("connections.title")}</h2>
         <button type="button" onClick={() => openConnectionDialog("add")}>
-          添加连接
+          {t("connections.add")}
         </button>
       </header>
       {dialogMode ? (
@@ -299,18 +305,18 @@ export function ConnectionList({
             <form className="connection-form" onSubmit={submitConnection}>
               <header className="connection-dialog__header">
                 <h3 id="connection-dialog-title">{dialogTitle(dialogMode)}</h3>
-                <button type="button" aria-label="关闭添加连接弹窗" onClick={closeConnectionDialog}>
+                <button type="button" aria-label={t("connections.close_add_dialog")} onClick={closeConnectionDialog}>
                   ×
                 </button>
               </header>
               <label>
-                <span>连接名称</span>
-                <input aria-label="连接名称" value={name} onChange={(event) => setName(event.target.value)} required />
+                <span>{t("connections.name")}</span>
+                <input aria-label={t("connections.name")} value={name} onChange={(event) => setName(event.target.value)} required />
               </label>
               <label>
-                <span>分组</span>
+                <span>{t("connections.group")}</span>
                 <input
-                  aria-label="分组"
+                  aria-label={t("connections.group")}
                   list="connection-group-options"
                   value={group}
                   onChange={(event) => setGroup(event.target.value)}
@@ -322,13 +328,13 @@ export function ConnectionList({
                 </datalist>
               </label>
               <label>
-                <span>主机</span>
-                <input aria-label="主机" value={host} onChange={(event) => setHost(event.target.value)} required />
+                <span>{t("connections.host")}</span>
+                <input aria-label={t("connections.host")} value={host} onChange={(event) => setHost(event.target.value)} required />
               </label>
               <label>
-                <span>端口</span>
+                <span>{t("connections.port")}</span>
                 <input
-                  aria-label="端口"
+                  aria-label={t("connections.port")}
                   type="number"
                   min={1}
                   max={65535}
@@ -338,25 +344,25 @@ export function ConnectionList({
                 />
               </label>
               <label>
-                <span>用户名</span>
-                <input aria-label="用户名" value={username} onChange={(event) => setUsername(event.target.value)} required />
+                <span>{t("connections.username")}</span>
+                <input aria-label={t("connections.username")} value={username} onChange={(event) => setUsername(event.target.value)} required />
               </label>
               <label>
-                <span>认证方式</span>
+                <span>{t("connections.auth_type")}</span>
                 <select
-                  aria-label="认证方式"
+                  aria-label={t("connections.auth_type")}
                   value={authType}
                   onChange={(event) => setAuthType(event.target.value as ConnectionAuthSettings["type"])}
                 >
-                  <option value="password">密码</option>
-                  <option value="private_key">私钥</option>
+                  <option value="password">{t("connections.password")}</option>
+                  <option value="private_key">{t("connections.private_key")}</option>
                 </select>
               </label>
               {authType === "password" ? (
                 <label>
-                  <span>密码</span>
+                  <span>{t("connections.password")}</span>
                   <input
-                    aria-label="密码"
+                    aria-label={t("connections.password")}
                     type="password"
                     value={password}
                     onChange={(event) => setPassword(event.target.value)}
@@ -365,23 +371,23 @@ export function ConnectionList({
               ) : (
                 <>
                   <label>
-                    <span>私钥路径</span>
+                    <span>{t("connections.private_key_path")}</span>
                     <div className="connection-form__inline-field">
                       <input
-                        aria-label="私钥路径"
+                        aria-label={t("connections.private_key_path")}
                         value={privateKeyPath}
                         onChange={(event) => setPrivateKeyPath(event.target.value)}
                         required
                       />
                       <button type="button" onClick={() => void choosePrivateKeyFile()}>
-                        选择私钥文件
+                        {t("connections.pick_private_key")}
                       </button>
                     </div>
                   </label>
                   <label>
-                    <span>私钥口令</span>
+                    <span>{t("connections.private_key_passphrase")}</span>
                     <input
-                      aria-label="私钥口令"
+                      aria-label={t("connections.private_key_passphrase")}
                       type="password"
                       value={privateKeyPassphrase}
                       onChange={(event) => setPrivateKeyPassphrase(event.target.value)}
@@ -391,9 +397,9 @@ export function ConnectionList({
               )}
               <footer>
                 <button type="button" onClick={closeConnectionDialog}>
-                  取消
+                  {t("connections.cancel")}
                 </button>
-                <button type="submit">保存连接</button>
+                <button type="submit">{t("connections.save")}</button>
               </footer>
             </form>
           </div>
@@ -404,15 +410,15 @@ export function ConnectionList({
           <div className="connection-dialog" role="dialog" aria-modal="true" aria-labelledby="connection-group-dialog-title">
             <form className="connection-form" onSubmit={submitGroup}>
               <header className="connection-dialog__header">
-                <h3 id="connection-group-dialog-title">添加分组</h3>
-                <button type="button" aria-label="关闭添加分组弹窗" onClick={closeGroupDialog}>
+                <h3 id="connection-group-dialog-title">{t("connections.add_group")}</h3>
+                <button type="button" aria-label={t("connections.close_group_dialog")} onClick={closeGroupDialog}>
                   ×
                 </button>
               </header>
               <label>
-                <span>分组名称</span>
+                <span>{t("connections.group_name")}</span>
                 <input
-                  aria-label="分组名称"
+                  aria-label={t("connections.group_name")}
                   value={newGroupName}
                   onChange={(event) => setNewGroupName(event.target.value)}
                   required
@@ -420,9 +426,9 @@ export function ConnectionList({
               </label>
               <footer>
                 <button type="button" onClick={closeGroupDialog}>
-                  取消
+                  {t("connections.cancel")}
                 </button>
-                <button type="submit">保存分组</button>
+                <button type="submit">{t("connections.save_group")}</button>
               </footer>
             </form>
           </div>
@@ -431,20 +437,20 @@ export function ConnectionList({
       <ul className="connection-local-list">
         <li onDoubleClick={() => onOpenTerminal(localConnectionId)}>
           <strong>
-            <img src={sshConnectionIcon} alt="SSH 连接" />
-            本地终端
+            <img src={sshConnectionIcon} alt={t("connections.ssh_icon")} />
+            {t("connections.local_terminal")}
           </strong>
-          <span>本机 shell</span>
+          <span>{t("connections.local_shell")}</span>
         </li>
       </ul>
-      <div className="connection-groups" aria-label="连接分组列表" onContextMenu={openBlankContextMenu}>
+      <div className="connection-groups" aria-label={t("connections.group_list")} onContextMenu={openBlankContextMenu}>
         {groupedConnections.map(([groupName, groupConnections]) => (
           <section
             key={groupName}
             className="connection-group"
-            aria-label={`连接分组 ${groupName}`}
+            aria-label={t("connections.group_label", { name: groupDisplayName(groupName) })}
           >
-            <h3>{groupName}</h3>
+            <h3>{groupDisplayName(groupName)}</h3>
             <ul>
               {groupConnections.map((connection) => (
                 <li
@@ -453,7 +459,7 @@ export function ConnectionList({
                   onContextMenu={(event) => openConnectionContextMenu(event, connection)}
                 >
                   <strong>
-                    <img src={sshConnectionIcon} alt="SSH 连接" />
+                    <img src={sshConnectionIcon} alt={t("connections.ssh_icon")} />
                     {connection.name}
                   </strong>
                   <span>

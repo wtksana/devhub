@@ -5,6 +5,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { TerminalTab } from "./TerminalTab";
 import { callBackend, listenBackend } from "../../lib/tauri";
 import { readClipboardText, writeClipboardText } from "../../lib/clipboard";
+import { I18nProvider } from "../../i18n/I18nProvider";
 
 vi.mock("../../lib/tauri", () => ({
   callBackend: vi.fn(),
@@ -64,6 +65,14 @@ describe("TerminalTab", () => {
     vi.unstubAllGlobals();
   });
 
+  function renderTerminalTab(props: React.ComponentProps<typeof TerminalTab>) {
+    return render(
+      <I18nProvider language="zh-CN">
+        <TerminalTab {...props} />
+      </I18nProvider>,
+    );
+  }
+
   it("opens backend session, streams matching output, sends input, and closes session", async () => {
     let outputHandler: ((payload: { session_id: string; data: string }) => void) | null = null;
     const unlisten = vi.fn();
@@ -73,9 +82,13 @@ describe("TerminalTab", () => {
       return unlisten;
     });
 
-    const { unmount } = render(
-      <TerminalTab connectionId="prod-web-01" fontFamily="Maple Mono" fontSize={16} theme="dark" isActive={true} />,
-    );
+    const { unmount } = renderTerminalTab({
+      connectionId: "prod-web-01",
+      fontFamily: "Maple Mono",
+      fontSize: 16,
+      theme: "dark",
+      isActive: true,
+    });
 
     await waitFor(() => {
       expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
@@ -134,7 +147,7 @@ describe("TerminalTab", () => {
       return () => {};
     });
 
-    render(<TerminalTab connectionId="prod-web-01" fontFamily="Maple Mono" fontSize={16} theme="dark" isActive={true} />);
+    renderTerminalTab({ connectionId: "prod-web-01", fontFamily: "Maple Mono", fontSize: 16, theme: "dark", isActive: true });
 
     await waitFor(() => {
       expect(outputHandler).not.toBeNull();
@@ -154,7 +167,7 @@ describe("TerminalTab", () => {
     callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
     listenBackendMock.mockResolvedValueOnce(vi.fn());
 
-    render(<TerminalTab connectionId="prod-web-01" fontFamily="Maple Mono" fontSize={16} theme="dark" isActive={true} />);
+    renderTerminalTab({ connectionId: "prod-web-01", fontFamily: "Maple Mono", fontSize: 16, theme: "dark", isActive: true });
 
     await waitFor(() => {
       expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
@@ -182,7 +195,7 @@ describe("TerminalTab", () => {
     callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
     listenBackendMock.mockResolvedValueOnce(vi.fn());
 
-    render(<TerminalTab connectionId="prod-web-01" fontFamily="Maple Mono" fontSize={16} theme="light" isActive={true} />);
+    renderTerminalTab({ connectionId: "prod-web-01", fontFamily: "Maple Mono", fontSize: 16, theme: "light", isActive: true });
 
     expect(vi.mocked(Terminal)).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -199,9 +212,13 @@ describe("TerminalTab", () => {
     callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
     listenBackendMock.mockResolvedValue(unlisten);
 
-    const { rerender } = render(
-      <TerminalTab connectionId="prod-web-01" fontFamily="Maple Mono" fontSize={16} theme="dark" isActive={true} />,
-    );
+    const { rerender } = renderTerminalTab({
+      connectionId: "prod-web-01",
+      fontFamily: "Maple Mono",
+      fontSize: 16,
+      theme: "dark",
+      isActive: true,
+    });
 
     await waitFor(() => {
       expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
@@ -210,7 +227,11 @@ describe("TerminalTab", () => {
     });
     callBackendMock.mockClear();
 
-    rerender(<TerminalTab connectionId="prod-web-01" fontFamily="Maple Mono" fontSize={16} theme="light" isActive={true} />);
+    rerender(
+      <I18nProvider language="zh-CN">
+        <TerminalTab connectionId="prod-web-01" fontFamily="Maple Mono" fontSize={16} theme="light" isActive={true} />
+      </I18nProvider>,
+    );
 
     const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
     const fitAddon = vi.mocked(FitAddon).mock.instances[0] as unknown as MockFitAddon;
@@ -231,9 +252,13 @@ describe("TerminalTab", () => {
     callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
     listenBackendMock.mockResolvedValue(vi.fn());
 
-    const { rerender } = render(
-      <TerminalTab connectionId="prod-web-01" fontFamily="Maple Mono" fontSize={16} theme="dark" isActive={false} />,
-    );
+    const { rerender } = renderTerminalTab({
+      connectionId: "prod-web-01",
+      fontFamily: "Maple Mono",
+      fontSize: 16,
+      theme: "dark",
+      isActive: false,
+    });
 
     await waitFor(() => {
       expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
@@ -246,7 +271,11 @@ describe("TerminalTab", () => {
     callBackendMock.mockClear();
     fitAddon.fit.mockClear();
 
-    rerender(<TerminalTab connectionId="prod-web-01" fontFamily="Maple Mono" fontSize={16} theme="light" isActive={false} />);
+    rerender(
+      <I18nProvider language="zh-CN">
+        <TerminalTab connectionId="prod-web-01" fontFamily="Maple Mono" fontSize={16} theme="light" isActive={false} />
+      </I18nProvider>,
+    );
 
     expect(terminal.options.theme).toMatchObject({
       background: "#fafafa",
@@ -261,7 +290,7 @@ describe("TerminalTab", () => {
     callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
     listenBackendMock.mockResolvedValueOnce(vi.fn());
 
-    render(<TerminalTab connectionId="prod-web-01" fontFamily="Maple Mono" fontSize={16} theme="dark" isActive={true} />);
+    renderTerminalTab({ connectionId: "prod-web-01", fontFamily: "Maple Mono", fontSize: 16, theme: "dark", isActive: true });
 
     fireEvent.contextMenu(screen.getByLabelText("SSH 终端"), { clientX: 12, clientY: 24 });
 
@@ -276,7 +305,7 @@ describe("TerminalTab", () => {
     callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
     listenBackendMock.mockResolvedValueOnce(vi.fn());
 
-    render(<TerminalTab connectionId="prod-web-01" fontFamily="Maple Mono" fontSize={16} theme="dark" isActive={true} />);
+    renderTerminalTab({ connectionId: "prod-web-01", fontFamily: "Maple Mono", fontSize: 16, theme: "dark", isActive: true });
 
     const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
     terminal.getSelection.mockReturnValue("selected text");
@@ -298,7 +327,7 @@ describe("TerminalTab", () => {
     callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
     listenBackendMock.mockResolvedValueOnce(vi.fn());
 
-    render(<TerminalTab connectionId="prod-web-01" fontFamily="Maple Mono" fontSize={16} theme="dark" isActive={true} />);
+    renderTerminalTab({ connectionId: "prod-web-01", fontFamily: "Maple Mono", fontSize: 16, theme: "dark", isActive: true });
 
     await waitFor(() => {
       expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
@@ -328,7 +357,7 @@ describe("TerminalTab", () => {
     callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
     listenBackendMock.mockResolvedValueOnce(vi.fn());
 
-    render(<TerminalTab connectionId="prod-web-01" fontFamily="Maple Mono" fontSize={16} theme="dark" isActive={true} />);
+    renderTerminalTab({ connectionId: "prod-web-01", fontFamily: "Maple Mono", fontSize: 16, theme: "dark", isActive: true });
 
     const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
     terminal.focus.mockClear();

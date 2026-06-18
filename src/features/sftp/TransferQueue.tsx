@@ -1,3 +1,6 @@
+import type { TranslationKey } from "../../i18n/I18nProvider";
+import { useI18n } from "../../i18n/useI18n";
+
 export interface TransferTask {
   id: string;
   name: string;
@@ -7,19 +10,19 @@ export interface TransferTask {
   error?: string;
 }
 
-function transferStatusText(task: TransferTask) {
-  const direction = task.direction === "upload" ? "上传" : "下载";
+function transferStatusText(task: TransferTask, t: (key: TranslationKey, params?: Record<string, string | number>) => string) {
+  const direction = task.direction === "upload" ? t("transfer.upload") : t("transfer.download");
   if (task.status === "running") {
     const progress = typeof task.progress === "number" ? `${task.progress}%` : "";
-    return `传输中...${progress}`;
+    return t("transfer.running", { progress });
   }
-  if (task.status === "failed") return `${direction}失败${task.error ? ` ${task.error}` : ""}`;
-  if (task.status === "canceled") return "已取消";
-  return task.direction === "upload" ? "上传完成" : "下载完成";
+  if (task.status === "failed") return t("transfer.failed", { direction, error: task.error ? ` ${task.error}` : "" });
+  if (task.status === "canceled") return t("transfer.canceled");
+  return task.direction === "upload" ? t("transfer.upload_completed") : t("transfer.download_completed");
 }
 
-function transferTaskText(task: TransferTask) {
-  return `${task.name} ${transferStatusText(task)}`;
+function transferTaskText(task: TransferTask, t: (key: TranslationKey, params?: Record<string, string | number>) => string) {
+  return `${task.name} ${transferStatusText(task, t)}`;
 }
 
 export function TransferQueue({
@@ -29,28 +32,30 @@ export function TransferQueue({
   tasks?: TransferTask[];
   onCancel?: (taskId: string) => void;
 }) {
+  const { t } = useI18n();
+
   return (
-    <section aria-label="传输队列" className="transfer-queue">
-      <h3>传输队列</h3>
+    <section aria-label={t("transfer.queue")} className="transfer-queue">
+      <h3>{t("transfer.queue")}</h3>
       {tasks.length ? (
         <ul>
           {tasks.map((task) => (
             <li key={task.id}>
-              <span>{transferTaskText(task)}</span>
+              <span>{transferTaskText(task, t)}</span>
               {task.status === "running" ? (
                 <button
                   type="button"
                   onClick={() => onCancel?.(task.id)}
-                  aria-label={`取消 ${task.name} 传输`}
+                  aria-label={t("transfer.cancel_label", { name: task.name })}
                 >
-                  取消
+                  {t("transfer.cancel")}
                 </button>
               ) : null}
             </li>
           ))}
         </ul>
       ) : (
-        <p>暂无传输任务</p>
+        <p>{t("transfer.empty")}</p>
       )}
     </section>
   );

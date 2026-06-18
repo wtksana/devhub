@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import Editor from "@monaco-editor/react";
 import type { DevHubSettings } from "./settingsTypes";
+import { useI18n } from "../../i18n/useI18n";
 
 interface SettingsJsonEditorProps {
   settings: DevHubSettings;
@@ -10,6 +11,7 @@ interface SettingsJsonEditorProps {
 
 export function SettingsJsonEditor({ settings, rawJson, saveRawJson }: SettingsJsonEditorProps) {
   const [draft, setDraft] = useState(rawJson);
+  const { t } = useI18n();
 
   useEffect(() => {
     setDraft(rawJson);
@@ -20,7 +22,7 @@ export function SettingsJsonEditor({ settings, rawJson, saveRawJson }: SettingsJ
       <header>
         <h2>settings.json</h2>
         <button type="button" onClick={() => void saveRawJson(draft)}>
-          保存
+          {t("settings.save")}
         </button>
       </header>
       <div className="settings-json__editor">

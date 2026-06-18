@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AppearanceSettings {
     pub theme: String,
+    #[serde(default = "default_language")]
+    pub language: String,
     pub ui_font_family: String,
     #[serde(default = "default_ui_font_size")]
     pub ui_font_size: u16,
@@ -12,6 +14,10 @@ pub struct AppearanceSettings {
 
 fn default_ui_font_size() -> u16 {
     13
+}
+
+fn default_language() -> String {
+    "system".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -78,6 +84,7 @@ impl Default for DevHubSettings {
         Self {
             appearance: AppearanceSettings {
                 theme: "dark".to_string(),
+                language: default_language(),
                 ui_font_family: "Consolas".to_string(),
                 ui_font_size: 16,
                 terminal_font_family: "Consolas".to_string(),

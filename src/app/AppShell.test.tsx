@@ -14,6 +14,7 @@ function createSettings(): DevHubSettings {
   return {
     appearance: {
       theme: "dark",
+      language: "zh-CN",
       ui_font_family: "Consolas",
       ui_font_size: 16,
       terminal_font_family: "Consolas",
@@ -93,6 +94,23 @@ describe("AppShell", () => {
     expect(screen.getByText("未打开标签")).toBeInTheDocument();
   });
 
+  it("renders the shell in English when configured", () => {
+    settings = {
+      ...createSettings(),
+      appearance: {
+        ...createSettings().appearance,
+        language: "en-US",
+      },
+    };
+
+    render(<AppShell />);
+
+    expect(screen.getByLabelText("Connections")).toBeInTheDocument();
+    expect(screen.getByLabelText("Workspace")).toBeInTheDocument();
+    expect(screen.getByText("No tabs open")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Toggle connection panel" })).toBeInTheDocument();
+  });
+
   it("opens settings as a closable workspace tab", async () => {
     render(<AppShell />);
 
@@ -149,6 +167,7 @@ describe("AppShell", () => {
       ...createSettings(),
       appearance: {
         theme: "light",
+        language: "zh-CN",
         ui_font_family: "Zed Sans",
         ui_font_size: 15,
         terminal_font_family: "Maple Mono",

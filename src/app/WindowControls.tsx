@@ -1,19 +1,21 @@
+import { useI18n } from "../i18n/useI18n";
 import { getSafeCurrentWindow } from "./windowRuntime";
 
 export function WindowControls() {
   const appWindow = getSafeCurrentWindow();
   const isDisabled = appWindow === null;
+  const { t } = useI18n();
 
   return (
     <div
       className="window-controls"
-      aria-label="窗口控制"
+      aria-label={t("window.controls")}
       onMouseDown={(event) => event.stopPropagation()}
       onDoubleClick={(event) => event.stopPropagation()}
     >
       <button
         type="button"
-        aria-label="最小化窗口"
+        aria-label={t("window.minimize")}
         disabled={isDisabled}
         onClick={() => void getSafeCurrentWindow()?.minimize()}
       >
@@ -21,7 +23,7 @@ export function WindowControls() {
       </button>
       <button
         type="button"
-        aria-label="最大化窗口"
+        aria-label={t("window.maximize")}
         disabled={isDisabled}
         onClick={() => void getSafeCurrentWindow()?.toggleMaximize()}
       >
@@ -29,7 +31,7 @@ export function WindowControls() {
       </button>
       <button
         type="button"
-        aria-label="关闭窗口"
+        aria-label={t("window.close")}
         disabled={isDisabled}
         onClick={() => void getSafeCurrentWindow()?.close()}
       >

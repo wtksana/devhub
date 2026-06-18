@@ -7,6 +7,7 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn().mockResolvedValue({
     appearance: {
       theme: "dark",
+      language: "zh-CN",
       ui_font_family: "Consolas",
       ui_font_size: 16,
       terminal_font_family: "Consolas",
@@ -34,9 +35,9 @@ vi.mock("@tauri-apps/api/window", () => ({
 test("renders app shell", () => {
   render(<App />);
 
-  expect(screen.getByLabelText("连接列表")).toBeInTheDocument();
-  expect(screen.getByLabelText("工作区")).toBeInTheDocument();
-  expect(screen.queryByLabelText("设置分类")).not.toBeInTheDocument();
-  expect(screen.getByLabelText("工作区标签")).toBeEmptyDOMElement();
-  expect(screen.getByText("未打开标签")).toBeInTheDocument();
+  expect(screen.getByLabelText("Connections")).toBeInTheDocument();
+  expect(screen.getByLabelText("Workspace")).toBeInTheDocument();
+  expect(screen.queryByLabelText("Settings categories")).not.toBeInTheDocument();
+  expect(screen.getByLabelText("Workspace tabs")).toBeEmptyDOMElement();
+  expect(screen.getByText("No tabs open")).toBeInTheDocument();
 });

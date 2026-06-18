@@ -5,6 +5,7 @@ import "@xterm/xterm/css/xterm.css";
 import { ContextMenu, type ContextMenuState } from "../../app/ContextMenu";
 import { readClipboardText, writeClipboardText } from "../../lib/clipboard";
 import { callBackend, listenBackend } from "../../lib/tauri";
+import { useI18n } from "../../i18n/useI18n";
 
 interface TerminalTabProps {
   connectionId: string;
@@ -73,6 +74,7 @@ const terminalThemes = {
 } as const;
 
 export function TerminalTab({ connectionId, fontFamily, fontSize, theme, isActive }: TerminalTabProps) {
+  const { t } = useI18n();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -123,9 +125,9 @@ export function TerminalTab({ connectionId, fontFamily, fontSize, theme, isActiv
       x: event.clientX,
       y: event.clientY,
       items: [
-        { label: "复制", onSelect: copySelection },
-        { label: "粘贴", onSelect: () => void pasteClipboard() },
-        { label: "清屏", onSelect: clearTerminal },
+        { label: t("terminal.copy"), onSelect: copySelection },
+        { label: t("terminal.paste"), onSelect: () => void pasteClipboard() },
+        { label: t("terminal.clear"), onSelect: clearTerminal },
       ],
     });
   }
@@ -297,7 +299,7 @@ export function TerminalTab({ connectionId, fontFamily, fontSize, theme, isActiv
 
   return (
     <>
-      <div className="terminal-tab" aria-label="SSH 终端" ref={containerRef} onContextMenu={handleContextMenu} />
+      <div className="terminal-tab" aria-label={t("terminal.label")} ref={containerRef} onContextMenu={handleContextMenu} />
       <ContextMenu menu={contextMenu} onClose={() => setContextMenu(null)} />
     </>
   );

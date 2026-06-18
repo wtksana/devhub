@@ -9,6 +9,8 @@ import { SettingsPanel } from "../features/settings/SettingsPanel";
 import { SftpWorkspace } from "../features/sftp/SftpWorkspace";
 import { useSettings } from "../features/settings/useSettings";
 import { TerminalWorkspace } from "../features/terminal/TerminalWorkspace";
+import { I18nProvider } from "../i18n/I18nProvider";
+import { useI18n } from "../i18n/useI18n";
 
 interface SettingsWorkspaceTab extends WorkspaceTabItem {
   kind: "settings";
@@ -26,14 +28,25 @@ interface SftpWorkspaceTab extends WorkspaceTabItem {
 
 type AppWorkspaceTab = SettingsWorkspaceTab | TerminalWorkspaceTab | SftpWorkspaceTab;
 
-function connectionTitle(connectionId: string, settings: ReturnType<typeof useSettings>["settings"]) {
-  if (connectionId === "local") return "本地终端";
+function connectionTitle(connectionId: string, settings: ReturnType<typeof useSettings>["settings"], localTitle: string) {
+  if (connectionId === "local") return localTitle;
   return settings.connections.find((connection) => connection.id === connectionId)?.name ?? connectionId;
 }
 
 export function AppShell() {
   const settingsState = useSettings();
   const { settings } = settingsState;
+
+  return (
+    <I18nProvider language={settings.appearance.language}>
+      <AppShellContent settingsState={settingsState} />
+    </I18nProvider>
+  );
+}
+
+function AppShellContent({ settingsState }: { settingsState: ReturnType<typeof useSettings> }) {
+  const { settings } = settingsState;
+  const { t } = useI18n();
   const [workspaceTabs, setWorkspaceTabs] = useState<AppWorkspaceTab[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
   const [isConnectionPanelVisible, setIsConnectionPanelVisible] = useState(true);
@@ -59,7 +72,7 @@ export function AppShell() {
           id: tabId,
           kind: "terminal",
           connectionId,
-          title: connectionTitle(connectionId, settings),
+          title: connectionTitle(connectionId, settings, t("connections.local_terminal")),
         },
       ];
     });
@@ -78,14 +91,14 @@ export function AppShell() {
             id: tabId,
             kind: "terminal",
             connectionId,
-            title: connectionTitle(connectionId, settings),
+            title: connectionTitle(connectionId, settings, t("connections.local_terminal")),
           },
         ];
       }
 
       const count = existingCount + 1;
       const tabId = `terminal:${connectionId}:${Date.now()}`;
-      const title = `${connectionTitle(connectionId, settings)} ${count}`;
+      const title = `${connectionTitle(connectionId, settings, t("connections.local_terminal"))} ${count}`;
       setActiveTabId(tabId);
       return [
         ...tabs,
@@ -109,7 +122,7 @@ export function AppShell() {
           id: tabId,
           kind: "sftp",
           connectionId,
-          title: `${connectionTitle(connectionId, settings)} SFTP`,
+          title: `${connectionTitle(connectionId, settings, t("connections.local_terminal"))} SFTP`,
         },
       ];
     });
@@ -124,7 +137,7 @@ export function AppShell() {
         {
           id: "settings",
           kind: "settings",
-          title: "设置",
+          title: t("app.settings"),
         },
       ];
     });
@@ -167,17 +180,17 @@ export function AppShell() {
       x: event.clientX,
       y: event.clientY,
       items: [
-        { label: "关闭", onSelect: () => closeTab(tabId) },
-        { label: "关闭其他", onSelect: () => closeTabs(workspaceTabs.filter((tab) => tab.id !== tabId).map((tab) => tab.id)) },
+        { label: t("app.close"), onSelect: () => closeTab(tabId) },
+        { label: t("app.close_others"), onSelect: () => closeTabs(workspaceTabs.filter((tab) => tab.id !== tabId).map((tab) => tab.id)) },
         {
-          label: "关闭左侧",
+          label: t("app.close_left"),
           onSelect: () => {
             const tabIndex = workspaceTabs.findIndex((tab) => tab.id === tabId);
             closeTabs(workspaceTabs.slice(0, tabIndex).map((tab) => tab.id));
           },
         },
         {
-          label: "关闭右侧",
+          label: t("app.close_right"),
           onSelect: () => {
             const tabIndex = workspaceTabs.findIndex((tab) => tab.id === tabId);
             closeTabs(workspaceTabs.slice(tabIndex + 1).map((tab) => tab.id));
@@ -193,8 +206,8 @@ export function AppShell() {
       x: event.clientX,
       y: event.clientY,
       items: [
-        { label: "打开设置", onSelect: openSettingsTab },
-        { label: "显示连接面板", onSelect: () => setIsConnectionPanelVisible(true) },
+        { label: t("app.open_settings"), onSelect: openSettingsTab },
+        { label: t("app.show_connection_panel"), onSelect: () => setIsConnectionPanelVisible(true) },
       ],
     });
   }
@@ -218,7 +231,7 @@ export function AppShell() {
       <CommandPalette onOpenSettings={openSettingsTab} onToggleTheme={toggleTheme} />
       <div className={bodyClassName}>
         {isConnectionPanelVisible ? (
-          <DockPanel side="left" label="连接列表">
+          <DockPanel side="left" label={t("app.connections")}>
             <ConnectionList
               connections={settings.connections}
               connectionGroups={settings.connection_groups}
@@ -252,7 +265,7 @@ export function AppShell() {
             />
           </DockPanel>
         ) : null}
-        <section className="workspace" aria-label="工作区">
+        <section className="workspace" aria-label={t("app.workspace")}>
           <WorkspaceTabs
             tabs={workspaceTabs}
             activeTabId={activeTabId}
@@ -279,8 +292,8 @@ export function AppShell() {
           ))}
           {!activeTab ? (
             <section className="workspace-empty" onContextMenu={openEmptyWorkspaceContextMenu}>
-              <h2>未打开标签</h2>
-              <p>请从左侧连接列表打开终端。</p>
+              <h2>{t("app.no_tabs")}</h2>
+              <p>{t("app.empty_workspace_hint")}</p>
             </section>
           ) : null}
         </section>

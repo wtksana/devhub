@@ -136,6 +136,7 @@ describe("settings schema", () => {
     });
 
     expect(settings.appearance.ui_font_size).toBe(16);
+    expect(settings.appearance.language).toBe("system");
     expect(settings.sftp.file_size_unit).toBe("bytes");
     expect(settings.connection_groups).toEqual([]);
   });

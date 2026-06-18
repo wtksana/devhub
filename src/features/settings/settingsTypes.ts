@@ -1,8 +1,10 @@
 export type ThemeName = "dark" | "light" | "system";
+export type LanguageSetting = "system" | "zh-CN" | "en-US";
 export type SftpFileSizeUnit = "bytes" | "auto";
 
 export interface AppearanceSettings {
   theme: ThemeName;
+  language: LanguageSetting;
   ui_font_family: string;
   ui_font_size: number;
   terminal_font_family: string;

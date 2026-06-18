@@ -12,6 +12,7 @@ fn creates_default_settings_when_missing() {
     let value = serde_json::to_value(&settings).unwrap();
 
     assert_eq!(settings.appearance.theme, "dark");
+    assert_eq!(settings.appearance.language, "system");
     assert_eq!(value["appearance"]["ui_font_family"], "Consolas");
     assert_eq!(value["appearance"]["ui_font_size"], 16);
     assert_eq!(value["appearance"]["terminal_font_family"], "Consolas");

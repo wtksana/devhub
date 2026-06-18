@@ -17,6 +17,7 @@ vi.mock("@monaco-editor/react", () => ({
 const settings: DevHubSettings = {
   appearance: {
     theme: "dark",
+    language: "zh-CN",
     ui_font_family: "Zed Sans",
     ui_font_size: 16,
     terminal_font_family: "Consolas",

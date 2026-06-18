@@ -8,6 +8,7 @@ import { pickDownloadDirectory, pickDownloadPath, pickUploadDirectory, pickUploa
 import { listenLocalDragDrop } from "../../lib/tauriDragDrop";
 import type { LocalDragDropEvent } from "../../lib/tauriDragDrop";
 import { listenSftpTransferProgress } from "../../lib/tauriEvents";
+import { I18nProvider } from "../../i18n/I18nProvider";
 
 vi.mock("../../lib/tauri", () => ({
   callBackend: vi.fn(),
@@ -76,6 +77,14 @@ describe("SftpWorkspace", () => {
     callBackendMock.mockResolvedValueOnce(entries);
   }
 
+  function renderSftpWorkspace(props: React.ComponentProps<typeof SftpWorkspace>) {
+    return render(
+      <I18nProvider language="zh-CN">
+        <SftpWorkspace {...props} />
+      </I18nProvider>,
+    );
+  }
+
   function menuItemLabels() {
     return screen.getAllByRole("menuitem").map((item) => item.textContent);
   }
@@ -100,14 +109,14 @@ describe("SftpWorkspace", () => {
   }
 
   it("prompts for a connection when none is selected", () => {
-    render(<SftpWorkspace connectionId={null} />);
+    renderSftpWorkspace({ connectionId: null });
     expect(screen.getByText("未选择连接")).toBeInTheDocument();
   });
 
   it("renders sftp dialogs with the clipped shared dialog container", async () => {
     mockOpenSession();
 
-    render(<SftpWorkspace connectionId="prod-web-01" />);
+    renderSftpWorkspace({ connectionId: "prod-web-01" });
 
     await waitForInitialLoad();
     await userEvent.pointer({ keys: "[MouseRight]", target: screen.getByLabelText("SFTP 文件列表") });
@@ -121,7 +130,7 @@ describe("SftpWorkspace", () => {
   it("shows toolbar for selected connection", () => {
     mockOpenSession();
 
-    render(<SftpWorkspace connectionId="prod-web-01" />);
+    renderSftpWorkspace({ connectionId: "prod-web-01" });
 
     expect(screen.getByRole("button", { name: "刷新" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "新建目录" })).toBeInTheDocument();
@@ -141,7 +150,7 @@ describe("SftpWorkspace", () => {
       },
     ]);
 
-    render(<SftpWorkspace connectionId="prod-web-01" />);
+    renderSftpWorkspace({ connectionId: "prod-web-01" });
 
     await waitForInitialLoad();
     expect(await screen.findByText("logs")).toBeInTheDocument();
@@ -167,7 +176,7 @@ describe("SftpWorkspace", () => {
       },
     ]);
 
-    render(<SftpWorkspace connectionId="prod-web-01" />);
+    renderSftpWorkspace({ connectionId: "prod-web-01" });
 
     await waitForInitialLoad();
     await userEvent.dblClick(await screen.findByText("logs"));
@@ -198,7 +207,7 @@ describe("SftpWorkspace", () => {
       modified_at: "1710000000",
     });
 
-    render(<SftpWorkspace connectionId="prod-web-01" />);
+    renderSftpWorkspace({ connectionId: "prod-web-01" });
 
     await waitForInitialLoad();
     await userEvent.dblClick(await screen.findByText("app.log"));
@@ -232,7 +241,7 @@ describe("SftpWorkspace", () => {
       modified_at: "1710000000",
     });
 
-    render(<SftpWorkspace connectionId="prod-web-01" />);
+    renderSftpWorkspace({ connectionId: "prod-web-01" });
 
     await waitForInitialLoad();
     await userEvent.dblClick(await screen.findByText("app.log"));
@@ -289,7 +298,7 @@ describe("SftpWorkspace", () => {
       modified_at: "1710000000",
     });
 
-    render(<SftpWorkspace connectionId="prod-web-01" />);
+    renderSftpWorkspace({ connectionId: "prod-web-01" });
 
     await waitForInitialLoad();
     await userEvent.dblClick(await screen.findByText("app.log"));
@@ -323,7 +332,7 @@ describe("SftpWorkspace", () => {
       modified_at: "1710000010",
     });
 
-    render(<SftpWorkspace connectionId="prod-web-01" />);
+    renderSftpWorkspace({ connectionId: "prod-web-01" });
 
     await waitForInitialLoad();
     await userEvent.dblClick(await screen.findByText("app.log"));
@@ -386,7 +395,7 @@ describe("SftpWorkspace", () => {
       modified_at: "1710000000",
     });
 
-    render(<SftpWorkspace connectionId="prod-web-01" />);
+    renderSftpWorkspace({ connectionId: "prod-web-01" });
 
     await waitForInitialLoad();
     await userEvent.pointer({ keys: "[MouseRight]", target: await screen.findByText("app.log") });
@@ -422,7 +431,7 @@ describe("SftpWorkspace", () => {
       modified_at: "1710000000",
     });
 
-    render(<SftpWorkspace connectionId="prod-web-01" />);
+    renderSftpWorkspace({ connectionId: "prod-web-01" });
 
     await waitForInitialLoad();
     await userEvent.dblClick(await screen.findByText("profile"));
@@ -467,7 +476,7 @@ describe("SftpWorkspace", () => {
       },
     ]);
 
-    render(<SftpWorkspace connectionId="prod-web-01" />);
+    renderSftpWorkspace({ connectionId: "prod-web-01" });
 
     await waitForInitialLoad();
     await userEvent.dblClick(await screen.findByText("app.log"));
@@ -512,7 +521,7 @@ describe("SftpWorkspace", () => {
     });
     callBackendMock.mockResolvedValueOnce([]);
 
-    render(<SftpWorkspace connectionId="prod-web-01" />);
+    renderSftpWorkspace({ connectionId: "prod-web-01" });
 
     await waitForInitialLoad();
     await userEvent.dblClick(await screen.findByText("app.log"));
@@ -557,7 +566,7 @@ describe("SftpWorkspace", () => {
     });
     callBackendMock.mockResolvedValueOnce([]);
 
-    render(<SftpWorkspace connectionId="prod-web-01" />);
+    renderSftpWorkspace({ connectionId: "prod-web-01" });
 
     await waitForInitialLoad();
     await userEvent.dblClick(await screen.findByText("app.log"));
@@ -600,7 +609,7 @@ describe("SftpWorkspace", () => {
       modified_at: "1710000000",
     });
 
-    render(<SftpWorkspace connectionId="prod-web-01" />);
+    renderSftpWorkspace({ connectionId: "prod-web-01" });
 
     await waitForInitialLoad();
     await userEvent.dblClick(await screen.findByText("app.log"));
@@ -622,7 +631,7 @@ describe("SftpWorkspace", () => {
       },
     ]);
 
-    render(<SftpWorkspace connectionId="prod-web-01" />);
+    renderSftpWorkspace({ connectionId: "prod-web-01" });
 
     await waitForInitialLoad();
     await userEvent.dblClick(await screen.findByText("archive.zip"));
@@ -642,7 +651,7 @@ describe("SftpWorkspace", () => {
       },
     ]);
 
-    render(<SftpWorkspace connectionId="prod-web-01" />);
+    renderSftpWorkspace({ connectionId: "prod-web-01" });
 
     await waitForInitialLoad();
 
@@ -669,7 +678,7 @@ describe("SftpWorkspace", () => {
       },
     ]);
 
-    render(<SftpWorkspace connectionId="prod-web-01" />);
+    renderSftpWorkspace({ connectionId: "prod-web-01" });
 
     await waitForInitialLoad();
 
@@ -719,7 +728,7 @@ describe("SftpWorkspace", () => {
       },
     ]);
 
-    render(<SftpWorkspace connectionId="prod-web-01" />);
+    renderSftpWorkspace({ connectionId: "prod-web-01" });
 
     await waitForInitialLoad();
     await userEvent.dblClick(await screen.findByText("logs"));
@@ -746,7 +755,7 @@ describe("SftpWorkspace", () => {
         }),
     );
 
-    render(<SftpWorkspace connectionId="prod-web-01" />);
+    renderSftpWorkspace({ connectionId: "prod-web-01" });
 
     await waitForInitialLoad();
     await userEvent.click(screen.getByRole("button", { name: "刷新" }));
@@ -775,7 +784,7 @@ describe("SftpWorkspace", () => {
       },
     ]);
 
-    render(<SftpWorkspace connectionId="prod-web-01" />);
+    renderSftpWorkspace({ connectionId: "prod-web-01" });
 
     await waitForInitialLoad();
     await screen.findByText("beta.log");
@@ -813,7 +822,7 @@ describe("SftpWorkspace", () => {
       },
     ]);
 
-    render(<SftpWorkspace connectionId="prod-web-01" />);
+    renderSftpWorkspace({ connectionId: "prod-web-01" });
 
     await waitForInitialLoad();
     await screen.findByText("old.log");
@@ -843,7 +852,7 @@ describe("SftpWorkspace", () => {
       },
     ]);
 
-    render(<SftpWorkspace connectionId="prod-web-01" sizeUnit="auto" />);
+    renderSftpWorkspace({ connectionId: "prod-web-01", sizeUnit: "auto" });
 
     await waitForInitialLoad();
 
@@ -856,7 +865,7 @@ describe("SftpWorkspace", () => {
     callBackendMock.mockResolvedValueOnce([]);
     const promptSpy = vi.spyOn(window, "prompt").mockImplementation(() => "browser-prompt");
 
-    render(<SftpWorkspace connectionId="prod-web-01" />);
+    renderSftpWorkspace({ connectionId: "prod-web-01" });
 
     await waitForInitialLoad();
     await userEvent.pointer({ keys: "[MouseRight]", target: screen.getByLabelText("SFTP 文件列表") });
@@ -898,7 +907,7 @@ describe("SftpWorkspace", () => {
       },
     ]);
 
-    render(<SftpWorkspace connectionId="prod-web-01" />);
+    renderSftpWorkspace({ connectionId: "prod-web-01" });
 
     await waitForInitialLoad();
     await userEvent.pointer({ keys: "[MouseRight]", target: screen.getByLabelText("SFTP 文件列表") });
@@ -939,7 +948,7 @@ describe("SftpWorkspace", () => {
       },
     ]);
 
-    render(<SftpWorkspace connectionId="prod-web-01" />);
+    renderSftpWorkspace({ connectionId: "prod-web-01" });
 
     await waitForInitialLoad();
     await userEvent.pointer({ keys: "[MouseRight]", target: screen.getByLabelText("SFTP 文件列表") });
@@ -977,7 +986,7 @@ describe("SftpWorkspace", () => {
       },
     ]);
 
-    render(<SftpWorkspace connectionId="prod-web-01" />);
+    renderSftpWorkspace({ connectionId: "prod-web-01" });
 
     await waitForInitialLoad();
     await userEvent.pointer({ keys: "[MouseRight]", target: screen.getByLabelText("SFTP 文件列表") });
@@ -1010,7 +1019,7 @@ describe("SftpWorkspace", () => {
       },
     ]);
 
-    render(<SftpWorkspace connectionId="prod-web-01" />);
+    renderSftpWorkspace({ connectionId: "prod-web-01" });
 
     await waitForInitialLoad();
     const dropArea = screen.getByLabelText("SFTP 文件列表");
@@ -1065,7 +1074,7 @@ describe("SftpWorkspace", () => {
       },
     ]);
 
-    render(<SftpWorkspace connectionId="prod-web-01" />);
+    renderSftpWorkspace({ connectionId: "prod-web-01" });
 
     await waitForInitialLoad();
     const dropArea = screen.getByLabelText("SFTP 文件列表");
@@ -1122,7 +1131,7 @@ describe("SftpWorkspace", () => {
     pickDownloadPathMock.mockResolvedValue("C:\\Users\\ttat\\Downloads\\app.log");
     callBackendMock.mockResolvedValueOnce(undefined);
 
-    render(<SftpWorkspace connectionId="prod-web-01" />);
+    renderSftpWorkspace({ connectionId: "prod-web-01" });
 
     await waitForInitialLoad();
     await userEvent.pointer({ keys: "[MouseRight]", target: await screen.findByText("app.log") });
@@ -1153,7 +1162,7 @@ describe("SftpWorkspace", () => {
     pickDownloadPathMock.mockResolvedValue("C:\\Users\\ttat\\Downloads\\tzbh");
     callBackendMock.mockRejectedValueOnce(new Error("io error: failure"));
 
-    render(<SftpWorkspace connectionId="prod-web-01" />);
+    renderSftpWorkspace({ connectionId: "prod-web-01" });
 
     await waitForInitialLoad();
     await userEvent.pointer({ keys: "[MouseRight]", target: await screen.findByText("tzbh") });
@@ -1180,7 +1189,7 @@ describe("SftpWorkspace", () => {
         }),
     );
 
-    render(<SftpWorkspace connectionId="prod-web-01" />);
+    renderSftpWorkspace({ connectionId: "prod-web-01" });
 
     await waitForInitialLoad();
     await userEvent.pointer({ keys: "[MouseRight]", target: await screen.findByText("spring.log.2026-05-29.6") });
@@ -1216,7 +1225,7 @@ describe("SftpWorkspace", () => {
     });
     pickDownloadPathMock.mockResolvedValue("C:\\Users\\ttat\\Downloads\\app.log");
 
-    render(<SftpWorkspace connectionId="prod-web-01" />);
+    renderSftpWorkspace({ connectionId: "prod-web-01" });
 
     await waitForInitialLoad();
     await userEvent.pointer({ keys: "[MouseRight]", target: await screen.findByText("app.log") });
@@ -1263,7 +1272,7 @@ describe("SftpWorkspace", () => {
     });
     pickDownloadPathMock.mockResolvedValue("C:\\Users\\ttat\\Downloads\\app.log");
 
-    const { unmount } = render(<SftpWorkspace connectionId="prod-web-01" />);
+    const { unmount } = renderSftpWorkspace({ connectionId: "prod-web-01" });
 
     await waitForInitialLoad();
     await userEvent.pointer({ keys: "[MouseRight]", target: await screen.findByText("app.log") });
@@ -1292,7 +1301,7 @@ describe("SftpWorkspace", () => {
       },
     ]);
 
-    render(<SftpWorkspace connectionId="prod-web-01" />);
+    renderSftpWorkspace({ connectionId: "prod-web-01" });
 
     await waitForInitialLoad();
     await userEvent.pointer({ keys: "[MouseRight]", target: await screen.findByText("file-a.log") });
@@ -1335,7 +1344,7 @@ describe("SftpWorkspace", () => {
       },
     ]);
 
-    render(<SftpWorkspace connectionId="prod-web-01" />);
+    renderSftpWorkspace({ connectionId: "prod-web-01" });
 
     await waitForInitialLoad();
     await userEvent.pointer({ keys: "[MouseRight]", target: await screen.findByText("logs") });
@@ -1365,7 +1374,7 @@ describe("SftpWorkspace", () => {
       },
     ]);
 
-    render(<SftpWorkspace connectionId="prod-web-01" />);
+    renderSftpWorkspace({ connectionId: "prod-web-01" });
 
     await waitForInitialLoad();
     await userEvent.click(screen.getByRole("checkbox", { name: "选择 app.log" }));
@@ -1408,7 +1417,7 @@ describe("SftpWorkspace", () => {
     callBackendMock.mockResolvedValueOnce(undefined);
     callBackendMock.mockResolvedValueOnce([]);
 
-    render(<SftpWorkspace connectionId="prod-web-01" />);
+    renderSftpWorkspace({ connectionId: "prod-web-01" });
 
     await waitForInitialLoad();
     await userEvent.click(screen.getByRole("checkbox", { name: "选择 app.log" }));
@@ -1459,7 +1468,7 @@ describe("SftpWorkspace", () => {
       },
     ]);
 
-    render(<SftpWorkspace connectionId="prod-web-01" />);
+    renderSftpWorkspace({ connectionId: "prod-web-01" });
 
     await waitForInitialLoad();
     await userEvent.click(screen.getByRole("checkbox", { name: "选择 app.log" }));
@@ -1505,7 +1514,7 @@ describe("SftpWorkspace", () => {
       },
     ]);
 
-    render(<SftpWorkspace connectionId="prod-web-01" />);
+    renderSftpWorkspace({ connectionId: "prod-web-01" });
 
     await waitForInitialLoad();
     await userEvent.pointer({ keys: "[MouseRight]", target: await screen.findByText("logs") });
@@ -1538,7 +1547,7 @@ describe("SftpWorkspace", () => {
       },
     ]);
 
-    render(<SftpWorkspace connectionId="prod-web-01" />);
+    renderSftpWorkspace({ connectionId: "prod-web-01" });
 
     await waitForInitialLoad();
     await userEvent.pointer({ keys: "[MouseRight]", target: await screen.findByText("logs.tar.gz") });
@@ -1566,7 +1575,7 @@ describe("SftpWorkspace", () => {
     pickDownloadDirectoryMock.mockResolvedValue("C:\\Users\\ttat\\Downloads");
     callBackendMock.mockResolvedValueOnce(undefined);
 
-    render(<SftpWorkspace connectionId="prod-web-01" />);
+    renderSftpWorkspace({ connectionId: "prod-web-01" });
 
     await waitForInitialLoad();
     await userEvent.pointer({ keys: "[MouseRight]", target: await screen.findByText("logs") });
@@ -1596,7 +1605,7 @@ describe("SftpWorkspace", () => {
       },
     ]);
 
-    render(<SftpWorkspace connectionId="prod-web-01" />);
+    renderSftpWorkspace({ connectionId: "prod-web-01" });
 
     await waitForInitialLoad();
 
@@ -1626,7 +1635,7 @@ describe("SftpWorkspace", () => {
     const promptSpy = vi.spyOn(window, "prompt").mockImplementation(() => "browser-prompt");
     const confirmSpy = vi.spyOn(window, "confirm").mockImplementation(() => true);
 
-    render(<SftpWorkspace connectionId="prod-web-01" />);
+    renderSftpWorkspace({ connectionId: "prod-web-01" });
 
     await waitForInitialLoad();
     await userEvent.pointer({ keys: "[MouseRight]", target: await screen.findByText("app.log") });
@@ -1675,7 +1684,7 @@ describe("SftpWorkspace", () => {
     callBackendMock.mockResolvedValueOnce([]);
     const confirmSpy = vi.spyOn(window, "confirm").mockImplementation(() => true);
 
-    render(<SftpWorkspace connectionId="prod-web-01" />);
+    renderSftpWorkspace({ connectionId: "prod-web-01" });
 
     await waitForInitialLoad();
     await userEvent.pointer({ keys: "[MouseRight]", target: await screen.findByText("test") });
@@ -1697,7 +1706,7 @@ describe("SftpWorkspace", () => {
   it("closes the sftp session when unmounted", async () => {
     mockOpenSession();
 
-    const { unmount } = render(<SftpWorkspace connectionId="prod-web-01" />);
+    const { unmount } = renderSftpWorkspace({ connectionId: "prod-web-01" });
     await waitFor(() => {
       expect(callBackendMock).toHaveBeenCalledWith("open_sftp_session", {
         request: { connection_id: "prod-web-01" },
@@ -1715,7 +1724,7 @@ describe("SftpWorkspace", () => {
 
   it("keeps the transfer queue in a fixed scrollable area", () => {
     mockOpenSession();
-    render(<SftpWorkspace connectionId="prod-web-01" />);
+    renderSftpWorkspace({ connectionId: "prod-web-01" });
 
     expect(screen.getByLabelText("传输队列")).toHaveClass("transfer-queue");
   });

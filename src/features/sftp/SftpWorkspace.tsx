@@ -21,6 +21,8 @@ import { listenSftpTransferProgress } from "../../lib/tauriEvents";
 import type { SftpFileSizeUnit } from "../settings/settingsTypes";
 import type { SftpEntry } from "./sftpTypes";
 import { TransferQueue, type TransferTask } from "./TransferQueue";
+import type { TranslationKey } from "../../i18n/I18nProvider";
+import { useI18n } from "../../i18n/useI18n";
 
 interface SftpWorkspaceProps {
   connectionId: string | null;
@@ -32,17 +34,17 @@ type SortDirection = "asc" | "desc";
 type SftpDialogState =
   | {
       kind: "create-directory";
-      title: "新建文件夹";
+      title: string;
       initialValue: "";
       entry?: undefined;
     }
   | {
       kind: "create-file";
-      title: "新建文件";
+      title: string;
       initialValue: "";
       entry?: undefined;
     }
-  | { kind: "rename"; title: "重命名"; initialValue: string; entry: SftpEntry };
+  | { kind: "rename"; title: string; initialValue: string; entry: SftpEntry };
 type PendingUpload = {
   kind: "file" | "directory";
   localPath: string;
@@ -238,12 +240,15 @@ function getEntryNameClassName(entry: SftpEntry) {
   return `sftp-entry-name sftp-entry-name--${kind}`;
 }
 
-function getDeleteConfirmationText(entry: SftpEntry) {
-  return `确认删除 ${entry.name}${entry.kind === "directory" ? " 文件夹及其中全部内容" : ""}？该操作不可逆！`;
+function getDeleteConfirmationText(entry: SftpEntry, t: (key: TranslationKey, params?: Record<string, string | number>) => string) {
+  return t("sftp.delete_confirm_message", {
+    name: entry.name,
+    suffix: entry.kind === "directory" ? t("sftp.delete_directory_suffix") : "",
+  });
 }
 
-function getBatchDeleteConfirmationText(entries: SftpEntry[]) {
-  return `确认删除 ${entries.length} 个选中项？该操作不可逆！`;
+function getBatchDeleteConfirmationText(entries: SftpEntry[], t: (key: TranslationKey, params?: Record<string, string | number>) => string) {
+  return t("sftp.batch_delete_confirm_message", { count: entries.length });
 }
 
 function isArchiveEntry(entry: SftpEntry) {
@@ -259,8 +264,8 @@ function isTextEntry(entry: SftpEntry) {
   return TEXT_FILE_EXTENSIONS.has(entry.name.slice(extensionStart).toLowerCase());
 }
 
-function localFileName(path: string) {
-  return path.split(/[\\/]/).filter(Boolean).pop() ?? "未命名文件";
+function localFileName(path: string, t: (key: TranslationKey, params?: Record<string, string | number>) => string) {
+  return path.split(/[\\/]/).filter(Boolean).pop() ?? t("sftp.untitled_file");
 }
 
 function joinLocalPath(parent: string, name: string) {
@@ -296,6 +301,7 @@ export function SftpWorkspace({
   connectionId,
   sizeUnit = "bytes",
 }: SftpWorkspaceProps) {
+  const { t } = useI18n();
   const [path, setPath] = useState("/");
   const [addressPath, setAddressPath] = useState("/");
   const [entries, setEntries] = useState<SftpEntry[]>([]);
@@ -769,7 +775,7 @@ export function SftpWorkspace({
     if (!sessionId) return;
     const localPath = await pickUploadFile();
     if (!localPath) return;
-    const name = localFileName(localPath);
+    const name = localFileName(localPath, t);
     const remotePath = joinRemotePath(path, name);
     if (entries.some((entry) => entry.name === name)) {
       setPendingUpload({ kind: "file", localPath, name, remotePath });
@@ -785,7 +791,7 @@ export function SftpWorkspace({
     if (!sessionId) return;
     const localPath = await pickUploadDirectory();
     if (!localPath) return;
-    const name = localFileName(localPath);
+    const name = localFileName(localPath, t);
     const remotePath = joinRemotePath(path, name);
     if (entries.some((entry) => entry.name === name)) {
       setPendingUpload({ kind: "directory", localPath, name, remotePath });
@@ -811,7 +817,7 @@ export function SftpWorkspace({
           "get_local_path_kind",
           { request: { path: localPath } },
         );
-        const name = localPathInfo.name || localFileName(localPath);
+        const name = localPathInfo.name || localFileName(localPath, t);
         const remotePath = joinRemotePath(path, name);
         const upload = {
           kind: localPathInfo.kind,
@@ -936,7 +942,7 @@ export function SftpWorkspace({
   async function openTextFile(entry: SftpEntry) {
     if (!sessionId) return;
     if (!isTextEntry(entry)) {
-      setError("暂不支持内置打开该文件类型");
+      setError(t("sftp.unsupported_file"));
       return;
     }
     try {
@@ -986,7 +992,7 @@ export function SftpWorkspace({
         originalContent: textFile.content,
         size: response.size,
         modifiedAt: response.modified_at ?? null,
-        status: "已保存",
+        status: t("sftp.saved"),
       });
       await refresh();
     } catch (caught) {
@@ -1165,7 +1171,7 @@ export function SftpWorkspace({
 
   function currentDirectoryMenuItems(): ContextMenuItem[] {
     return [
-      { label: "刷新", onSelect: () => void refresh() },
+      { label: t("sftp.refresh"), onSelect: () => void refresh() },
       ...currentDirectoryCreateMenuItems(),
     ];
   }
@@ -1173,25 +1179,25 @@ export function SftpWorkspace({
   function currentDirectoryCreateMenuItems(): ContextMenuItem[] {
     return [
       {
-        label: "新建文件",
+        label: t("sftp.create_file"),
         onSelect: () =>
           openDialog({
             kind: "create-file",
-            title: "新建文件",
+            title: t("sftp.create_file"),
             initialValue: "",
           }),
       },
       {
-        label: "新建文件夹",
+        label: t("sftp.create_directory"),
         onSelect: () =>
           openDialog({
             kind: "create-directory",
-            title: "新建文件夹",
+            title: t("sftp.create_directory"),
             initialValue: "",
           }),
       },
-      { label: "上传文件", onSelect: () => void uploadFile() },
-      { label: "上传文件夹", onSelect: () => void uploadDirectory() },
+      { label: t("sftp.upload_file"), onSelect: () => void uploadFile() },
+      { label: t("sftp.upload_directory"), onSelect: () => void uploadDirectory() },
     ];
   }
 
@@ -1213,28 +1219,28 @@ export function SftpWorkspace({
     const isBatchMenu = menuTargetEntries.length > 1;
     if (isBatchMenu) {
       const items: ContextMenuItem[] = [
-        { label: "刷新", onSelect: () => void refresh() },
+        { label: t("sftp.refresh"), onSelect: () => void refresh() },
         {
-          label: "下载选中项",
+          label: t("sftp.download_selected"),
           onSelect: () => void downloadEntries(menuTargetEntries),
         },
         {
-          label: "压缩选中项",
+          label: t("sftp.compress_selected"),
           onSelect: () => void compressEntries(menuTargetEntries),
         },
         {
-          label: "复制选中路径",
+          label: t("sftp.copy_selected_paths"),
           onSelect: () =>
             void writeClipboardText(
               menuTargetEntries.map((selectedEntry) => selectedEntry.path).join("\r\n"),
             ),
         },
         {
-          label: "删除选中项",
+          label: t("sftp.delete_selected"),
           onSelect: () => setBatchDeleteCandidates(menuTargetEntries),
         },
         { type: "separator" },
-        { type: "label", label: "在当前目录下：" },
+        { type: "label", label: t("sftp.current_directory_actions") },
         ...currentDirectoryCreateMenuItems(),
       ];
       setContextMenu({
@@ -1245,38 +1251,38 @@ export function SftpWorkspace({
       return;
     }
     const items: ContextMenuItem[] = [
-      { label: "刷新", onSelect: () => void refresh() },
+      { label: t("sftp.refresh"), onSelect: () => void refresh() },
       {
-        label: "下载",
+        label: t("sftp.download"),
         onSelect: () =>
           void (entry.kind === "directory"
             ? downloadDirectory(entry)
             : downloadFile(entry)),
       },
       ...(isTextEntry(entry)
-        ? [{ label: "编辑", onSelect: () => void openTextFile(entry) }]
+        ? [{ label: t("sftp.edit"), onSelect: () => void openTextFile(entry) }]
         : []),
-      { label: "压缩", onSelect: () => void compressEntry(entry) },
+      { label: t("sftp.compress"), onSelect: () => void compressEntry(entry) },
       ...(isArchiveEntry(entry)
-        ? [{ label: "解压缩", onSelect: () => void extractArchive(entry) }]
+        ? [{ label: t("sftp.extract"), onSelect: () => void extractArchive(entry) }]
         : []),
       {
-        label: "重命名",
+        label: t("sftp.rename"),
         onSelect: () =>
           openDialog({
             kind: "rename",
-            title: "重命名",
+            title: t("sftp.rename"),
             initialValue: entry.name,
             entry,
           }),
       },
       {
-        label: "复制路径",
+        label: t("sftp.copy_path"),
         onSelect: () => void writeClipboardText(entry.path),
       },
-      { label: "删除", onSelect: () => setDeleteCandidate(entry) },
+      { label: t("sftp.delete"), onSelect: () => setDeleteCandidate(entry) },
       { type: "separator" },
-      { type: "label", label: "在当前目录下：" },
+      { type: "label", label: t("sftp.current_directory_actions") },
       ...currentDirectoryCreateMenuItems(),
     ];
     setContextMenu({
@@ -1289,8 +1295,8 @@ export function SftpWorkspace({
   if (!connectionId) {
     return (
       <section className="workspace-empty">
-        <h2>未选择连接</h2>
-        <p>请先在左侧连接列表中打开 SFTP。</p>
+        <h2>{t("sftp.no_connection")}</h2>
+        <p>{t("sftp.no_connection_hint")}</p>
       </section>
     );
   }
@@ -1304,14 +1310,14 @@ export function SftpWorkspace({
           onClick={() => void goBack()}
           disabled={!backStack.length}
         >
-          后退
+          {t("sftp.back")}
         </button>
         <button
           type="button"
           onClick={() => void goForward()}
           disabled={!forwardStack.length}
         >
-          前进
+          {t("sftp.forward")}
         </button>
         <input
           value={addressPath}
@@ -1322,34 +1328,34 @@ export function SftpWorkspace({
               void navigateTo(addressPath);
             }
           }}
-          aria-label="远程路径"
+          aria-label={t("sftp.remote_path")}
         />
         <button type="button" onClick={() => void refresh()}>
-          刷新
+          {t("sftp.refresh")}
         </button>
         <button
           type="button"
           onClick={() =>
             openDialog({
               kind: "create-directory",
-              title: "新建文件夹",
+              title: t("sftp.create_directory"),
               initialValue: "",
             })
           }
         >
-          新建目录
+          {t("sftp.new_directory")}
         </button>
       </header>
       {error ? <p role="alert">{error}</p> : null}
-      {isLoading ? <p role="status">加载中...</p> : null}
+      {isLoading ? <p role="status">{t("sftp.loading")}</p> : null}
       <div
         ref={fileListRef}
         className={`sftp-table-scroll${isDragOverFileList ? " sftp-table-scroll--drag-over" : ""}`}
-        aria-label="SFTP 文件列表"
+        aria-label={t("sftp.file_list")}
         onContextMenu={openBlankContextMenu}
       >
         {isDragOverFileList ? (
-          <div className="sftp-drop-overlay">拖放到当前目录上传</div>
+          <div className="sftp-drop-overlay">{t("sftp.drop_to_upload")}</div>
         ) : null}
         <table>
           <thead>
@@ -1357,7 +1363,7 @@ export function SftpWorkspace({
               <th className="sftp-selection-cell">
                 <input
                   type="checkbox"
-                  aria-label="选择全部可见项"
+                  aria-label={t("sftp.select_all_visible")}
                   checked={
                     sortedEntries.length > 0 &&
                     sortedEntries.every((entry) => selectedEntryPaths.has(entry.path))
@@ -1368,32 +1374,32 @@ export function SftpWorkspace({
               <th>
                 <button
                   type="button"
-                  aria-label="按名称排序"
+                  aria-label={t("sftp.sort_by_name")}
                   onClick={() => toggleSort("name")}
                 >
-                  名称
+                  {t("sftp.name")}
                 </button>
               </th>
-              <th>类型</th>
+              <th>{t("sftp.type")}</th>
               <th>
                 <button
                   type="button"
-                  aria-label="按大小排序"
+                  aria-label={t("sftp.sort_by_size")}
                   onClick={() => toggleSort("size")}
                 >
-                  大小
+                  {t("sftp.size")}
                 </button>
               </th>
               <th>
                 <button
                   type="button"
-                  aria-label="按修改时间排序"
+                  aria-label={t("sftp.sort_by_modified_time")}
                   onClick={() => toggleSort("modified_at")}
                 >
-                  修改时间
+                  {t("sftp.modified_time")}
                 </button>
               </th>
-              <th>权限</th>
+              <th>{t("sftp.permissions")}</th>
             </tr>
           </thead>
           <tbody>
@@ -1417,7 +1423,7 @@ export function SftpWorkspace({
                 <td className="sftp-selection-cell">
                   <input
                     type="checkbox"
-                    aria-label={`选择 ${entry.name}`}
+                    aria-label={t("sftp.select_entry", { name: entry.name })}
                     checked={selectedEntryPaths.has(entry.path)}
                     onChange={() => toggleEntrySelection(entry)}
                     onDoubleClick={(event) => event.stopPropagation()}
@@ -1456,24 +1462,24 @@ export function SftpWorkspace({
             <div className="connection-form">
               <header className="connection-dialog__header">
                 <h2>{dialog.title}</h2>
-                <button type="button" onClick={closeDialog} aria-label="关闭">
+                <button type="button" onClick={closeDialog} aria-label={t("sftp.close")}>
                   ×
                 </button>
               </header>
               <label>
-                <span>名称</span>
+                <span>{t("sftp.name")}</span>
                 <input
                   autoFocus
                   value={dialogName}
                   onChange={(event) => setDialogName(event.target.value)}
-                  aria-label="名称"
+                  aria-label={t("sftp.name")}
                 />
               </label>
               <div className="sftp-dialog__actions">
                 <button type="button" onClick={closeDialog}>
-                  取消
+                  {t("sftp.cancel")}
                 </button>
-                <button type="submit">确认</button>
+                <button type="submit">{t("sftp.confirm")}</button>
               </div>
             </div>
           </form>
@@ -1488,31 +1494,31 @@ export function SftpWorkspace({
           <section
             className="connection-dialog sftp-dialog"
             role="dialog"
-            aria-label="确认删除"
+            aria-label={t("sftp.confirm_delete")}
             onPointerDown={(event) => event.stopPropagation()}
           >
             <div className="connection-form">
               <header className="connection-dialog__header">
-                <h2>确认删除</h2>
+                <h2>{t("sftp.confirm_delete")}</h2>
                 <button
                   type="button"
                   onClick={() => setDeleteCandidate(null)}
-                  aria-label="关闭"
+                  aria-label={t("sftp.close")}
                 >
                   ×
                 </button>
               </header>
-              <p>{getDeleteConfirmationText(deleteCandidate)}</p>
+              <p>{getDeleteConfirmationText(deleteCandidate, t)}</p>
               <div className="sftp-dialog__actions">
                 <button type="button" onClick={() => setDeleteCandidate(null)}>
-                  取消
+                  {t("sftp.cancel")}
                 </button>
                 <button
                   type="button"
                   className="sftp-dialog__danger-button"
                   onClick={() => void confirmDeleteEntry()}
                 >
-                  确认
+                  {t("sftp.confirm")}
                 </button>
               </div>
             </div>
@@ -1528,31 +1534,31 @@ export function SftpWorkspace({
           <section
             className="connection-dialog sftp-dialog"
             role="dialog"
-            aria-label="确认删除"
+            aria-label={t("sftp.confirm_delete")}
             onPointerDown={(event) => event.stopPropagation()}
           >
             <div className="connection-form">
               <header className="connection-dialog__header">
-                <h2>确认删除</h2>
+                <h2>{t("sftp.confirm_delete")}</h2>
                 <button
                   type="button"
                   onClick={() => setBatchDeleteCandidates([])}
-                  aria-label="关闭"
+                  aria-label={t("sftp.close")}
                 >
                   ×
                 </button>
               </header>
-              <p>{getBatchDeleteConfirmationText(batchDeleteCandidates)}</p>
+              <p>{getBatchDeleteConfirmationText(batchDeleteCandidates, t)}</p>
               <div className="sftp-dialog__actions">
                 <button type="button" onClick={() => setBatchDeleteCandidates([])}>
-                  取消
+                  {t("sftp.cancel")}
                 </button>
                 <button
                   type="button"
                   className="sftp-dialog__danger-button"
                   onClick={() => void confirmBatchDeleteEntries()}
                 >
-                  确认
+                  {t("sftp.confirm")}
                 </button>
               </div>
             </div>
@@ -1568,23 +1574,23 @@ export function SftpWorkspace({
           <form
             className="connection-dialog sftp-dialog"
             role="dialog"
-            aria-label="压缩选中项"
+            aria-label={t("sftp.compress_selected")}
             onSubmit={(event) => void confirmBatchArchive(event)}
             onPointerDown={(event) => event.stopPropagation()}
           >
             <div className="connection-form">
               <header className="connection-dialog__header">
-                <h2>压缩选中项</h2>
+                <h2>{t("sftp.compress_selected")}</h2>
                 <button
                   type="button"
                   onClick={() => setPendingBatchArchive(null)}
-                  aria-label="关闭"
+                  aria-label={t("sftp.close")}
                 >
                   ×
                 </button>
               </header>
               <label>
-                压缩包名称
+                {t("sftp.archive_name")}
                 <input
                   value={pendingBatchArchive.archiveName}
                   onChange={(event) =>
@@ -1593,14 +1599,14 @@ export function SftpWorkspace({
                       archiveName: event.target.value,
                     })
                   }
-                  aria-label="名称"
+                  aria-label={t("sftp.name")}
                 />
               </label>
               <div className="sftp-dialog__actions">
                 <button type="button" onClick={() => setPendingBatchArchive(null)}>
-                  取消
+                  {t("sftp.cancel")}
                 </button>
-                <button type="submit">确认</button>
+                <button type="submit">{t("sftp.confirm")}</button>
               </div>
             </div>
           </form>
@@ -1615,31 +1621,31 @@ export function SftpWorkspace({
           <section
             className="connection-dialog sftp-dialog"
             role="dialog"
-            aria-label="确认覆盖"
+            aria-label={t("sftp.confirm_overwrite")}
             onPointerDown={(event) => event.stopPropagation()}
           >
             <div className="connection-form">
               <header className="connection-dialog__header">
-                <h2>确认覆盖</h2>
+                <h2>{t("sftp.confirm_overwrite")}</h2>
                 <button
                   type="button"
                   onClick={() => setPendingUpload(null)}
-                  aria-label="关闭"
+                  aria-label={t("sftp.close")}
                 >
                   ×
                 </button>
               </header>
-              <p>{pendingUpload.name} 已存在，是否覆盖？</p>
+              <p>{t("sftp.overwrite_message", { name: pendingUpload.name })}</p>
               <div className="sftp-dialog__actions">
                 <button type="button" onClick={() => setPendingUpload(null)}>
-                  取消
+                  {t("sftp.cancel")}
                 </button>
                 <button
                   type="button"
                   className="sftp-dialog__danger-button"
                   onClick={() => void confirmUploadOverwrite()}
                 >
-                  覆盖
+                  {t("sftp.overwrite")}
                 </button>
               </div>
             </div>
@@ -1654,7 +1660,7 @@ export function SftpWorkspace({
           <section
             className="connection-dialog sftp-dialog sftp-editor-dialog"
             role="dialog"
-            aria-label={`编辑 ${textFile.name}`}
+            aria-label={t("sftp.edit_file", { name: textFile.name })}
             ref={editorDialogRef}
             style={
               editorDialogLayout
@@ -1671,21 +1677,21 @@ export function SftpWorkspace({
             <div className="connection-form">
               <header
                 className="connection-dialog__header sftp-editor-dialog__drag-handle"
-                aria-label="拖动编辑器"
+                aria-label={t("sftp.drag_editor")}
                 onPointerDown={startEditorDialogMove}
               >
-                <h2>编辑 {textFile.name}</h2>
+                <h2>{t("sftp.edit_file", { name: textFile.name })}</h2>
                 <button
                   type="button"
                   onClick={requestCloseTextFile}
-                  aria-label="关闭编辑器"
+                  aria-label={t("sftp.close_editor")}
                 >
                   ×
                 </button>
               </header>
               <label className="sftp-editor-dialog__content">
                 <span className="sftp-editor-dialog__content-header">
-                  <span>文件内容</span>
+                  <span>{t("sftp.file_content")}</span>
                   <span className="sftp-editor-dialog__meta">
                     <span>{textFile.path}</span>
                     <span>{formatFileSize(textFile.size, sizeUnit)}</span>
@@ -1701,22 +1707,22 @@ export function SftpWorkspace({
                       status: null,
                     })
                   }
-                  aria-label="文件内容"
+                  aria-label={t("sftp.file_content")}
                 />
               </label>
               <div className="sftp-dialog__actions">
                 {textFile.status ? <span>{textFile.status}</span> : null}
                 <button type="button" onClick={requestCloseTextFile}>
-                  关闭
+                  {t("sftp.close")}
                 </button>
                 <button type="button" onClick={() => void saveTextFile(false)}>
-                  保存
+                  {t("sftp.save")}
                 </button>
               </div>
             </div>
             <span
               className="sftp-editor-dialog__resize-handle sftp-editor-dialog__resize-handle--corner"
-              aria-label="调整编辑器大小"
+              aria-label={t("sftp.resize_editor")}
               role="separator"
               onPointerDown={startEditorDialogResize}
             />
@@ -1732,31 +1738,31 @@ export function SftpWorkspace({
           <section
             className="connection-dialog sftp-dialog"
             role="dialog"
-            aria-label="确认关闭"
+            aria-label={t("sftp.confirm_close")}
             onPointerDown={(event) => event.stopPropagation()}
           >
             <div className="connection-form">
               <header className="connection-dialog__header">
-                <h2>确认关闭</h2>
+                <h2>{t("sftp.confirm_close")}</h2>
                 <button
                   type="button"
                   onClick={() => setConfirmTextClose(false)}
-                  aria-label="关闭"
+                  aria-label={t("sftp.close")}
                 >
                   ×
                 </button>
               </header>
-              <p>文件 {textFile.name} 有未保存修改，确认关闭？</p>
+              <p>{t("sftp.dirty_close_message", { name: textFile.name })}</p>
               <div className="sftp-dialog__actions">
                 <button type="button" onClick={() => setConfirmTextClose(false)}>
-                  取消
+                  {t("sftp.cancel")}
                 </button>
                 <button
                   type="button"
                   className="sftp-dialog__danger-button"
                   onClick={closeTextFileWithoutSaving}
                 >
-                  确认
+                  {t("sftp.confirm")}
                 </button>
               </div>
             </div>
@@ -1772,31 +1778,31 @@ export function SftpWorkspace({
           <section
             className="connection-dialog sftp-dialog"
             role="dialog"
-            aria-label="确认覆盖保存"
+            aria-label={t("sftp.confirm_overwrite_save")}
             onPointerDown={(event) => event.stopPropagation()}
           >
             <div className="connection-form">
               <header className="connection-dialog__header">
-                <h2>确认覆盖保存</h2>
+                <h2>{t("sftp.confirm_overwrite_save")}</h2>
                 <button
                   type="button"
                   onClick={() => setConfirmTextOverwrite(false)}
-                  aria-label="关闭"
+                  aria-label={t("sftp.close")}
                 >
                   ×
                 </button>
               </header>
-              <p>远程文件 {textFile.name} 已被修改，是否覆盖保存？</p>
+              <p>{t("sftp.remote_changed_message", { name: textFile.name })}</p>
               <div className="sftp-dialog__actions">
                 <button type="button" onClick={() => setConfirmTextOverwrite(false)}>
-                  取消
+                  {t("sftp.cancel")}
                 </button>
                 <button
                   type="button"
                   className="sftp-dialog__danger-button"
                   onClick={() => void saveTextFile(true)}
                 >
-                  覆盖保存
+                  {t("sftp.overwrite_save")}
                 </button>
               </div>
             </div>

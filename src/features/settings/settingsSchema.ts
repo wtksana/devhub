@@ -62,6 +62,7 @@ const connectionSchema = z.object({
 export const devHubSettingsSchema = z.object({
   appearance: z.object({
     theme: z.enum(["dark", "light", "system"]),
+    language: z.enum(["system", "zh-CN", "en-US"]),
     ui_font_family: z.string().min(1),
     ui_font_size: z.number().min(10).max(24),
     terminal_font_family: z.string().min(1),
@@ -83,6 +84,7 @@ export function parseSettings(value: unknown): DevHubSettings {
     const settings = value as Record<string, unknown>;
     if (settings.appearance && typeof settings.appearance === "object" && !Array.isArray(settings.appearance)) {
       settings.appearance = {
+        language: "system",
         ui_font_size: 16,
         ...settings.appearance,
       };

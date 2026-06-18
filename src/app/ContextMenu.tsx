@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { useI18n } from "../i18n/useI18n";
 
 export type ContextMenuItem =
   | {
@@ -36,6 +37,8 @@ interface ContextMenuProps {
 }
 
 export function ContextMenu({ menu, onClose }: ContextMenuProps) {
+  const { t } = useI18n();
+
   useEffect(() => {
     if (!menu) return;
 
@@ -90,7 +93,7 @@ export function ContextMenu({ menu, onClose }: ContextMenuProps) {
               <div
                 className="context-menu context-menu__submenu-panel"
                 role="menu"
-                aria-label={`${item.label} 子菜单`}
+                aria-label={t("context.submenu", { label: item.label })}
                 data-visible-on-hover="true"
               >
                 {item.items.map((child, childIndex) => {

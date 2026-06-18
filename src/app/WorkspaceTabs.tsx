@@ -1,3 +1,5 @@
+import { useI18n } from "../i18n/useI18n";
+
 export interface WorkspaceTabItem {
   id: string;
   title: string;
@@ -12,6 +14,7 @@ interface WorkspaceTabsProps {
 }
 
 export function WorkspaceTabs({ tabs, activeTabId, onSelect, onClose, onContextMenu }: WorkspaceTabsProps) {
+  const { t } = useI18n();
   const handleWheel = (event: React.WheelEvent<HTMLElement>) => {
     const distance = event.deltaX + event.deltaY;
     if (distance === 0) {
@@ -23,7 +26,7 @@ export function WorkspaceTabs({ tabs, activeTabId, onSelect, onClose, onContextM
   };
 
   return (
-    <nav className="workspace-tabs" aria-label="工作区标签" data-scrollable="true" data-wheel-scroll="horizontal" onWheel={handleWheel}>
+    <nav className="workspace-tabs" aria-label={t("app.workspace_tabs")} data-scrollable="true" data-wheel-scroll="horizontal" onWheel={handleWheel}>
       {tabs.map((tab) => (
         <div
           key={tab.id}
@@ -35,7 +38,7 @@ export function WorkspaceTabs({ tabs, activeTabId, onSelect, onClose, onContextM
           <button type="button" className="workspace-tab__select" aria-pressed={activeTabId === tab.id} onClick={() => onSelect(tab.id)}>
             {tab.title}
           </button>
-          <button type="button" className="workspace-tab__close" aria-label={`关闭 ${tab.title}`} onClick={() => onClose(tab.id)}>
+          <button type="button" className="workspace-tab__close" aria-label={t("app.close_tab", { title: tab.title })} onClick={() => onClose(tab.id)}>
             ×
           </button>
         </div>

@@ -4,12 +4,14 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SettingsPanel } from "./SettingsPanel";
 import type { DevHubSettings } from "./settingsTypes";
+import { I18nProvider } from "../../i18n/I18nProvider";
 
 const saveSettings = vi.fn();
 const listSystemFonts = vi.fn(async () => ["Inter", "Zed Sans", "JetBrains Mono", "Consolas"]);
 const settings: DevHubSettings = {
   appearance: {
     theme: "dark",
+    language: "zh-CN",
     ui_font_family: "Consolas",
     ui_font_size: 16,
     terminal_font_family: "Consolas",
@@ -50,8 +52,16 @@ describe("SettingsPanel", () => {
     listSystemFonts.mockClear();
   });
 
+  function renderSettingsPanel() {
+    return render(
+      <I18nProvider language={settings.appearance.language}>
+        <SettingsPanel />
+      </I18nProvider>,
+    );
+  }
+
   it("shows appearance, layout, and connection sections", () => {
-    render(<SettingsPanel />);
+    renderSettingsPanel();
 
     expect(screen.getByRole("heading", { name: "外观" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "布局" })).toBeInTheDocument();
@@ -62,7 +72,7 @@ describe("SettingsPanel", () => {
   });
 
   it("saves typed input edits after the field loses focus", async () => {
-    render(<SettingsPanel />);
+    renderSettingsPanel();
 
     await userEvent.selectOptions(screen.getByLabelText("主题"), "system");
 
@@ -88,8 +98,22 @@ describe("SettingsPanel", () => {
     });
   });
 
+  it("saves the selected UI language", async () => {
+    renderSettingsPanel();
+
+    await userEvent.selectOptions(screen.getByLabelText("语言"), "en-US");
+
+    expect(saveSettings).toHaveBeenLastCalledWith({
+      ...settings,
+      appearance: {
+        ...settings.appearance,
+        language: "en-US",
+      },
+    });
+  });
+
   it("loads system fonts for UI and terminal font selection", async () => {
-    render(<SettingsPanel />);
+    renderSettingsPanel();
 
     await within(screen.getByLabelText("界面字体")).findByRole("option", { name: "Zed Sans" });
 
@@ -109,7 +133,7 @@ describe("SettingsPanel", () => {
   });
 
   it("saves UI font size after blur", async () => {
-    render(<SettingsPanel />);
+    renderSettingsPanel();
 
     await userEvent.clear(screen.getByLabelText("界面字号"));
     await userEvent.type(screen.getByLabelText("界面字号"), "15");
@@ -131,7 +155,7 @@ describe("SettingsPanel", () => {
     const scrollIntoView = vi.fn();
     window.HTMLElement.prototype.scrollIntoView = scrollIntoView;
 
-    render(<SettingsPanel />);
+    renderSettingsPanel();
 
     await userEvent.click(within(screen.getByLabelText("设置分类")).getByRole("button", { name: "连接" }));
 
@@ -143,7 +167,7 @@ describe("SettingsPanel", () => {
     const scrollIntoView = vi.fn();
     window.HTMLElement.prototype.scrollIntoView = scrollIntoView;
 
-    render(<SettingsPanel />);
+    renderSettingsPanel();
 
     await userEvent.click(screen.getByRole("button", { name: "Edit in settings.json" }));
 
@@ -155,7 +179,7 @@ describe("SettingsPanel", () => {
   });
 
   it("saves layout panel widths after blur", async () => {
-    render(<SettingsPanel />);
+    renderSettingsPanel();
 
     expect(screen.queryByLabelText("连接栏宽度")).not.toBeInTheDocument();
 
@@ -173,7 +197,7 @@ describe("SettingsPanel", () => {
   });
 
   it("saves SFTP file size unit changes", async () => {
-    render(<SettingsPanel />);
+    renderSettingsPanel();
 
     await userEvent.selectOptions(screen.getByLabelText("SFTP 文件大小单位"), "auto");
 

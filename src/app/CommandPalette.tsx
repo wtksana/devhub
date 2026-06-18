@@ -1,5 +1,6 @@
 import themeIcon from "../assets/icons/bi--brilliance.png";
 import settingsIcon from "../assets/icons/bi--gear-wide-connected.png";
+import { useI18n } from "../i18n/useI18n";
 import { WindowControls } from "./WindowControls";
 import { getSafeCurrentWindow } from "./windowRuntime";
 
@@ -10,11 +11,12 @@ interface CommandPaletteProps {
 
 export function CommandPalette({ onOpenSettings, onToggleTheme }: CommandPaletteProps) {
   const appWindow = getSafeCurrentWindow();
+  const { t } = useI18n();
 
   return (
     <section
       className="command-palette"
-      aria-label="命令面板"
+      aria-label={t("app.command_palette")}
       data-tauri-drag-region
       onDoubleClick={() => void appWindow?.toggleMaximize()}
       onMouseDown={(event) => {
@@ -29,7 +31,7 @@ export function CommandPalette({ onOpenSettings, onToggleTheme }: CommandPalette
       <button
         type="button"
         className="command-palette__icon-button"
-        aria-label="切换主题"
+        aria-label={t("app.toggle_theme")}
         onMouseDown={(event) => event.stopPropagation()}
         onDoubleClick={(event) => event.stopPropagation()}
         onClick={onToggleTheme}
@@ -39,7 +41,7 @@ export function CommandPalette({ onOpenSettings, onToggleTheme }: CommandPalette
       <button
         type="button"
         className="command-palette__icon-button"
-        aria-label="打开设置"
+        aria-label={t("app.open_settings")}
         onMouseDown={(event) => event.stopPropagation()}
         onDoubleClick={(event) => event.stopPropagation()}
         onClick={onOpenSettings}

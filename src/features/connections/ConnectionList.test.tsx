@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ConnectionList } from "./ConnectionList";
 import type { ConnectionSettings } from "../settings/settingsTypes";
 import { pickPrivateKeyFile } from "../../lib/fileDialog";
+import { I18nProvider } from "../../i18n/I18nProvider";
 
 vi.mock("../../lib/fileDialog", () => ({
   pickPrivateKeyFile: vi.fn(),
@@ -67,17 +68,19 @@ describe("ConnectionList", () => {
 
   function renderConnectionList(props: Partial<React.ComponentProps<typeof ConnectionList>> = {}) {
     return render(
-      <ConnectionList
-        connections={[]}
-        onOpenTerminal={vi.fn()}
-        onOpenNewTerminal={vi.fn()}
-        onOpenSftp={vi.fn()}
-        onAddConnection={vi.fn()}
-        onUpdateConnection={vi.fn()}
-        connectionGroups={[]}
-        onUpdateConnectionGroups={vi.fn()}
-        {...props}
-      />,
+      <I18nProvider language="zh-CN">
+        <ConnectionList
+          connections={[]}
+          onOpenTerminal={vi.fn()}
+          onOpenNewTerminal={vi.fn()}
+          onOpenSftp={vi.fn()}
+          onAddConnection={vi.fn()}
+          onUpdateConnection={vi.fn()}
+          connectionGroups={[]}
+          onUpdateConnectionGroups={vi.fn()}
+          {...props}
+        />
+      </I18nProvider>,
     );
   }
 
