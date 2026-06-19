@@ -26,7 +26,9 @@
 - [x] Redis 工作区支持设置 key 分隔符，默认 `:`，已加载 key 会按分隔符展示为目录树。
 - [x] Redis 工作区显示当前 DB 的 key 总数和本次已加载数量。
 - [x] Redis 工作区一次加载数量默认 5000，可在工具栏修改。
+- [x] Redis key 扫描支持分段续扫，界面仍按“最多加载”数量聚合显示。
 - [x] Redis key 列表显示 key 名称、类型和 TTL。
+- [x] Redis key 列表使用虚拟滚动渲染，避免大量可见行一次性渲染。
 - [x] Redis 工作区支持新建 `string`、`hash`、`list`、`set` 和 `zset` 类型 key。
 - [x] 新建 Redis key 时不会覆盖已有 key。
 - [x] 双击 Redis key 会打开详情弹窗。

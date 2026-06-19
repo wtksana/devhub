@@ -7,6 +7,7 @@ pub mod ssh;
 #[cfg(test)]
 mod tests;
 
+use crate::commands::redis::RedisConnectionManager;
 use crate::core::credential_store::CredentialStore;
 use crate::core::settings_store::SettingsStore;
 use crate::core::window_state::{WindowState, WindowStateStore};
@@ -56,6 +57,7 @@ pub fn run() {
 
             app.manage(SettingsStore::new_for_dir(app_dir));
             app.manage(CredentialStore::new("devhub"));
+            app.manage(RedisConnectionManager::default());
             app.manage(SessionManager::default());
             app.manage(SftpSessionManager::default());
             Ok(())

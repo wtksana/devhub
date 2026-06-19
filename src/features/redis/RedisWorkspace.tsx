@@ -14,6 +14,8 @@ const DEFAULT_LOAD_LIMIT = 5000;
 const DEFAULT_KEY_SEPARATOR = ":";
 const DEFAULT_VALUE_LIMIT = 500;
 const DEFAULT_MAX_STRING_BYTES = 5 * 1024 * 1024;
+const REDIS_ROW_HEIGHT = 30;
+const REDIS_OVERSCAN_ROWS = 8;
 
 interface RedisFolderNode {
   kind: "folder";
@@ -172,6 +174,25 @@ function buildRedisTreeRows(keys: RedisKeyEntry[], separator: string, expandedFo
   return rows;
 }
 
+function buildFolderKeyIndex(keys: RedisKeyEntry[], separator: string) {
+  const folderKeys = new Map<string, string[]>();
+  for (const entry of keys) {
+    const folderPath = keyFolderPath(entry.key, separator);
+    if (!folderPath) continue;
+    const folders = folderPath.split("/");
+    for (let index = 0; index < folders.length; index += 1) {
+      const path = folders.slice(0, index + 1).join("/");
+      const current = folderKeys.get(path);
+      if (current) {
+        current.push(entry.key);
+      } else {
+        folderKeys.set(path, [entry.key]);
+      }
+    }
+  }
+  return folderKeys;
+}
+
 export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorkspaceProps) {
   const { t } = useI18n();
   const [database, setDatabase] = useState(initialDatabase);
@@ -208,26 +229,63 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [createDraft, setCreateDraft] = useState<CreateRedisKeyDraft>(DEFAULT_CREATE_KEY_DRAFT);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+  const [tableScrollTop, setTableScrollTop] = useState(0);
+  const [tableViewportHeight, setTableViewportHeight] = useState(0);
+  const selectedKeySet = useMemo(() => new Set(selectedKeys), [selectedKeys]);
+  const folderKeyIndex = useMemo(() => buildFolderKeyIndex(keys, keySeparator), [keys, keySeparator]);
   const treeRows = useMemo(
     () => buildRedisTreeRows(keys, keySeparator, expandedFolders),
     [keys, keySeparator, expandedFolders],
   );
+  const visibleTreeRange = useMemo(() => {
+    if (tableViewportHeight <= 0) {
+      return {
+        start: 0,
+        end: treeRows.length,
+      };
+    }
+    const start = Math.max(0, Math.floor(tableScrollTop / REDIS_ROW_HEIGHT) - REDIS_OVERSCAN_ROWS);
+    const visibleCount = Math.ceil(tableViewportHeight / REDIS_ROW_HEIGHT) + REDIS_OVERSCAN_ROWS * 2;
+    return {
+      start,
+      end: Math.min(treeRows.length, start + visibleCount),
+    };
+  }, [tableScrollTop, tableViewportHeight, treeRows.length]);
+  const visibleTreeRows = treeRows.slice(visibleTreeRange.start, visibleTreeRange.end);
+  const topSpacerHeight = visibleTreeRange.start * REDIS_ROW_HEIGHT;
+  const bottomSpacerHeight = Math.max(0, (treeRows.length - visibleTreeRange.end) * REDIS_ROW_HEIGHT);
 
   async function loadKeys(nextDatabase = database, nextKeyword = keyword, nextLoadLimit = loadLimit) {
     if (!connectionId) return;
     setIsLoading(true);
     try {
-      const response = await callBackend<RedisKeyListResponse>("list_redis_keys", {
-        request: {
-          connection_id: connectionId,
-          database: nextDatabase,
-          pattern: keywordToPattern(nextKeyword),
-          count: nextLoadLimit,
-        },
+      const entries: RedisKeyEntry[] = [];
+      const pattern = keywordToPattern(nextKeyword);
+      let nextCursor = 0;
+      let total = 0;
+
+      do {
+        const response = await callBackend<RedisKeyListResponse>("list_redis_keys", {
+          request: {
+            connection_id: connectionId,
+            database: nextDatabase,
+            pattern,
+            count: nextLoadLimit - entries.length,
+            cursor: nextCursor,
+          },
+        });
+        total = response.total_count;
+        entries.push(...response.entries);
+        nextCursor = response.next_cursor ?? 0;
+      } while (nextCursor !== 0 && entries.length < nextLoadLimit);
+
+      setTotalCount(total);
+      setKeys(entries);
+      setSelectedKeys((current) => {
+        const loadedKeys = new Set(entries.map((entry) => entry.key));
+        return current.filter((key) => loadedKeys.has(key));
       });
-      setTotalCount(response.total_count);
-      setKeys(response.entries);
-      setSelectedKeys((current) => current.filter((key) => response.entries.some((entry) => entry.key === key)));
+      setTableScrollTop(0);
       setError(null);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
@@ -309,20 +367,16 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
   }
 
   function toggleSelectedKey(key: string) {
-    setSelectedKeys((current) => (
-      current.includes(key)
+    setSelectedKeys((current) => {
+      const currentSet = new Set(current);
+      return currentSet.has(key)
         ? current.filter((selectedKey) => selectedKey !== key)
-        : [...current, key]
-    ));
+        : [...current, key];
+    });
   }
 
   function folderKeys(path: string) {
-    return keys
-      .filter((entry) => {
-        const folderPath = keyFolderPath(entry.key, keySeparator);
-        return folderPath === path || folderPath.startsWith(`${path}/`);
-      })
-      .map((entry) => entry.key);
+    return folderKeyIndex.get(path) ?? [];
   }
 
   function toggleSelectedFolder(path: string) {
@@ -343,7 +397,7 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
   }
 
   function selectedKeysForAction(entry: RedisKeyEntry) {
-    return selectedKeys.includes(entry.key) ? selectedKeys : [entry.key];
+    return selectedKeySet.has(entry.key) ? selectedKeys : [entry.key];
   }
 
   async function openKeyDetail(entry: RedisKeyEntry) {
@@ -962,7 +1016,19 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
       </header>
       {error ? <p role="alert">{error}</p> : null}
       {isLoading ? <p role="status">{t("redis.loading")}</p> : null}
-      <div className="redis-table-scroll" aria-label={t("redis.key_list")}>
+      <div
+        className="redis-table-scroll"
+        aria-label={t("redis.key_list")}
+        onScroll={(event) => {
+          setTableScrollTop(event.currentTarget.scrollTop);
+          setTableViewportHeight(event.currentTarget.clientHeight);
+        }}
+        ref={(element) => {
+          if (element && tableViewportHeight !== element.clientHeight) {
+            setTableViewportHeight(element.clientHeight);
+          }
+        }}
+      >
         <table>
           <thead>
             <tr>
@@ -973,14 +1039,19 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
             </tr>
           </thead>
           <tbody>
-            {treeRows.map((row) => (
+            {topSpacerHeight > 0 ? (
+              <tr className="redis-virtual-spacer" aria-hidden="true">
+                <td colSpan={4} style={{ height: `${topSpacerHeight}px` }} />
+              </tr>
+            ) : null}
+            {visibleTreeRows.map((row) => (
               <Fragment key={row.id}>
                 {row.kind === "folder" ? (
                   <tr className="redis-folder-row">
                     <td className="redis-table__selection-cell">
                       {(() => {
                         const keysInFolder = folderKeys(row.path);
-                        const selectedCount = keysInFolder.filter((key) => selectedKeys.includes(key)).length;
+                        const selectedCount = keysInFolder.filter((key) => selectedKeySet.has(key)).length;
                         return (
                           <input
                             type="checkbox"
@@ -1018,7 +1089,7 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
                   </tr>
                 ) : (
                   <tr
-                    className={selectedKeys.includes(row.entry.key) ? "redis-key-row--selected" : undefined}
+                    className={selectedKeySet.has(row.entry.key) ? "redis-key-row--selected" : undefined}
                     onDoubleClick={() => void openKeyDetail(row.entry)}
                     onContextMenu={(event) => openKeyContextMenu(event, row.entry)}
                   >
@@ -1026,7 +1097,7 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
                       <input
                         type="checkbox"
                         aria-label={t("redis.select_key", { key: row.entry.key })}
-                        checked={selectedKeys.includes(row.entry.key)}
+                        checked={selectedKeySet.has(row.entry.key)}
                         onChange={() => toggleSelectedKey(row.entry.key)}
                         onDoubleClick={(event) => event.stopPropagation()}
                       />
@@ -1042,6 +1113,11 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
                 )}
               </Fragment>
             ))}
+            {bottomSpacerHeight > 0 ? (
+              <tr className="redis-virtual-spacer" aria-hidden="true">
+                <td colSpan={4} style={{ height: `${bottomSpacerHeight}px` }} />
+              </tr>
+            ) : null}
           </tbody>
         </table>
         {!isLoading && !error && keys.length === 0 ? (

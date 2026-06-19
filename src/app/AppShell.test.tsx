@@ -302,6 +302,7 @@ describe("AppShell", () => {
         database: 1,
         pattern: "*",
         count: 5000,
+        cursor: 0,
       },
     });
   });

@@ -1130,6 +1130,15 @@ p {
   background: var(--panel-raised);
 }
 
+.redis-workspace .redis-virtual-spacer:hover {
+  background: transparent;
+}
+
+.redis-workspace .redis-virtual-spacer td {
+  padding: 0;
+  border-bottom: 0;
+}
+
 .redis-workspace .redis-table__selection-cell {
   width: 34px;
   padding-right: 6px;

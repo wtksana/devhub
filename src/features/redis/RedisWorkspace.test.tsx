@@ -44,6 +44,7 @@ describe("RedisWorkspace", () => {
           database: 1,
           pattern: "*",
           count: 5000,
+          cursor: 0,
         },
       });
     });
@@ -85,6 +86,7 @@ describe("RedisWorkspace", () => {
           database: 2,
           pattern: "*session*",
           count: 2000,
+          cursor: 0,
         },
       });
     });
@@ -114,9 +116,54 @@ describe("RedisWorkspace", () => {
           database: 0,
           pattern: "*session*",
           count: 5000,
+          cursor: 0,
         },
       });
     });
+  });
+
+  it("continues scanning keys until the load limit or cursor end is reached", async () => {
+    callBackendMock.mockResolvedValueOnce({
+      total_count: 12000,
+      next_cursor: 42,
+      entries: [
+        { key: "scan:first", key_type: "string", ttl: -1 },
+      ],
+    });
+    callBackendMock.mockResolvedValueOnce({
+      total_count: 12000,
+      next_cursor: 0,
+      entries: [
+        { key: "scan:second", key_type: "string", ttl: -1 },
+      ],
+    });
+
+    renderRedisWorkspace({ connectionId: "redis-local", initialDatabase: 0 });
+
+    await waitFor(() => expect(callBackendMock).toHaveBeenCalledTimes(2));
+    expect(callBackendMock).toHaveBeenNthCalledWith(1, "list_redis_keys", {
+      request: {
+        connection_id: "redis-local",
+        database: 0,
+        pattern: "*",
+        count: 5000,
+        cursor: 0,
+      },
+    });
+    expect(callBackendMock).toHaveBeenNthCalledWith(2, "list_redis_keys", {
+      request: {
+        connection_id: "redis-local",
+        database: 0,
+        pattern: "*",
+        count: 4999,
+        cursor: 42,
+      },
+    });
+
+    await userEvent.click(await screen.findByRole("button", { name: "展开 scan" }));
+    expect(screen.getByText("scan:first")).toBeInTheDocument();
+    expect(screen.getByText("scan:second")).toBeInTheDocument();
+    expect(screen.getByText("共 12000 条数据，已加载 2 条")).toBeInTheDocument();
   });
 
   it("groups loaded keys by the editable separator", async () => {

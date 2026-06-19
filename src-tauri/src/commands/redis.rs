@@ -1,6 +1,8 @@
 use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
 use redis::Client;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use tauri::State;
 
 use crate::core::settings_store::SettingsStore;
@@ -12,6 +14,7 @@ pub struct ListRedisKeysRequest {
     pub database: u16,
     pub pattern: Option<String>,
     pub count: Option<u32>,
+    pub cursor: Option<u64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -165,6 +168,36 @@ pub struct RedisKeyEntry {
 pub struct RedisKeyListResponse {
     pub total_count: u64,
     pub entries: Vec<RedisKeyEntry>,
+    pub next_cursor: u64,
+}
+
+#[derive(Clone, Default)]
+pub struct RedisConnectionManager {
+    connections: Arc<Mutex<HashMap<String, Arc<Mutex<redis::Connection>>>>>,
+}
+
+impl RedisConnectionManager {
+    fn get_or_connect(&self, url: &str) -> Result<Arc<Mutex<redis::Connection>>, String> {
+        let mut connections = self
+            .connections
+            .lock()
+            .map_err(|_| "redis connection manager lock poisoned".to_string())?;
+        if let Some(connection) = connections.get(url) {
+            return Ok(Arc::clone(connection));
+        }
+
+        let client = Client::open(url).map_err(|error| error.to_string())?;
+        let connection = client.get_connection().map_err(|error| error.to_string())?;
+        let connection = Arc::new(Mutex::new(connection));
+        connections.insert(url.to_string(), Arc::clone(&connection));
+        Ok(connection)
+    }
+
+    fn remove(&self, url: &str) {
+        if let Ok(mut connections) = self.connections.lock() {
+            connections.remove(url);
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -215,6 +248,7 @@ struct NormalizedListRedisKeysRequest {
     database: u16,
     pattern: String,
     count: u32,
+    cursor: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -317,6 +351,11 @@ struct NormalizedRenameRedisKeyRequest {
     new_key: String,
 }
 
+struct RedisKeyScanResult {
+    keys: Vec<String>,
+    next_cursor: u64,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 struct NormalizedCreateRedisKeyRequest {
     database: u16,
@@ -353,38 +392,42 @@ pub async fn test_redis_connection_config(
 #[tauri::command]
 pub async fn list_redis_keys(
     settings_store: State<'_, SettingsStore>,
+    redis_manager: State<'_, RedisConnectionManager>,
     request: ListRedisKeysRequest,
 ) -> Result<RedisKeyListResponse, String> {
     let mut connection = load_redis_connection(settings_store.inner(), &request.connection_id)?;
     let normalized = normalize_list_redis_keys_request(&request);
     connection.database = normalized.database;
+    let redis_manager = redis_manager.inner().clone();
 
     tokio::task::spawn_blocking(move || {
-        let client =
-            Client::open(redis_connection_url(&connection)).map_err(|error| error.to_string())?;
-        let mut redis_connection = client.get_connection().map_err(|error| error.to_string())?;
-        let total_count = redis::cmd("DBSIZE")
-            .query::<u64>(&mut redis_connection)
-            .map_err(|error| error.to_string())?;
-        let keys = scan_redis_keys(
-            &mut redis_connection,
-            &normalized.pattern,
-            normalized.count as usize,
-        )?;
-        let metadata = load_redis_key_metadata(&mut redis_connection, &keys)?;
-        let entries = keys
-            .into_iter()
-            .zip(metadata.chunks_exact(2))
-            .map(|(key, metadata)| RedisKeyEntry {
-                key,
-                key_type: metadata[0].clone(),
-                ttl: metadata[1].parse::<i64>().unwrap_or(-2),
-            })
-            .collect();
+        with_redis_connection(&redis_manager, &connection, |redis_connection| {
+            let total_count = redis::cmd("DBSIZE")
+                .query::<u64>(redis_connection)
+                .map_err(|error| error.to_string())?;
+            let scan_result = scan_redis_keys(
+                redis_connection,
+                &normalized.pattern,
+                normalized.count as usize,
+                normalized.cursor,
+            )?;
+            let metadata = load_redis_key_metadata(redis_connection, &scan_result.keys)?;
+            let entries = scan_result
+                .keys
+                .into_iter()
+                .zip(metadata.chunks_exact(2))
+                .map(|(key, metadata)| RedisKeyEntry {
+                    key,
+                    key_type: metadata[0].clone(),
+                    ttl: metadata[1].parse::<i64>().unwrap_or(-2),
+                })
+                .collect();
 
-        Ok(RedisKeyListResponse {
-            total_count,
-            entries,
+            Ok(RedisKeyListResponse {
+                total_count,
+                entries,
+                next_cursor: scan_result.next_cursor,
+            })
         })
     })
     .await
@@ -394,17 +437,18 @@ pub async fn list_redis_keys(
 #[tauri::command]
 pub async fn get_redis_key_value(
     settings_store: State<'_, SettingsStore>,
+    redis_manager: State<'_, RedisConnectionManager>,
     request: GetRedisKeyValueRequest,
 ) -> Result<RedisKeyValueResponse, String> {
     let mut connection = load_redis_connection(settings_store.inner(), &request.connection_id)?;
     let normalized = normalize_get_redis_key_value_request(&request)?;
     connection.database = normalized.database;
+    let redis_manager = redis_manager.inner().clone();
 
     tokio::task::spawn_blocking(move || {
-        let client =
-            Client::open(redis_connection_url(&connection)).map_err(|error| error.to_string())?;
-        let mut redis_connection = client.get_connection().map_err(|error| error.to_string())?;
-        load_redis_key_value(&mut redis_connection, &normalized)
+        with_redis_connection(&redis_manager, &connection, |redis_connection| {
+            load_redis_key_value(redis_connection, &normalized)
+        })
     })
     .await
     .map_err(|error| error.to_string())?
@@ -413,21 +457,22 @@ pub async fn get_redis_key_value(
 #[tauri::command]
 pub async fn set_redis_string_value(
     settings_store: State<'_, SettingsStore>,
+    redis_manager: State<'_, RedisConnectionManager>,
     request: SetRedisStringValueRequest,
 ) -> Result<(), String> {
     let mut connection = load_redis_connection(settings_store.inner(), &request.connection_id)?;
     let normalized = normalize_set_redis_string_value_request(&request)?;
     connection.database = normalized.database;
+    let redis_manager = redis_manager.inner().clone();
 
     tokio::task::spawn_blocking(move || {
-        let client =
-            Client::open(redis_connection_url(&connection)).map_err(|error| error.to_string())?;
-        let mut redis_connection = client.get_connection().map_err(|error| error.to_string())?;
-        redis::cmd("SET")
-            .arg(&normalized.key)
-            .arg(&normalized.value)
-            .query::<()>(&mut redis_connection)
-            .map_err(|error| error.to_string())
+        with_redis_connection(&redis_manager, &connection, |redis_connection| {
+            redis::cmd("SET")
+                .arg(&normalized.key)
+                .arg(&normalized.value)
+                .query::<()>(redis_connection)
+                .map_err(|error| error.to_string())
+        })
     })
     .await
     .map_err(|error| error.to_string())?
@@ -436,23 +481,24 @@ pub async fn set_redis_string_value(
 #[tauri::command]
 pub async fn set_redis_hash_field(
     settings_store: State<'_, SettingsStore>,
+    redis_manager: State<'_, RedisConnectionManager>,
     request: SetRedisHashFieldRequest,
 ) -> Result<(), String> {
     let mut connection = load_redis_connection(settings_store.inner(), &request.connection_id)?;
     let normalized = normalize_set_redis_hash_field_request(&request)?;
     connection.database = normalized.database;
+    let redis_manager = redis_manager.inner().clone();
 
     tokio::task::spawn_blocking(move || {
-        let client =
-            Client::open(redis_connection_url(&connection)).map_err(|error| error.to_string())?;
-        let mut redis_connection = client.get_connection().map_err(|error| error.to_string())?;
-        redis::cmd("HSET")
-            .arg(&normalized.key)
-            .arg(&normalized.field)
-            .arg(&normalized.value)
-            .query::<u64>(&mut redis_connection)
-            .map(|_| ())
-            .map_err(|error| error.to_string())
+        with_redis_connection(&redis_manager, &connection, |redis_connection| {
+            redis::cmd("HSET")
+                .arg(&normalized.key)
+                .arg(&normalized.field)
+                .arg(&normalized.value)
+                .query::<u64>(redis_connection)
+                .map(|_| ())
+                .map_err(|error| error.to_string())
+        })
     })
     .await
     .map_err(|error| error.to_string())?
@@ -461,22 +507,23 @@ pub async fn set_redis_hash_field(
 #[tauri::command]
 pub async fn delete_redis_hash_field(
     settings_store: State<'_, SettingsStore>,
+    redis_manager: State<'_, RedisConnectionManager>,
     request: DeleteRedisHashFieldRequest,
 ) -> Result<(), String> {
     let mut connection = load_redis_connection(settings_store.inner(), &request.connection_id)?;
     let normalized = normalize_delete_redis_hash_field_request(&request)?;
     connection.database = normalized.database;
+    let redis_manager = redis_manager.inner().clone();
 
     tokio::task::spawn_blocking(move || {
-        let client =
-            Client::open(redis_connection_url(&connection)).map_err(|error| error.to_string())?;
-        let mut redis_connection = client.get_connection().map_err(|error| error.to_string())?;
-        redis::cmd("HDEL")
-            .arg(&normalized.key)
-            .arg(&normalized.field)
-            .query::<u64>(&mut redis_connection)
-            .map(|_| ())
-            .map_err(|error| error.to_string())
+        with_redis_connection(&redis_manager, &connection, |redis_connection| {
+            redis::cmd("HDEL")
+                .arg(&normalized.key)
+                .arg(&normalized.field)
+                .query::<u64>(redis_connection)
+                .map(|_| ())
+                .map_err(|error| error.to_string())
+        })
     })
     .await
     .map_err(|error| error.to_string())?
@@ -485,22 +532,23 @@ pub async fn delete_redis_hash_field(
 #[tauri::command]
 pub async fn set_redis_list_item(
     settings_store: State<'_, SettingsStore>,
+    redis_manager: State<'_, RedisConnectionManager>,
     request: SetRedisListItemRequest,
 ) -> Result<(), String> {
     let mut connection = load_redis_connection(settings_store.inner(), &request.connection_id)?;
     let normalized = normalize_set_redis_list_item_request(&request)?;
     connection.database = normalized.database;
+    let redis_manager = redis_manager.inner().clone();
 
     tokio::task::spawn_blocking(move || {
-        let client =
-            Client::open(redis_connection_url(&connection)).map_err(|error| error.to_string())?;
-        let mut redis_connection = client.get_connection().map_err(|error| error.to_string())?;
-        redis::cmd("LSET")
-            .arg(&normalized.key)
-            .arg(normalized.index)
-            .arg(&normalized.value)
-            .query::<()>(&mut redis_connection)
-            .map_err(|error| error.to_string())
+        with_redis_connection(&redis_manager, &connection, |redis_connection| {
+            redis::cmd("LSET")
+                .arg(&normalized.key)
+                .arg(normalized.index)
+                .arg(&normalized.value)
+                .query::<()>(redis_connection)
+                .map_err(|error| error.to_string())
+        })
     })
     .await
     .map_err(|error| error.to_string())?
@@ -509,22 +557,23 @@ pub async fn set_redis_list_item(
 #[tauri::command]
 pub async fn append_redis_list_item(
     settings_store: State<'_, SettingsStore>,
+    redis_manager: State<'_, RedisConnectionManager>,
     request: SetRedisStringValueRequest,
 ) -> Result<(), String> {
     let mut connection = load_redis_connection(settings_store.inner(), &request.connection_id)?;
     let normalized = normalize_set_redis_string_value_request(&request)?;
     connection.database = normalized.database;
+    let redis_manager = redis_manager.inner().clone();
 
     tokio::task::spawn_blocking(move || {
-        let client =
-            Client::open(redis_connection_url(&connection)).map_err(|error| error.to_string())?;
-        let mut redis_connection = client.get_connection().map_err(|error| error.to_string())?;
-        redis::cmd("RPUSH")
-            .arg(&normalized.key)
-            .arg(&normalized.value)
-            .query::<u64>(&mut redis_connection)
-            .map(|_| ())
-            .map_err(|error| error.to_string())
+        with_redis_connection(&redis_manager, &connection, |redis_connection| {
+            redis::cmd("RPUSH")
+                .arg(&normalized.key)
+                .arg(&normalized.value)
+                .query::<u64>(redis_connection)
+                .map(|_| ())
+                .map_err(|error| error.to_string())
+        })
     })
     .await
     .map_err(|error| error.to_string())?
@@ -533,30 +582,31 @@ pub async fn append_redis_list_item(
 #[tauri::command]
 pub async fn delete_redis_list_item(
     settings_store: State<'_, SettingsStore>,
+    redis_manager: State<'_, RedisConnectionManager>,
     request: DeleteRedisListItemRequest,
 ) -> Result<(), String> {
     let mut connection = load_redis_connection(settings_store.inner(), &request.connection_id)?;
     let normalized = normalize_delete_redis_list_item_request(&request)?;
     connection.database = normalized.database;
+    let redis_manager = redis_manager.inner().clone();
 
     tokio::task::spawn_blocking(move || {
-        let client =
-            Client::open(redis_connection_url(&connection)).map_err(|error| error.to_string())?;
-        let mut redis_connection = client.get_connection().map_err(|error| error.to_string())?;
-        let marker = format!("__devhub_deleted_list_item__{}__", uuid::Uuid::new_v4());
-        redis::cmd("LSET")
-            .arg(&normalized.key)
-            .arg(normalized.index)
-            .arg(&marker)
-            .query::<()>(&mut redis_connection)
-            .map_err(|error| error.to_string())?;
-        redis::cmd("LREM")
-            .arg(&normalized.key)
-            .arg(1)
-            .arg(&marker)
-            .query::<i64>(&mut redis_connection)
-            .map(|_| ())
-            .map_err(|error| error.to_string())
+        with_redis_connection(&redis_manager, &connection, |redis_connection| {
+            let marker = format!("__devhub_deleted_list_item__{}__", uuid::Uuid::new_v4());
+            redis::cmd("LSET")
+                .arg(&normalized.key)
+                .arg(normalized.index)
+                .arg(&marker)
+                .query::<()>(redis_connection)
+                .map_err(|error| error.to_string())?;
+            redis::cmd("LREM")
+                .arg(&normalized.key)
+                .arg(1)
+                .arg(&marker)
+                .query::<i64>(redis_connection)
+                .map(|_| ())
+                .map_err(|error| error.to_string())
+        })
     })
     .await
     .map_err(|error| error.to_string())?
@@ -565,22 +615,23 @@ pub async fn delete_redis_list_item(
 #[tauri::command]
 pub async fn add_redis_set_member(
     settings_store: State<'_, SettingsStore>,
+    redis_manager: State<'_, RedisConnectionManager>,
     request: RedisSetMemberRequest,
 ) -> Result<(), String> {
     let mut connection = load_redis_connection(settings_store.inner(), &request.connection_id)?;
     let normalized = normalize_redis_set_member_request(&request)?;
     connection.database = normalized.database;
+    let redis_manager = redis_manager.inner().clone();
 
     tokio::task::spawn_blocking(move || {
-        let client =
-            Client::open(redis_connection_url(&connection)).map_err(|error| error.to_string())?;
-        let mut redis_connection = client.get_connection().map_err(|error| error.to_string())?;
-        redis::cmd("SADD")
-            .arg(&normalized.key)
-            .arg(&normalized.member)
-            .query::<u64>(&mut redis_connection)
-            .map(|_| ())
-            .map_err(|error| error.to_string())
+        with_redis_connection(&redis_manager, &connection, |redis_connection| {
+            redis::cmd("SADD")
+                .arg(&normalized.key)
+                .arg(&normalized.member)
+                .query::<u64>(redis_connection)
+                .map(|_| ())
+                .map_err(|error| error.to_string())
+        })
     })
     .await
     .map_err(|error| error.to_string())?
@@ -589,22 +640,23 @@ pub async fn add_redis_set_member(
 #[tauri::command]
 pub async fn delete_redis_set_member(
     settings_store: State<'_, SettingsStore>,
+    redis_manager: State<'_, RedisConnectionManager>,
     request: RedisSetMemberRequest,
 ) -> Result<(), String> {
     let mut connection = load_redis_connection(settings_store.inner(), &request.connection_id)?;
     let normalized = normalize_redis_set_member_request(&request)?;
     connection.database = normalized.database;
+    let redis_manager = redis_manager.inner().clone();
 
     tokio::task::spawn_blocking(move || {
-        let client =
-            Client::open(redis_connection_url(&connection)).map_err(|error| error.to_string())?;
-        let mut redis_connection = client.get_connection().map_err(|error| error.to_string())?;
-        redis::cmd("SREM")
-            .arg(&normalized.key)
-            .arg(&normalized.member)
-            .query::<u64>(&mut redis_connection)
-            .map(|_| ())
-            .map_err(|error| error.to_string())
+        with_redis_connection(&redis_manager, &connection, |redis_connection| {
+            redis::cmd("SREM")
+                .arg(&normalized.key)
+                .arg(&normalized.member)
+                .query::<u64>(redis_connection)
+                .map(|_| ())
+                .map_err(|error| error.to_string())
+        })
     })
     .await
     .map_err(|error| error.to_string())?
@@ -613,23 +665,24 @@ pub async fn delete_redis_set_member(
 #[tauri::command]
 pub async fn set_redis_zset_member(
     settings_store: State<'_, SettingsStore>,
+    redis_manager: State<'_, RedisConnectionManager>,
     request: SetRedisZsetMemberRequest,
 ) -> Result<(), String> {
     let mut connection = load_redis_connection(settings_store.inner(), &request.connection_id)?;
     let normalized = normalize_set_redis_zset_member_request(&request)?;
     connection.database = normalized.database;
+    let redis_manager = redis_manager.inner().clone();
 
     tokio::task::spawn_blocking(move || {
-        let client =
-            Client::open(redis_connection_url(&connection)).map_err(|error| error.to_string())?;
-        let mut redis_connection = client.get_connection().map_err(|error| error.to_string())?;
-        redis::cmd("ZADD")
-            .arg(&normalized.key)
-            .arg(normalized.score)
-            .arg(&normalized.member)
-            .query::<u64>(&mut redis_connection)
-            .map(|_| ())
-            .map_err(|error| error.to_string())
+        with_redis_connection(&redis_manager, &connection, |redis_connection| {
+            redis::cmd("ZADD")
+                .arg(&normalized.key)
+                .arg(normalized.score)
+                .arg(&normalized.member)
+                .query::<u64>(redis_connection)
+                .map(|_| ())
+                .map_err(|error| error.to_string())
+        })
     })
     .await
     .map_err(|error| error.to_string())?
@@ -638,22 +691,23 @@ pub async fn set_redis_zset_member(
 #[tauri::command]
 pub async fn delete_redis_zset_member(
     settings_store: State<'_, SettingsStore>,
+    redis_manager: State<'_, RedisConnectionManager>,
     request: DeleteRedisZsetMemberRequest,
 ) -> Result<(), String> {
     let mut connection = load_redis_connection(settings_store.inner(), &request.connection_id)?;
     let normalized = normalize_delete_redis_zset_member_request(&request)?;
     connection.database = normalized.database;
+    let redis_manager = redis_manager.inner().clone();
 
     tokio::task::spawn_blocking(move || {
-        let client =
-            Client::open(redis_connection_url(&connection)).map_err(|error| error.to_string())?;
-        let mut redis_connection = client.get_connection().map_err(|error| error.to_string())?;
-        redis::cmd("ZREM")
-            .arg(&normalized.key)
-            .arg(&normalized.member)
-            .query::<u64>(&mut redis_connection)
-            .map(|_| ())
-            .map_err(|error| error.to_string())
+        with_redis_connection(&redis_manager, &connection, |redis_connection| {
+            redis::cmd("ZREM")
+                .arg(&normalized.key)
+                .arg(&normalized.member)
+                .query::<u64>(redis_connection)
+                .map(|_| ())
+                .map_err(|error| error.to_string())
+        })
     })
     .await
     .map_err(|error| error.to_string())?
@@ -662,33 +716,34 @@ pub async fn delete_redis_zset_member(
 #[tauri::command]
 pub async fn create_redis_key(
     settings_store: State<'_, SettingsStore>,
+    redis_manager: State<'_, RedisConnectionManager>,
     request: CreateRedisKeyRequest,
 ) -> Result<(), String> {
     let mut connection = load_redis_connection(settings_store.inner(), &request.connection_id)?;
     let normalized = normalize_create_redis_key_request(&request)?;
     connection.database = normalized.database;
+    let redis_manager = redis_manager.inner().clone();
 
     tokio::task::spawn_blocking(move || {
-        let client =
-            Client::open(redis_connection_url(&connection)).map_err(|error| error.to_string())?;
-        let mut redis_connection = client.get_connection().map_err(|error| error.to_string())?;
-        let exists = redis::cmd("EXISTS")
-            .arg(&normalized.key)
-            .query::<bool>(&mut redis_connection)
-            .map_err(|error| error.to_string())?;
-        if exists {
-            return Err("redis key already exists".to_string());
-        }
-
-        create_redis_key_value(&mut redis_connection, &normalized)?;
-        if let Some(ttl_seconds) = normalized.ttl_seconds {
-            redis::cmd("EXPIRE")
+        with_redis_connection(&redis_manager, &connection, |redis_connection| {
+            let exists = redis::cmd("EXISTS")
                 .arg(&normalized.key)
-                .arg(ttl_seconds)
-                .query::<bool>(&mut redis_connection)
+                .query::<bool>(redis_connection)
                 .map_err(|error| error.to_string())?;
-        }
-        Ok(())
+            if exists {
+                return Err("redis key already exists".to_string());
+            }
+
+            create_redis_key_value(redis_connection, &normalized)?;
+            if let Some(ttl_seconds) = normalized.ttl_seconds {
+                redis::cmd("EXPIRE")
+                    .arg(&normalized.key)
+                    .arg(ttl_seconds)
+                    .query::<bool>(redis_connection)
+                    .map_err(|error| error.to_string())?;
+            }
+            Ok(())
+        })
     })
     .await
     .map_err(|error| error.to_string())?
@@ -697,21 +752,22 @@ pub async fn create_redis_key(
 #[tauri::command]
 pub async fn delete_redis_key(
     settings_store: State<'_, SettingsStore>,
+    redis_manager: State<'_, RedisConnectionManager>,
     request: RedisKeyRequest,
 ) -> Result<(), String> {
     let mut connection = load_redis_connection(settings_store.inner(), &request.connection_id)?;
     let normalized = normalize_redis_key_request(&request)?;
     connection.database = normalized.database;
+    let redis_manager = redis_manager.inner().clone();
 
     tokio::task::spawn_blocking(move || {
-        let client =
-            Client::open(redis_connection_url(&connection)).map_err(|error| error.to_string())?;
-        let mut redis_connection = client.get_connection().map_err(|error| error.to_string())?;
-        redis::cmd("DEL")
-            .arg(&normalized.key)
-            .query::<u64>(&mut redis_connection)
-            .map(|_| ())
-            .map_err(|error| error.to_string())
+        with_redis_connection(&redis_manager, &connection, |redis_connection| {
+            redis::cmd("DEL")
+                .arg(&normalized.key)
+                .query::<u64>(redis_connection)
+                .map(|_| ())
+                .map_err(|error| error.to_string())
+        })
     })
     .await
     .map_err(|error| error.to_string())?
@@ -720,24 +776,25 @@ pub async fn delete_redis_key(
 #[tauri::command]
 pub async fn delete_redis_keys(
     settings_store: State<'_, SettingsStore>,
+    redis_manager: State<'_, RedisConnectionManager>,
     request: RedisKeysRequest,
 ) -> Result<(), String> {
     let mut connection = load_redis_connection(settings_store.inner(), &request.connection_id)?;
     let normalized = normalize_redis_keys_request(&request)?;
     connection.database = normalized.database;
+    let redis_manager = redis_manager.inner().clone();
 
     tokio::task::spawn_blocking(move || {
-        let client =
-            Client::open(redis_connection_url(&connection)).map_err(|error| error.to_string())?;
-        let mut redis_connection = client.get_connection().map_err(|error| error.to_string())?;
-        let mut command = redis::cmd("DEL");
-        for key in &normalized.keys {
-            command.arg(key);
-        }
-        command
-            .query::<u64>(&mut redis_connection)
-            .map(|_| ())
-            .map_err(|error| error.to_string())
+        with_redis_connection(&redis_manager, &connection, |redis_connection| {
+            let mut command = redis::cmd("DEL");
+            for key in &normalized.keys {
+                command.arg(key);
+            }
+            command
+                .query::<u64>(redis_connection)
+                .map(|_| ())
+                .map_err(|error| error.to_string())
+        })
     })
     .await
     .map_err(|error| error.to_string())?
@@ -791,22 +848,23 @@ fn create_redis_key_value(
 #[tauri::command]
 pub async fn set_redis_key_ttl(
     settings_store: State<'_, SettingsStore>,
+    redis_manager: State<'_, RedisConnectionManager>,
     request: SetRedisKeyTtlRequest,
 ) -> Result<(), String> {
     let mut connection = load_redis_connection(settings_store.inner(), &request.connection_id)?;
     let normalized = normalize_set_redis_key_ttl_request(&request)?;
     connection.database = normalized.database;
+    let redis_manager = redis_manager.inner().clone();
 
     tokio::task::spawn_blocking(move || {
-        let client =
-            Client::open(redis_connection_url(&connection)).map_err(|error| error.to_string())?;
-        let mut redis_connection = client.get_connection().map_err(|error| error.to_string())?;
-        redis::cmd("EXPIRE")
-            .arg(&normalized.key)
-            .arg(normalized.ttl_seconds)
-            .query::<bool>(&mut redis_connection)
-            .map(|_| ())
-            .map_err(|error| error.to_string())
+        with_redis_connection(&redis_manager, &connection, |redis_connection| {
+            redis::cmd("EXPIRE")
+                .arg(&normalized.key)
+                .arg(normalized.ttl_seconds)
+                .query::<bool>(redis_connection)
+                .map(|_| ())
+                .map_err(|error| error.to_string())
+        })
     })
     .await
     .map_err(|error| error.to_string())?
@@ -815,24 +873,25 @@ pub async fn set_redis_key_ttl(
 #[tauri::command]
 pub async fn set_redis_keys_ttl(
     settings_store: State<'_, SettingsStore>,
+    redis_manager: State<'_, RedisConnectionManager>,
     request: SetRedisKeysTtlRequest,
 ) -> Result<(), String> {
     let mut connection = load_redis_connection(settings_store.inner(), &request.connection_id)?;
     let normalized = normalize_set_redis_keys_ttl_request(&request)?;
     connection.database = normalized.database;
+    let redis_manager = redis_manager.inner().clone();
 
     tokio::task::spawn_blocking(move || {
-        let client =
-            Client::open(redis_connection_url(&connection)).map_err(|error| error.to_string())?;
-        let mut redis_connection = client.get_connection().map_err(|error| error.to_string())?;
-        let mut pipeline = redis::pipe();
-        for key in &normalized.keys {
-            pipeline.cmd("EXPIRE").arg(key).arg(normalized.ttl_seconds);
-        }
-        pipeline
-            .query::<Vec<bool>>(&mut redis_connection)
-            .map(|_| ())
-            .map_err(|error| error.to_string())
+        with_redis_connection(&redis_manager, &connection, |redis_connection| {
+            let mut pipeline = redis::pipe();
+            for key in &normalized.keys {
+                pipeline.cmd("EXPIRE").arg(key).arg(normalized.ttl_seconds);
+            }
+            pipeline
+                .query::<Vec<bool>>(redis_connection)
+                .map(|_| ())
+                .map_err(|error| error.to_string())
+        })
     })
     .await
     .map_err(|error| error.to_string())?
@@ -841,21 +900,22 @@ pub async fn set_redis_keys_ttl(
 #[tauri::command]
 pub async fn persist_redis_key(
     settings_store: State<'_, SettingsStore>,
+    redis_manager: State<'_, RedisConnectionManager>,
     request: RedisKeyRequest,
 ) -> Result<(), String> {
     let mut connection = load_redis_connection(settings_store.inner(), &request.connection_id)?;
     let normalized = normalize_redis_key_request(&request)?;
     connection.database = normalized.database;
+    let redis_manager = redis_manager.inner().clone();
 
     tokio::task::spawn_blocking(move || {
-        let client =
-            Client::open(redis_connection_url(&connection)).map_err(|error| error.to_string())?;
-        let mut redis_connection = client.get_connection().map_err(|error| error.to_string())?;
-        redis::cmd("PERSIST")
-            .arg(&normalized.key)
-            .query::<bool>(&mut redis_connection)
-            .map(|_| ())
-            .map_err(|error| error.to_string())
+        with_redis_connection(&redis_manager, &connection, |redis_connection| {
+            redis::cmd("PERSIST")
+                .arg(&normalized.key)
+                .query::<bool>(redis_connection)
+                .map(|_| ())
+                .map_err(|error| error.to_string())
+        })
     })
     .await
     .map_err(|error| error.to_string())?
@@ -864,24 +924,25 @@ pub async fn persist_redis_key(
 #[tauri::command]
 pub async fn persist_redis_keys(
     settings_store: State<'_, SettingsStore>,
+    redis_manager: State<'_, RedisConnectionManager>,
     request: RedisKeysRequest,
 ) -> Result<(), String> {
     let mut connection = load_redis_connection(settings_store.inner(), &request.connection_id)?;
     let normalized = normalize_redis_keys_request(&request)?;
     connection.database = normalized.database;
+    let redis_manager = redis_manager.inner().clone();
 
     tokio::task::spawn_blocking(move || {
-        let client =
-            Client::open(redis_connection_url(&connection)).map_err(|error| error.to_string())?;
-        let mut redis_connection = client.get_connection().map_err(|error| error.to_string())?;
-        let mut pipeline = redis::pipe();
-        for key in &normalized.keys {
-            pipeline.cmd("PERSIST").arg(key);
-        }
-        pipeline
-            .query::<Vec<bool>>(&mut redis_connection)
-            .map(|_| ())
-            .map_err(|error| error.to_string())
+        with_redis_connection(&redis_manager, &connection, |redis_connection| {
+            let mut pipeline = redis::pipe();
+            for key in &normalized.keys {
+                pipeline.cmd("PERSIST").arg(key);
+            }
+            pipeline
+                .query::<Vec<bool>>(redis_connection)
+                .map(|_| ())
+                .map_err(|error| error.to_string())
+        })
     })
     .await
     .map_err(|error| error.to_string())?
@@ -890,26 +951,27 @@ pub async fn persist_redis_keys(
 #[tauri::command]
 pub async fn rename_redis_key(
     settings_store: State<'_, SettingsStore>,
+    redis_manager: State<'_, RedisConnectionManager>,
     request: RenameRedisKeyRequest,
 ) -> Result<(), String> {
     let mut connection = load_redis_connection(settings_store.inner(), &request.connection_id)?;
     let normalized = normalize_rename_redis_key_request(&request)?;
     connection.database = normalized.database;
+    let redis_manager = redis_manager.inner().clone();
 
     tokio::task::spawn_blocking(move || {
-        let client =
-            Client::open(redis_connection_url(&connection)).map_err(|error| error.to_string())?;
-        let mut redis_connection = client.get_connection().map_err(|error| error.to_string())?;
-        let renamed = redis::cmd("RENAMENX")
-            .arg(&normalized.key)
-            .arg(&normalized.new_key)
-            .query::<bool>(&mut redis_connection)
-            .map_err(|error| error.to_string())?;
-        if renamed {
-            Ok(())
-        } else {
-            Err("redis target key already exists".to_string())
-        }
+        with_redis_connection(&redis_manager, &connection, |redis_connection| {
+            let renamed = redis::cmd("RENAMENX")
+                .arg(&normalized.key)
+                .arg(&normalized.new_key)
+                .query::<bool>(redis_connection)
+                .map_err(|error| error.to_string())?;
+            if renamed {
+                Ok(())
+            } else {
+                Err("redis target key already exists".to_string())
+            }
+        })
     })
     .await
     .map_err(|error| error.to_string())?
@@ -1094,13 +1156,25 @@ fn scan_redis_keys(
     redis_connection: &mut redis::Connection,
     pattern: &str,
     limit: usize,
-) -> Result<Vec<String>, String> {
-    let mut cursor = 0_u64;
+    start_cursor: u64,
+) -> Result<RedisKeyScanResult, String> {
+    scan_redis_keys_from_cursor(redis_connection, pattern, limit, start_cursor, 20)
+}
+
+fn scan_redis_keys_from_cursor(
+    redis_connection: &mut redis::Connection,
+    pattern: &str,
+    limit: usize,
+    start_cursor: u64,
+    max_rounds: usize,
+) -> Result<RedisKeyScanResult, String> {
+    let mut cursor = start_cursor;
     let mut keys = Vec::new();
+    let mut rounds = 0;
 
     loop {
         let remaining = limit.saturating_sub(keys.len());
-        if remaining == 0 {
+        if remaining == 0 || rounds >= max_rounds {
             break;
         }
 
@@ -1115,14 +1189,19 @@ fn scan_redis_keys(
             .map_err(|error| error.to_string())?;
 
         keys.append(&mut batch);
+        rounds += 1;
         if next_cursor == 0 {
+            cursor = 0;
             break;
         }
         cursor = next_cursor;
     }
 
     keys.truncate(limit);
-    Ok(keys)
+    Ok(RedisKeyScanResult {
+        keys,
+        next_cursor: cursor,
+    })
 }
 
 fn load_redis_key_metadata(
@@ -1142,6 +1221,25 @@ fn load_redis_key_metadata(
     pipeline
         .query::<Vec<String>>(redis_connection)
         .map_err(|error| error.to_string())
+}
+
+fn with_redis_connection<T>(
+    manager: &RedisConnectionManager,
+    connection: &RedisConnectionSettings,
+    action: impl FnOnce(&mut redis::Connection) -> Result<T, String>,
+) -> Result<T, String> {
+    let url = redis_connection_url(connection);
+    let connection = manager.get_or_connect(&url)?;
+    let result = {
+        let mut redis_connection = connection
+            .lock()
+            .map_err(|_| "redis connection lock poisoned".to_string())?;
+        action(&mut redis_connection)
+    };
+    if result.is_err() {
+        manager.remove(&url);
+    }
+    result
 }
 
 async fn test_redis_connection_value(
@@ -1208,6 +1306,7 @@ fn normalize_list_redis_keys_request(
             .unwrap_or("*")
             .to_string(),
         count: request.count.unwrap_or(5000).clamp(1, 50_000),
+        cursor: request.cursor.unwrap_or(0),
     }
 }
 
@@ -1573,10 +1672,10 @@ mod tests {
         redis_connection_url, CreateRedisKeyRequest, DeleteRedisHashFieldRequest,
         DeleteRedisListItemRequest, DeleteRedisZsetMemberRequest, GetRedisKeyValueRequest,
         ListRedisKeysRequest, NormalizedCreateRedisKeyValue, RedisHashEntryRequest,
-        RedisKeyRequest, RedisKeyValue, RedisKeysRequest, RedisSetMemberRequest,
-        RedisZsetEntryRequest, RenameRedisKeyRequest, SetRedisHashFieldRequest,
-        SetRedisKeyTtlRequest, SetRedisKeysTtlRequest, SetRedisListItemRequest,
-        SetRedisStringValueRequest, SetRedisZsetMemberRequest,
+        RedisKeyListResponse, RedisKeyRequest, RedisKeyValue, RedisKeysRequest,
+        RedisSetMemberRequest, RedisZsetEntryRequest, RenameRedisKeyRequest,
+        SetRedisHashFieldRequest, SetRedisKeyTtlRequest, SetRedisKeysTtlRequest,
+        SetRedisListItemRequest, SetRedisStringValueRequest, SetRedisZsetMemberRequest,
     };
     use crate::models::settings::RedisConnectionSettings;
 
@@ -1623,6 +1722,7 @@ mod tests {
             database: 2,
             pattern: Some("   ".to_string()),
             count: None,
+            cursor: None,
         };
 
         let normalized = normalize_list_redis_keys_request(&request);
@@ -1630,6 +1730,7 @@ mod tests {
         assert_eq!(normalized.database, 2);
         assert_eq!(normalized.pattern, "*");
         assert_eq!(normalized.count, 5000);
+        assert_eq!(normalized.cursor, 0);
     }
 
     #[test]
@@ -1639,12 +1740,14 @@ mod tests {
             database: 0,
             pattern: Some("user:*".to_string()),
             count: Some(100_000),
+            cursor: Some(42),
         };
 
         let normalized = normalize_list_redis_keys_request(&request);
 
         assert_eq!(normalized.pattern, "user:*");
         assert_eq!(normalized.count, 50_000);
+        assert_eq!(normalized.cursor, 42);
     }
 
     #[test]
@@ -1709,6 +1812,19 @@ mod tests {
             serde_json::to_string(&value).unwrap(),
             r#"{"kind":"string","value":"hello","truncated":false,"size":5}"#
         );
+    }
+
+    #[test]
+    fn serializes_redis_key_list_next_cursor() {
+        let response = RedisKeyListResponse {
+            total_count: 10,
+            entries: Vec::new(),
+            next_cursor: 42,
+        };
+
+        let serialized = serde_json::to_string(&response).unwrap();
+
+        assert!(serialized.contains("\"next_cursor\":42"));
     }
 
     #[test]

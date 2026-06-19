@@ -7,6 +7,7 @@ export interface RedisKeyEntry {
 export interface RedisKeyListResponse {
   total_count: number;
   entries: RedisKeyEntry[];
+  next_cursor?: number;
 }
 
 export type RedisKeyValue =
