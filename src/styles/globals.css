@@ -1158,6 +1158,82 @@ p {
   color: var(--muted);
 }
 
+.redis-key-dialog {
+  width: min(760px, calc(100vw - 64px));
+}
+
+.redis-key-dialog .connection-dialog__header {
+  margin: 0;
+}
+
+.redis-key-dialog__body {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+}
+
+.redis-key-dialog__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  color: var(--muted);
+  font-size: var(--ui-font-size-small, 15px);
+}
+
+.redis-key-dialog__pre {
+  max-height: min(56vh, 520px);
+  margin: 0;
+  padding: 10px;
+  overflow: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: var(--panel-soft);
+  color: var(--text);
+  font-family: var(--terminal-font-family);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.redis-key-dialog__table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.redis-key-dialog__table th,
+.redis-key-dialog__table td {
+  padding: 7px 8px;
+  border-bottom: 1px solid var(--border-subtle);
+  text-align: left;
+  vertical-align: top;
+}
+
+.redis-key-dialog__table th {
+  width: 34%;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.redis-key-dialog__list {
+  max-height: min(56vh, 520px);
+  margin: 0;
+  padding: 8px 8px 8px 28px;
+  overflow: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: var(--panel-soft);
+}
+
+.redis-key-dialog__list li {
+  padding: 3px 0;
+  font-family: var(--terminal-font-family);
+}
+
+.redis-key-dialog__hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--ui-font-size-small, 15px);
+}
+
 .sftp-table-scroll {
   position: relative;
   display: flex;

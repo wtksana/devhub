@@ -14,6 +14,15 @@ pub struct ListRedisKeysRequest {
     pub count: Option<u32>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct GetRedisKeyValueRequest {
+    pub connection_id: String,
+    pub database: u16,
+    pub key: String,
+    pub limit: Option<u32>,
+    pub max_string_bytes: Option<u32>,
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct RedisKeyEntry {
     pub key: String,
@@ -27,11 +36,62 @@ pub struct RedisKeyListResponse {
     pub entries: Vec<RedisKeyEntry>,
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct RedisKeyValueResponse {
+    pub key: String,
+    pub key_type: String,
+    pub ttl: i64,
+    pub value: RedisKeyValue,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RedisKeyValue {
+    String {
+        value: String,
+        truncated: bool,
+        size: u64,
+    },
+    Hash {
+        entries: Vec<(String, String)>,
+        truncated: bool,
+        length: u64,
+    },
+    List {
+        items: Vec<String>,
+        truncated: bool,
+        length: u64,
+    },
+    Set {
+        members: Vec<String>,
+        truncated: bool,
+        length: u64,
+    },
+    Zset {
+        entries: Vec<(String, f64)>,
+        truncated: bool,
+        length: u64,
+    },
+    None {
+        value: Option<String>,
+        truncated: bool,
+        size: u64,
+    },
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct NormalizedListRedisKeysRequest {
     database: u16,
     pattern: String,
     count: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NormalizedGetRedisKeyValueRequest {
+    database: u16,
+    key: String,
+    limit: u32,
+    max_string_bytes: u32,
 }
 
 #[tauri::command]
@@ -89,6 +149,200 @@ pub async fn list_redis_keys(
     })
     .await
     .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn get_redis_key_value(
+    settings_store: State<'_, SettingsStore>,
+    request: GetRedisKeyValueRequest,
+) -> Result<RedisKeyValueResponse, String> {
+    let mut connection = load_redis_connection(settings_store.inner(), &request.connection_id)?;
+    let normalized = normalize_get_redis_key_value_request(&request)?;
+    connection.database = normalized.database;
+
+    tokio::task::spawn_blocking(move || {
+        let client =
+            Client::open(redis_connection_url(&connection)).map_err(|error| error.to_string())?;
+        let mut redis_connection = client.get_connection().map_err(|error| error.to_string())?;
+        load_redis_key_value(&mut redis_connection, &normalized)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+fn load_redis_key_value(
+    redis_connection: &mut redis::Connection,
+    request: &NormalizedGetRedisKeyValueRequest,
+) -> Result<RedisKeyValueResponse, String> {
+    let key_type = redis::cmd("TYPE")
+        .arg(&request.key)
+        .query::<String>(redis_connection)
+        .map_err(|error| error.to_string())?;
+    let ttl = redis::cmd("TTL")
+        .arg(&request.key)
+        .query::<i64>(redis_connection)
+        .map_err(|error| error.to_string())?;
+    let value = match key_type.as_str() {
+        "string" => {
+            load_redis_string_value(redis_connection, &request.key, request.max_string_bytes)?
+        }
+        "hash" => load_redis_hash_value(redis_connection, &request.key, request.limit)?,
+        "list" => load_redis_list_value(redis_connection, &request.key, request.limit)?,
+        "set" => load_redis_set_value(redis_connection, &request.key, request.limit)?,
+        "zset" => load_redis_zset_value(redis_connection, &request.key, request.limit)?,
+        "none" => RedisKeyValue::None {
+            value: None,
+            truncated: false,
+            size: 0,
+        },
+        other => return Err(format!("unsupported redis key type: {other}")),
+    };
+
+    Ok(RedisKeyValueResponse {
+        key: request.key.clone(),
+        key_type,
+        ttl,
+        value,
+    })
+}
+
+fn load_redis_string_value(
+    redis_connection: &mut redis::Connection,
+    key: &str,
+    max_string_bytes: u32,
+) -> Result<RedisKeyValue, String> {
+    let size = redis::cmd("STRLEN")
+        .arg(key)
+        .query::<u64>(redis_connection)
+        .map_err(|error| error.to_string())?;
+    let end = max_string_bytes.saturating_sub(1);
+    let bytes = redis::cmd("GETRANGE")
+        .arg(key)
+        .arg(0)
+        .arg(end)
+        .query::<Vec<u8>>(redis_connection)
+        .map_err(|error| error.to_string())?;
+
+    Ok(RedisKeyValue::String {
+        value: String::from_utf8_lossy(&bytes).into_owned(),
+        truncated: size > u64::from(max_string_bytes),
+        size,
+    })
+}
+
+fn load_redis_hash_value(
+    redis_connection: &mut redis::Connection,
+    key: &str,
+    limit: u32,
+) -> Result<RedisKeyValue, String> {
+    let length = redis::cmd("HLEN")
+        .arg(key)
+        .query::<u64>(redis_connection)
+        .map_err(|error| error.to_string())?;
+    let mut entries = Vec::new();
+    let mut cursor = 0_u64;
+    while entries.len() < limit as usize {
+        let (next_cursor, mut batch): (u64, Vec<(String, String)>) = redis::cmd("HSCAN")
+            .arg(key)
+            .cursor_arg(cursor)
+            .arg("COUNT")
+            .arg(limit)
+            .query(redis_connection)
+            .map_err(|error| error.to_string())?;
+        entries.append(&mut batch);
+        if next_cursor == 0 {
+            break;
+        }
+        cursor = next_cursor;
+    }
+    entries.truncate(limit as usize);
+
+    Ok(RedisKeyValue::Hash {
+        truncated: length > entries.len() as u64,
+        entries,
+        length,
+    })
+}
+
+fn load_redis_list_value(
+    redis_connection: &mut redis::Connection,
+    key: &str,
+    limit: u32,
+) -> Result<RedisKeyValue, String> {
+    let length = redis::cmd("LLEN")
+        .arg(key)
+        .query::<u64>(redis_connection)
+        .map_err(|error| error.to_string())?;
+    let items = redis::cmd("LRANGE")
+        .arg(key)
+        .arg(0)
+        .arg(limit.saturating_sub(1))
+        .query::<Vec<String>>(redis_connection)
+        .map_err(|error| error.to_string())?;
+
+    Ok(RedisKeyValue::List {
+        truncated: length > items.len() as u64,
+        items,
+        length,
+    })
+}
+
+fn load_redis_set_value(
+    redis_connection: &mut redis::Connection,
+    key: &str,
+    limit: u32,
+) -> Result<RedisKeyValue, String> {
+    let length = redis::cmd("SCARD")
+        .arg(key)
+        .query::<u64>(redis_connection)
+        .map_err(|error| error.to_string())?;
+    let mut members = Vec::new();
+    let mut cursor = 0_u64;
+    while members.len() < limit as usize {
+        let (next_cursor, mut batch): (u64, Vec<String>) = redis::cmd("SSCAN")
+            .arg(key)
+            .cursor_arg(cursor)
+            .arg("COUNT")
+            .arg(limit)
+            .query(redis_connection)
+            .map_err(|error| error.to_string())?;
+        members.append(&mut batch);
+        if next_cursor == 0 {
+            break;
+        }
+        cursor = next_cursor;
+    }
+    members.truncate(limit as usize);
+
+    Ok(RedisKeyValue::Set {
+        truncated: length > members.len() as u64,
+        members,
+        length,
+    })
+}
+
+fn load_redis_zset_value(
+    redis_connection: &mut redis::Connection,
+    key: &str,
+    limit: u32,
+) -> Result<RedisKeyValue, String> {
+    let length = redis::cmd("ZCARD")
+        .arg(key)
+        .query::<u64>(redis_connection)
+        .map_err(|error| error.to_string())?;
+    let entries = redis::cmd("ZRANGE")
+        .arg(key)
+        .arg(0)
+        .arg(limit.saturating_sub(1))
+        .arg("WITHSCORES")
+        .query::<Vec<(String, f64)>>(redis_connection)
+        .map_err(|error| error.to_string())?;
+
+    Ok(RedisKeyValue::Zset {
+        truncated: length > entries.len() as u64,
+        entries,
+        length,
+    })
 }
 
 fn scan_redis_keys(
@@ -212,9 +466,31 @@ fn normalize_list_redis_keys_request(
     }
 }
 
+fn normalize_get_redis_key_value_request(
+    request: &GetRedisKeyValueRequest,
+) -> Result<NormalizedGetRedisKeyValueRequest, String> {
+    let key = request.key.trim();
+    if key.is_empty() {
+        return Err("redis key is required".to_string());
+    }
+
+    Ok(NormalizedGetRedisKeyValueRequest {
+        database: request.database,
+        key: key.to_string(),
+        limit: request.limit.unwrap_or(500).clamp(1, 5_000),
+        max_string_bytes: request
+            .max_string_bytes
+            .unwrap_or(5 * 1024 * 1024)
+            .clamp(1, 10 * 1024 * 1024),
+    })
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{normalize_list_redis_keys_request, redis_connection_url, ListRedisKeysRequest};
+    use super::{
+        normalize_get_redis_key_value_request, normalize_list_redis_keys_request,
+        redis_connection_url, GetRedisKeyValueRequest, ListRedisKeysRequest, RedisKeyValue,
+    };
     use crate::models::settings::RedisConnectionSettings;
 
     #[test]
@@ -282,5 +558,69 @@ mod tests {
 
         assert_eq!(normalized.pattern, "user:*");
         assert_eq!(normalized.count, 50_000);
+    }
+
+    #[test]
+    fn normalizes_redis_key_value_request_defaults() {
+        let request = GetRedisKeyValueRequest {
+            connection_id: "redis-local".to_string(),
+            database: 3,
+            key: " user:1 ".to_string(),
+            limit: None,
+            max_string_bytes: None,
+        };
+
+        let normalized = normalize_get_redis_key_value_request(&request).unwrap();
+
+        assert_eq!(normalized.database, 3);
+        assert_eq!(normalized.key, "user:1");
+        assert_eq!(normalized.limit, 500);
+        assert_eq!(normalized.max_string_bytes, 5 * 1024 * 1024);
+    }
+
+    #[test]
+    fn normalizes_redis_key_value_request_bounds() {
+        let request = GetRedisKeyValueRequest {
+            connection_id: "redis-local".to_string(),
+            database: 0,
+            key: "key".to_string(),
+            limit: Some(50_000),
+            max_string_bytes: Some(50 * 1024 * 1024),
+        };
+
+        let normalized = normalize_get_redis_key_value_request(&request).unwrap();
+
+        assert_eq!(normalized.limit, 5_000);
+        assert_eq!(normalized.max_string_bytes, 10 * 1024 * 1024);
+    }
+
+    #[test]
+    fn rejects_empty_redis_key_value_request_key() {
+        let request = GetRedisKeyValueRequest {
+            connection_id: "redis-local".to_string(),
+            database: 0,
+            key: "   ".to_string(),
+            limit: None,
+            max_string_bytes: None,
+        };
+
+        assert_eq!(
+            normalize_get_redis_key_value_request(&request).unwrap_err(),
+            "redis key is required"
+        );
+    }
+
+    #[test]
+    fn serializes_string_key_value_with_lowercase_kind() {
+        let value = RedisKeyValue::String {
+            value: "hello".to_string(),
+            truncated: false,
+            size: 5,
+        };
+
+        assert_eq!(
+            serde_json::to_string(&value).unwrap(),
+            r#"{"kind":"string","value":"hello","truncated":false,"size":5}"#
+        );
     }
 }

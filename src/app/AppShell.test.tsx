@@ -269,6 +269,19 @@ describe("AppShell", () => {
           ],
         });
       }
+      if (command === "get_redis_key_value") {
+        return Promise.resolve({
+          key: "user:1",
+          key_type: "hash",
+          ttl: -1,
+          value: {
+            kind: "hash",
+            entries: [["name", "devhub"]],
+            truncated: false,
+            length: 1,
+          },
+        });
+      }
       return Promise.resolve({ session_id: "session-1" });
     });
 

@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { useI18n } from "../../i18n/useI18n";
 import { callBackend } from "../../lib/tauri";
-import type { RedisKeyEntry, RedisKeyListResponse } from "./redisTypes";
+import type { RedisKeyEntry, RedisKeyListResponse, RedisKeyValueResponse } from "./redisTypes";
 
 interface RedisWorkspaceProps {
   connectionId: string | null;
@@ -10,6 +10,8 @@ interface RedisWorkspaceProps {
 
 const DEFAULT_LOAD_LIMIT = 5000;
 const DEFAULT_KEY_SEPARATOR = ":";
+const DEFAULT_VALUE_LIMIT = 500;
+const DEFAULT_MAX_STRING_BYTES = 5 * 1024 * 1024;
 
 interface RedisFolderNode {
   kind: "folder";
@@ -44,6 +46,12 @@ function formatTtl(ttl: number, neverExpiresText: string) {
   if (ttl === -1) return neverExpiresText;
   if (ttl === -2) return "";
   return String(ttl);
+}
+
+function formatBytes(size: number) {
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  return `${(size / 1024 / 1024).toFixed(1)} MB`;
 }
 
 function buildRedisTreeRows(keys: RedisKeyEntry[], separator: string, expandedFolders: Set<string>) {
@@ -142,6 +150,9 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => new Set());
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [keyDetail, setKeyDetail] = useState<RedisKeyValueResponse | null>(null);
+  const [keyDetailError, setKeyDetailError] = useState<string | null>(null);
+  const [isKeyDetailLoading, setIsKeyDetailLoading] = useState(false);
   const treeRows = useMemo(
     () => buildRedisTreeRows(keys, keySeparator, expandedFolders),
     [keys, keySeparator, expandedFolders],
@@ -199,6 +210,40 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
       }
       return next;
     });
+  }
+
+  async function openKeyDetail(entry: RedisKeyEntry) {
+    if (!connectionId) return;
+    setKeyDetail(null);
+    setKeyDetailError(null);
+    setIsKeyDetailLoading(true);
+    try {
+      const response = await callBackend<RedisKeyValueResponse>("get_redis_key_value", {
+        request: {
+          connection_id: connectionId,
+          database,
+          key: entry.key,
+          limit: DEFAULT_VALUE_LIMIT,
+          max_string_bytes: DEFAULT_MAX_STRING_BYTES,
+        },
+      });
+      setKeyDetail(response);
+    } catch (caught) {
+      setKeyDetailError(caught instanceof Error ? caught.message : String(caught));
+      setKeyDetail({
+        key: entry.key,
+        key_type: entry.key_type,
+        ttl: entry.ttl,
+        value: {
+          kind: "none",
+          value: null,
+          truncated: false,
+          size: 0,
+        },
+      });
+    } finally {
+      setIsKeyDetailLoading(false);
+    }
   }
 
   return (
@@ -286,7 +331,7 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
                     <td />
                   </tr>
                 ) : (
-                  <tr>
+                  <tr onDoubleClick={() => void openKeyDetail(row.entry)}>
                     <td>
                       <span className="redis-key-name" style={{ paddingLeft: `${row.depth * 18}px` }}>
                         {row.entry.key}
@@ -304,6 +349,116 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
           <p className="redis-empty">{t("redis.empty")}</p>
         ) : null}
       </div>
+      {isKeyDetailLoading || keyDetail ? (
+        <div className="connection-dialog__backdrop">
+          <section
+            className="connection-dialog redis-key-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-label={t("redis.view_key", { key: keyDetail?.key ?? "" })}
+          >
+            <header className="connection-dialog__header">
+              <h2>{t("redis.view_key", { key: keyDetail?.key ?? "" })}</h2>
+              <button type="button" aria-label={t("redis.close_key_detail")} onClick={() => setKeyDetail(null)}>
+                x
+              </button>
+            </header>
+            <div className="redis-key-dialog__body">
+              {isKeyDetailLoading ? <p role="status">{t("redis.loading_key_detail")}</p> : null}
+              {keyDetailError ? <p role="alert">{keyDetailError}</p> : null}
+              {keyDetail ? (
+                <>
+                  <div className="redis-key-dialog__meta">
+                    <span>{t("redis.key")} {keyDetail.key}</span>
+                    <span>{t("redis.type")} {keyDetail.key_type}</span>
+                    <span>{t("redis.ttl")} {formatTtl(keyDetail.ttl, t("redis.ttl_never"))}</span>
+                    {keyDetail.value.kind === "string" ? (
+                      <span>{t("redis.size")} {formatBytes(keyDetail.value.size)}</span>
+                    ) : keyDetail.value.kind !== "none" ? (
+                      <span>{t("redis.length")} {keyDetail.value.length}</span>
+                    ) : null}
+                  </div>
+                  {renderKeyDetailValue(keyDetail, t)}
+                </>
+              ) : null}
+            </div>
+          </section>
+        </div>
+      ) : null}
     </section>
   );
+}
+
+function renderKeyDetailValue(
+  detail: RedisKeyValueResponse,
+  t: ReturnType<typeof useI18n>["t"],
+) {
+  const value = detail.value;
+  if (value.kind === "string") {
+    return (
+      <>
+        {value.truncated ? <p className="redis-key-dialog__hint">{t("redis.value_truncated")}</p> : null}
+        <pre className="redis-key-dialog__pre">{value.value}</pre>
+      </>
+    );
+  }
+  if (value.kind === "hash") {
+    return (
+      <>
+        {value.truncated ? <p className="redis-key-dialog__hint">{t("redis.value_truncated")}</p> : null}
+        <table className="redis-key-dialog__table">
+          <tbody>
+            {value.entries.map(([field, fieldValue]) => (
+              <tr key={field}>
+                <th>{field}</th>
+                <td>{fieldValue}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </>
+    );
+  }
+  if (value.kind === "list") {
+    return (
+      <>
+        {value.truncated ? <p className="redis-key-dialog__hint">{t("redis.value_truncated")}</p> : null}
+        <ol className="redis-key-dialog__list">
+          {value.items.map((item, index) => (
+            <li key={`${index}:${item}`}>{item}</li>
+          ))}
+        </ol>
+      </>
+    );
+  }
+  if (value.kind === "set") {
+    return (
+      <>
+        {value.truncated ? <p className="redis-key-dialog__hint">{t("redis.value_truncated")}</p> : null}
+        <ul className="redis-key-dialog__list">
+          {value.members.map((member) => (
+            <li key={member}>{member}</li>
+          ))}
+        </ul>
+      </>
+    );
+  }
+  if (value.kind === "zset") {
+    return (
+      <>
+        {value.truncated ? <p className="redis-key-dialog__hint">{t("redis.value_truncated")}</p> : null}
+        <table className="redis-key-dialog__table">
+          <tbody>
+            {value.entries.map(([member, score]) => (
+              <tr key={member}>
+                <th>{member}</th>
+                <td>{score}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </>
+    );
+  }
+  return <p className="redis-key-dialog__hint">{t("redis.key_missing")}</p>;
 }

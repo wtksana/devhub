@@ -70,6 +70,7 @@ pub fn run() {
             commands::redis::test_redis_connection,
             commands::redis::test_redis_connection_config,
             commands::redis::list_redis_keys,
+            commands::redis::get_redis_key_value,
             commands::terminal::open_terminal,
             commands::terminal::write_terminal,
             commands::terminal::resize_terminal,

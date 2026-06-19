@@ -162,6 +162,79 @@ describe("RedisWorkspace", () => {
     expect(nestedIndex).toBeLessThan(prodIndex);
   });
 
+  it("opens a read-only Redis key detail dialog by double clicking a key row", async () => {
+    callBackendMock.mockResolvedValueOnce({
+      total_count: 1,
+      entries: [
+        { key: "user:1", key_type: "string", ttl: 3600 },
+      ],
+    });
+    callBackendMock.mockResolvedValueOnce({
+      key: "user:1",
+      key_type: "string",
+      ttl: 3600,
+      value: {
+        kind: "string",
+        value: "{\"name\":\"devhub\"}",
+        truncated: false,
+        size: 17,
+      },
+    });
+
+    renderRedisWorkspace({ connectionId: "redis-local", initialDatabase: 0 });
+
+    await userEvent.click(await screen.findByRole("button", { name: "展开 user" }));
+    await userEvent.dblClick(screen.getByText("user:1"));
+
+    expect(callBackendMock).toHaveBeenLastCalledWith("get_redis_key_value", {
+      request: {
+        connection_id: "redis-local",
+        database: 0,
+        key: "user:1",
+        limit: 500,
+        max_string_bytes: 5 * 1024 * 1024,
+      },
+    });
+    const dialog = await screen.findByRole("dialog", { name: "查看 user:1" });
+    expect(dialog).toHaveTextContent("类型 string");
+    expect(dialog).toHaveTextContent("TTL 3600");
+    expect(dialog).toHaveTextContent("大小 17 B");
+    expect(dialog).toHaveTextContent("{\"name\":\"devhub\"}");
+
+    await userEvent.click(screen.getByRole("button", { name: "关闭 Redis key 详情" }));
+    expect(screen.queryByRole("dialog", { name: "查看 user:1" })).not.toBeInTheDocument();
+  });
+
+  it("shows Redis hash key details in the read-only dialog", async () => {
+    callBackendMock.mockResolvedValueOnce({
+      total_count: 1,
+      entries: [
+        { key: "profile:1", key_type: "hash", ttl: -1 },
+      ],
+    });
+    callBackendMock.mockResolvedValueOnce({
+      key: "profile:1",
+      key_type: "hash",
+      ttl: -1,
+      value: {
+        kind: "hash",
+        entries: [["name", "devhub"]],
+        truncated: false,
+        length: 1,
+      },
+    });
+
+    renderRedisWorkspace({ connectionId: "redis-local", initialDatabase: 0 });
+
+    await userEvent.click(await screen.findByRole("button", { name: "展开 profile" }));
+    await userEvent.dblClick(screen.getByText("profile:1"));
+
+    const dialog = await screen.findByRole("dialog", { name: "查看 profile:1" });
+    expect(dialog).toHaveTextContent("长度 1");
+    expect(dialog).toHaveTextContent("name");
+    expect(dialog).toHaveTextContent("devhub");
+  });
+
   it("shows an empty state and load errors", async () => {
     callBackendMock.mockResolvedValueOnce({ total_count: 0, entries: [] });
 
