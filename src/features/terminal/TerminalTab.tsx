@@ -166,7 +166,7 @@ export function TerminalTab({ connectionId, fontFamily, fontSize, theme, isActiv
       fontFamily: `${fontFamily}, Consolas, monospace`,
       fontSize,
       theme: terminalThemes[theme],
-      convertEol: true,
+      convertEol: false,
     });
     terminalRef.current = terminal;
     updateContainerTheme(theme);
@@ -256,7 +256,7 @@ export function TerminalTab({ connectionId, fontFamily, fontSize, theme, isActiv
           }
         }
         pendingOutput = [];
-        fitAndResizeBackend();
+        scheduleFit();
       } catch (caught: unknown) {
         terminal.writeln(`[devhub] ${caught instanceof Error ? caught.message : String(caught)}`);
       }

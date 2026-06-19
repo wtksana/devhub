@@ -207,6 +207,19 @@ describe("TerminalTab", () => {
     );
   });
 
+  it("keeps raw terminal control sequences compatible with full-screen programs", () => {
+    callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
+    listenBackendMock.mockResolvedValueOnce(vi.fn());
+
+    renderTerminalTab({ connectionId: "prod-web-01", fontFamily: "Maple Mono", fontSize: 16, theme: "dark", isActive: true });
+
+    expect(vi.mocked(Terminal)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        convertEol: false,
+      }),
+    );
+  });
+
   it("updates xterm theme without reconnecting the terminal session", async () => {
     const unlisten = vi.fn();
     callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
