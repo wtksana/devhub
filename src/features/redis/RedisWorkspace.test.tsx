@@ -603,6 +603,46 @@ describe("RedisWorkspace", () => {
     expect(screen.getByText("user:1")).toBeInTheDocument();
   });
 
+  it("creates a Redis set key with item rows from the toolbar", async () => {
+    callBackendMock.mockResolvedValueOnce({ total_count: 0, entries: [] });
+    callBackendMock.mockResolvedValueOnce(undefined);
+    callBackendMock.mockResolvedValueOnce({
+      total_count: 1,
+      entries: [
+        { key: "tags", key_type: "set", ttl: -1 },
+      ],
+    });
+
+    renderRedisWorkspace({ connectionId: "redis-local", initialDatabase: 0 });
+
+    await waitFor(() => expect(callBackendMock).toHaveBeenCalledTimes(1));
+    await userEvent.click(screen.getByRole("button", { name: "新建 key" }));
+    const dialog = screen.getByRole("dialog", { name: "新建 Redis key" });
+    await userEvent.type(within(dialog).getByLabelText("Key 名称"), "tags");
+    await userEvent.selectOptions(within(dialog).getByLabelText("类型"), "set");
+    await userEvent.type(within(dialog).getByLabelText("成员"), "dev");
+    await userEvent.click(within(dialog).getByRole("button", { name: "添加成员" }));
+    const memberInputs = within(dialog).getAllByLabelText("成员");
+    await userEvent.type(memberInputs[1], "prod");
+    await userEvent.click(within(dialog).getAllByRole("button", { name: "删除条目" })[0]);
+    await userEvent.click(within(dialog).getByRole("button", { name: "确认" }));
+
+    expect(callBackendMock).toHaveBeenCalledWith("create_redis_key", {
+      request: {
+        connection_id: "redis-local",
+        database: 0,
+        key: "tags",
+        key_type: "set",
+        ttl_seconds: null,
+        string_value: "",
+        hash_entries: [{ field: "", value: "" }],
+        list_items: [""],
+        set_members: ["prod"],
+        zset_entries: [{ member: "", score: "0" }],
+      },
+    });
+  });
+
   it("shows an empty state and load errors", async () => {
     callBackendMock.mockResolvedValueOnce({ total_count: 0, entries: [] });
 

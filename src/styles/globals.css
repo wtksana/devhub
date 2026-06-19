@@ -1325,6 +1325,17 @@ p {
   width: 100%;
 }
 
+.redis-create-dialog__single-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 28px;
+  align-items: end;
+  gap: 10px;
+}
+
+.redis-create-dialog__single-row input {
+  width: 100%;
+}
+
 .redis-create-dialog__remove-button {
   width: 28px;
   height: 28px;

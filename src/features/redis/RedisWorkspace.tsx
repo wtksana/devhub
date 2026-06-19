@@ -1006,24 +1006,57 @@ function renderCreateKeyValueEditor(
 
   const isList = draft.keyType === "list";
   const label = isList ? t("redis.item") : t("redis.member");
-  const value = isList ? draft.listItems.join("\n") : draft.setMembers.join("\n");
+  const items = isList ? draft.listItems : draft.setMembers;
   return (
-    <label>
-      <span>{label}</span>
-      <textarea
-        className="redis-create-dialog__textarea"
-        aria-label={label}
-        value={value}
-        onChange={(event) => {
-          const lines = event.target.value.split("\n");
-          setDraft((current) => (
-            isList
-              ? { ...current, listItems: lines }
-              : { ...current, setMembers: lines }
-          ));
-        }}
-      />
-    </label>
+    <div className="redis-create-dialog__rows">
+      {items.map((value, index) => (
+        <div className="redis-create-dialog__single-row" key={index}>
+          <label>
+            <input
+              aria-label={label}
+              placeholder={label}
+              value={value}
+              onChange={(event) => setDraft((current) => {
+                const currentItems = isList ? current.listItems : current.setMembers;
+                const nextItems = currentItems.map((item, itemIndex) => (
+                  itemIndex === index ? event.target.value : item
+                ));
+                return isList
+                  ? { ...current, listItems: nextItems }
+                  : { ...current, setMembers: nextItems };
+              })}
+            />
+          </label>
+          <button
+            type="button"
+            className="redis-create-dialog__remove-button"
+            aria-label={t("redis.remove_entry")}
+            onClick={() => setDraft((current) => {
+              const currentItems = isList ? current.listItems : current.setMembers;
+              const nextItems = currentItems.length > 1
+                ? currentItems.filter((_, itemIndex) => itemIndex !== index)
+                : [""];
+              return isList
+                ? { ...current, listItems: nextItems }
+                : { ...current, setMembers: nextItems };
+            })}
+          >
+            -
+          </button>
+        </div>
+      ))}
+      <button
+        type="button"
+        className="redis-create-dialog__add-button"
+        onClick={() => setDraft((current) => (
+          isList
+            ? { ...current, listItems: [...current.listItems, ""] }
+            : { ...current, setMembers: [...current.setMembers, ""] }
+        ))}
+      >
+        {isList ? t("redis.add_item") : t("redis.add_member")}
+      </button>
+    </div>
   );
 }
 
