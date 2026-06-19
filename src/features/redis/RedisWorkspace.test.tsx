@@ -526,6 +526,65 @@ describe("RedisWorkspace", () => {
     expect(await screen.findByRole("dialog", { name: "查看 temp:renamed" })).toBeInTheDocument();
   });
 
+  it("creates a Redis hash key from the toolbar and opens the new key detail", async () => {
+    callBackendMock.mockResolvedValueOnce({ total_count: 0, entries: [] });
+    callBackendMock.mockResolvedValueOnce(undefined);
+    callBackendMock.mockResolvedValueOnce({
+      total_count: 1,
+      entries: [
+        { key: "user:1", key_type: "hash", ttl: 60 },
+      ],
+    });
+    callBackendMock.mockResolvedValueOnce({
+      key: "user:1",
+      key_type: "hash",
+      ttl: 60,
+      value: {
+        kind: "hash",
+        entries: [["name", "devhub"]],
+        truncated: false,
+        length: 1,
+      },
+    });
+
+    renderRedisWorkspace({ connectionId: "redis-local", initialDatabase: 0 });
+
+    await waitFor(() => expect(callBackendMock).toHaveBeenCalledTimes(1));
+    await userEvent.click(screen.getByRole("button", { name: "新建 key" }));
+    const dialog = screen.getByRole("dialog", { name: "新建 Redis key" });
+    await userEvent.type(within(dialog).getByLabelText("Key 名称"), "user:1");
+    await userEvent.selectOptions(within(dialog).getByLabelText("类型"), "hash");
+    await userEvent.clear(within(dialog).getByLabelText("字段名"));
+    await userEvent.type(within(dialog).getByLabelText("字段名"), "name");
+    await userEvent.type(within(dialog).getByLabelText("字段值"), "devhub");
+    await userEvent.click(within(dialog).getByRole("button", { name: "添加条目" }));
+    const fieldInputs = within(dialog).getAllByLabelText("字段名");
+    const valueInputs = within(dialog).getAllByLabelText("字段值");
+    await userEvent.type(fieldInputs[1], "role");
+    await userEvent.type(valueInputs[1], "admin");
+    await userEvent.type(within(dialog).getByLabelText("TTL 秒数"), "60");
+    await userEvent.click(within(dialog).getByRole("button", { name: "确认" }));
+
+    expect(callBackendMock).toHaveBeenCalledWith("create_redis_key", {
+      request: {
+        connection_id: "redis-local",
+        database: 0,
+        key: "user:1",
+        key_type: "hash",
+        ttl_seconds: 60,
+        string_value: "",
+        hash_entries: [
+          { field: "name", value: "devhub" },
+          { field: "role", value: "admin" },
+        ],
+        list_items: [""],
+        set_members: [""],
+        zset_entries: [{ member: "", score: "0" }],
+      },
+    });
+    expect(await screen.findByRole("dialog", { name: "查看 user:1" })).toBeInTheDocument();
+  });
+
   it("shows an empty state and load errors", async () => {
     callBackendMock.mockResolvedValueOnce({ total_count: 0, entries: [] });
 

@@ -27,6 +27,8 @@
 - [x] Redis 工作区显示当前 DB 的 key 总数和本次已加载数量。
 - [x] Redis 工作区一次加载数量默认 5000，可在工具栏修改。
 - [x] Redis key 列表显示 key 名称、类型和 TTL。
+- [x] Redis 工作区支持新建 `string`、`hash`、`list`、`set` 和 `zset` 类型 key。
+- [x] 新建 Redis key 时不会覆盖已有 key。
 - [x] 双击 Redis key 会打开只读详情弹窗。
 - [x] Redis key 详情支持查看 `string`、`hash`、`list`、`set` 和 `zset`。
 - [x] Redis key 详情读取有上限：`string` 默认最多 5MB，集合类默认最多 500 条。

@@ -72,6 +72,7 @@ pub fn run() {
             commands::redis::list_redis_keys,
             commands::redis::get_redis_key_value,
             commands::redis::set_redis_string_value,
+            commands::redis::create_redis_key,
             commands::redis::delete_redis_key,
             commands::redis::set_redis_key_ttl,
             commands::redis::persist_redis_key,

@@ -1288,6 +1288,43 @@ p {
   font-size: var(--ui-font-size-small, 15px);
 }
 
+.redis-create-dialog {
+  width: min(560px, calc(100vw - 64px));
+}
+
+.redis-create-dialog__textarea {
+  width: 100%;
+  min-height: 120px;
+  resize: vertical;
+  padding: 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: var(--panel-soft);
+  color: var(--text);
+  font-family: var(--terminal-font-family);
+  font-size: var(--terminal-font-size);
+  line-height: 1.45;
+}
+
+.redis-create-dialog__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+}
+
+.redis-create-dialog__row input {
+  width: 100%;
+}
+
+.redis-create-dialog__rows {
+  display: grid;
+  gap: 10px;
+}
+
+.redis-create-dialog__add-button {
+  justify-self: start;
+}
+
 .sftp-table-scroll {
   position: relative;
   display: flex;

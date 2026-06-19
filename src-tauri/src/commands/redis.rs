@@ -54,6 +54,32 @@ pub struct RenameRedisKeyRequest {
     pub new_key: String,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct RedisHashEntryRequest {
+    pub field: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct RedisZsetEntryRequest {
+    pub member: String,
+    pub score: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CreateRedisKeyRequest {
+    pub connection_id: String,
+    pub database: u16,
+    pub key: String,
+    pub key_type: String,
+    pub ttl_seconds: Option<u32>,
+    pub string_value: Option<String>,
+    pub hash_entries: Option<Vec<RedisHashEntryRequest>>,
+    pub list_items: Option<Vec<String>>,
+    pub set_members: Option<Vec<String>>,
+    pub zset_entries: Option<Vec<RedisZsetEntryRequest>>,
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct RedisKeyEntry {
     pub key: String,
@@ -150,6 +176,23 @@ struct NormalizedRenameRedisKeyRequest {
     database: u16,
     key: String,
     new_key: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct NormalizedCreateRedisKeyRequest {
+    database: u16,
+    key: String,
+    value: NormalizedCreateRedisKeyValue,
+    ttl_seconds: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum NormalizedCreateRedisKeyValue {
+    String(String),
+    Hash(Vec<(String, String)>),
+    List(Vec<String>),
+    Set(Vec<String>),
+    Zset(Vec<(String, f64)>),
 }
 
 #[tauri::command]
@@ -252,6 +295,41 @@ pub async fn set_redis_string_value(
 }
 
 #[tauri::command]
+pub async fn create_redis_key(
+    settings_store: State<'_, SettingsStore>,
+    request: CreateRedisKeyRequest,
+) -> Result<(), String> {
+    let mut connection = load_redis_connection(settings_store.inner(), &request.connection_id)?;
+    let normalized = normalize_create_redis_key_request(&request)?;
+    connection.database = normalized.database;
+
+    tokio::task::spawn_blocking(move || {
+        let client =
+            Client::open(redis_connection_url(&connection)).map_err(|error| error.to_string())?;
+        let mut redis_connection = client.get_connection().map_err(|error| error.to_string())?;
+        let exists = redis::cmd("EXISTS")
+            .arg(&normalized.key)
+            .query::<bool>(&mut redis_connection)
+            .map_err(|error| error.to_string())?;
+        if exists {
+            return Err("redis key already exists".to_string());
+        }
+
+        create_redis_key_value(&mut redis_connection, &normalized)?;
+        if let Some(ttl_seconds) = normalized.ttl_seconds {
+            redis::cmd("EXPIRE")
+                .arg(&normalized.key)
+                .arg(ttl_seconds)
+                .query::<bool>(&mut redis_connection)
+                .map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 pub async fn delete_redis_key(
     settings_store: State<'_, SettingsStore>,
     request: RedisKeyRequest,
@@ -272,6 +350,51 @@ pub async fn delete_redis_key(
     })
     .await
     .map_err(|error| error.to_string())?
+}
+
+fn create_redis_key_value(
+    redis_connection: &mut redis::Connection,
+    request: &NormalizedCreateRedisKeyRequest,
+) -> Result<(), String> {
+    match &request.value {
+        NormalizedCreateRedisKeyValue::String(value) => redis::cmd("SET")
+            .arg(&request.key)
+            .arg(value)
+            .query::<()>(redis_connection),
+        NormalizedCreateRedisKeyValue::Hash(entries) => {
+            let mut command = redis::cmd("HSET");
+            command.arg(&request.key);
+            for (field, value) in entries {
+                command.arg(field).arg(value);
+            }
+            command.query::<()>(redis_connection)
+        }
+        NormalizedCreateRedisKeyValue::List(items) => {
+            let mut command = redis::cmd("RPUSH");
+            command.arg(&request.key);
+            for item in items {
+                command.arg(item);
+            }
+            command.query::<()>(redis_connection)
+        }
+        NormalizedCreateRedisKeyValue::Set(members) => {
+            let mut command = redis::cmd("SADD");
+            command.arg(&request.key);
+            for member in members {
+                command.arg(member);
+            }
+            command.query::<()>(redis_connection)
+        }
+        NormalizedCreateRedisKeyValue::Zset(entries) => {
+            let mut command = redis::cmd("ZADD");
+            command.arg(&request.key);
+            for (member, score) in entries {
+                command.arg(score).arg(member);
+            }
+            command.query::<()>(redis_connection)
+        }
+    }
+    .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -733,14 +856,115 @@ fn normalize_rename_redis_key_request(
     })
 }
 
+fn normalize_create_redis_key_request(
+    request: &CreateRedisKeyRequest,
+) -> Result<NormalizedCreateRedisKeyRequest, String> {
+    let key = request.key.trim();
+    if key.is_empty() {
+        return Err("redis key is required".to_string());
+    }
+    let ttl_seconds = request.ttl_seconds;
+    if ttl_seconds == Some(0) {
+        return Err("redis ttl must be greater than 0".to_string());
+    }
+
+    let key_type = request.key_type.trim().to_ascii_lowercase();
+    let value = match key_type.as_str() {
+        "string" => {
+            NormalizedCreateRedisKeyValue::String(request.string_value.clone().unwrap_or_default())
+        }
+        "hash" => NormalizedCreateRedisKeyValue::Hash(normalize_hash_entries(
+            request.hash_entries.as_deref(),
+        )),
+        "list" => NormalizedCreateRedisKeyValue::List(normalize_string_items(
+            request.list_items.as_deref(),
+        )),
+        "set" => NormalizedCreateRedisKeyValue::Set(normalize_string_items(
+            request.set_members.as_deref(),
+        )),
+        "zset" => NormalizedCreateRedisKeyValue::Zset(normalize_zset_entries(
+            request.zset_entries.as_deref(),
+        )?),
+        _ => return Err(format!("unsupported redis key type: {key_type}")),
+    };
+
+    Ok(NormalizedCreateRedisKeyRequest {
+        database: request.database,
+        key: key.to_string(),
+        value,
+        ttl_seconds,
+    })
+}
+
+fn normalize_hash_entries(entries: Option<&[RedisHashEntryRequest]>) -> Vec<(String, String)> {
+    let normalized: Vec<(String, String)> = entries
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|entry| {
+            let field = entry.field.trim();
+            if field.is_empty() {
+                None
+            } else {
+                Some((field.to_string(), entry.value.clone()))
+            }
+        })
+        .collect();
+
+    if normalized.is_empty() {
+        vec![("field".to_string(), String::new())]
+    } else {
+        normalized
+    }
+}
+
+fn normalize_string_items(items: Option<&[String]>) -> Vec<String> {
+    let normalized: Vec<String> = items
+        .unwrap_or_default()
+        .iter()
+        .filter(|item| !item.is_empty())
+        .cloned()
+        .collect();
+
+    if normalized.is_empty() {
+        vec![String::new()]
+    } else {
+        normalized
+    }
+}
+
+fn normalize_zset_entries(
+    entries: Option<&[RedisZsetEntryRequest]>,
+) -> Result<Vec<(String, f64)>, String> {
+    let mut normalized = Vec::new();
+    for entry in entries.unwrap_or_default() {
+        if entry.member.is_empty() {
+            continue;
+        }
+        let score = entry
+            .score
+            .trim()
+            .parse::<f64>()
+            .map_err(|_| "redis zset score must be a number".to_string())?;
+        normalized.push((entry.member.clone(), score));
+    }
+
+    if normalized.is_empty() {
+        Ok(vec![(String::new(), 0.0)])
+    } else {
+        Ok(normalized)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        normalize_get_redis_key_value_request, normalize_list_redis_keys_request,
-        normalize_redis_key_request, normalize_rename_redis_key_request,
-        normalize_set_redis_key_ttl_request, normalize_set_redis_string_value_request,
-        redis_connection_url, GetRedisKeyValueRequest, ListRedisKeysRequest, RedisKeyRequest,
-        RedisKeyValue, RenameRedisKeyRequest, SetRedisKeyTtlRequest, SetRedisStringValueRequest,
+        normalize_create_redis_key_request, normalize_get_redis_key_value_request,
+        normalize_list_redis_keys_request, normalize_redis_key_request,
+        normalize_rename_redis_key_request, normalize_set_redis_key_ttl_request,
+        normalize_set_redis_string_value_request, redis_connection_url, CreateRedisKeyRequest,
+        GetRedisKeyValueRequest, ListRedisKeysRequest, NormalizedCreateRedisKeyValue,
+        RedisHashEntryRequest, RedisKeyRequest, RedisKeyValue, RedisZsetEntryRequest,
+        RenameRedisKeyRequest, SetRedisKeyTtlRequest, SetRedisStringValueRequest,
     };
     use crate::models::settings::RedisConnectionSettings;
 
@@ -979,6 +1203,107 @@ mod tests {
         assert_eq!(
             normalize_rename_redis_key_request(&request).unwrap_err(),
             "redis new key must be different"
+        );
+    }
+
+    #[test]
+    fn normalizes_create_redis_hash_key_request() {
+        let request = CreateRedisKeyRequest {
+            connection_id: "redis-local".to_string(),
+            database: 2,
+            key: " user:1 ".to_string(),
+            key_type: " hash ".to_string(),
+            ttl_seconds: Some(60),
+            string_value: None,
+            hash_entries: Some(vec![
+                RedisHashEntryRequest {
+                    field: " name ".to_string(),
+                    value: "devhub".to_string(),
+                },
+                RedisHashEntryRequest {
+                    field: " ".to_string(),
+                    value: "ignored".to_string(),
+                },
+            ]),
+            list_items: None,
+            set_members: None,
+            zset_entries: None,
+        };
+
+        let normalized = normalize_create_redis_key_request(&request).unwrap();
+
+        assert_eq!(normalized.database, 2);
+        assert_eq!(normalized.key, "user:1");
+        assert_eq!(normalized.ttl_seconds, Some(60));
+        assert_eq!(
+            normalized.value,
+            NormalizedCreateRedisKeyValue::Hash(vec![("name".to_string(), "devhub".to_string())])
+        );
+    }
+
+    #[test]
+    fn rejects_create_redis_key_with_invalid_type() {
+        let request = CreateRedisKeyRequest {
+            connection_id: "redis-local".to_string(),
+            database: 0,
+            key: "user:1".to_string(),
+            key_type: "stream".to_string(),
+            ttl_seconds: None,
+            string_value: None,
+            hash_entries: None,
+            list_items: None,
+            set_members: None,
+            zset_entries: None,
+        };
+
+        assert_eq!(
+            normalize_create_redis_key_request(&request).unwrap_err(),
+            "unsupported redis key type: stream"
+        );
+    }
+
+    #[test]
+    fn rejects_create_redis_key_with_zero_ttl() {
+        let request = CreateRedisKeyRequest {
+            connection_id: "redis-local".to_string(),
+            database: 0,
+            key: "user:1".to_string(),
+            key_type: "string".to_string(),
+            ttl_seconds: Some(0),
+            string_value: Some("value".to_string()),
+            hash_entries: None,
+            list_items: None,
+            set_members: None,
+            zset_entries: None,
+        };
+
+        assert_eq!(
+            normalize_create_redis_key_request(&request).unwrap_err(),
+            "redis ttl must be greater than 0"
+        );
+    }
+
+    #[test]
+    fn rejects_create_redis_zset_key_with_invalid_score() {
+        let request = CreateRedisKeyRequest {
+            connection_id: "redis-local".to_string(),
+            database: 0,
+            key: "rank".to_string(),
+            key_type: "zset".to_string(),
+            ttl_seconds: None,
+            string_value: None,
+            hash_entries: None,
+            list_items: None,
+            set_members: None,
+            zset_entries: Some(vec![RedisZsetEntryRequest {
+                member: "alice".to_string(),
+                score: "bad".to_string(),
+            }]),
+        };
+
+        assert_eq!(
+            normalize_create_redis_key_request(&request).unwrap_err(),
+            "redis zset score must be a number"
         );
     }
 }

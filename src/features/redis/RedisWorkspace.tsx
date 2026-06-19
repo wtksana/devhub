@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
+import type { Dispatch, SetStateAction } from "react";
 import { ContextMenu, type ContextMenuState } from "../../app/ContextMenu";
 import { useI18n } from "../../i18n/useI18n";
 import { callBackend } from "../../lib/tauri";
@@ -30,6 +31,7 @@ interface RedisKeyNode {
 }
 
 type RedisTreeRow = RedisFolderNode | RedisKeyNode;
+type CreateRedisKeyType = "string" | "hash" | "list" | "set" | "zset";
 
 interface RedisTreeFolder {
   name: string;
@@ -37,6 +39,28 @@ interface RedisTreeFolder {
   children: Map<string, RedisTreeFolder>;
   keys: RedisKeyEntry[];
 }
+
+interface CreateRedisKeyDraft {
+  key: string;
+  keyType: CreateRedisKeyType;
+  ttlSeconds: string;
+  stringValue: string;
+  hashEntries: Array<{ field: string; value: string }>;
+  listItems: string[];
+  setMembers: string[];
+  zsetEntries: Array<{ member: string; score: string }>;
+}
+
+const DEFAULT_CREATE_KEY_DRAFT: CreateRedisKeyDraft = {
+  key: "",
+  keyType: "string",
+  ttlSeconds: "",
+  stringValue: "",
+  hashEntries: [{ field: "", value: "" }],
+  listItems: [""],
+  setMembers: [""],
+  zsetEntries: [{ member: "", score: "0" }],
+};
 
 function keywordToPattern(keyword: string) {
   const trimmedKeyword = keyword.trim();
@@ -160,6 +184,8 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
   const [deleteCandidate, setDeleteCandidate] = useState<RedisKeyEntry | null>(null);
   const [renameCandidate, setRenameCandidate] = useState<RedisKeyEntry | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
+  const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
+  const [createDraft, setCreateDraft] = useState<CreateRedisKeyDraft>(DEFAULT_CREATE_KEY_DRAFT);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const treeRows = useMemo(
     () => buildRedisTreeRows(keys, keySeparator, expandedFolders),
@@ -200,10 +226,14 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
   }, [connectionId, initialDatabase]);
 
   useEffect(() => {
-    if (!keyDetail && !deleteCandidate && !renameCandidate) return;
+    if (!keyDetail && !deleteCandidate && !renameCandidate && !isCreateDialogOpen) return;
 
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key !== "Escape") return;
+      if (isCreateDialogOpen) {
+        setIsCreateDialogOpen(false);
+        return;
+      }
       if (renameCandidate) {
         setRenameCandidate(null);
         return;
@@ -217,7 +247,7 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [keyDetail, deleteCandidate, renameCandidate]);
+  }, [keyDetail, deleteCandidate, renameCandidate, isCreateDialogOpen]);
 
   if (!connectionId) {
     return (
@@ -301,6 +331,12 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
   function openRenameDialog(entry: RedisKeyEntry) {
     setRenameCandidate(entry);
     setRenameDraft(entry.key);
+  }
+
+  function openCreateDialog() {
+    setCreateDraft(DEFAULT_CREATE_KEY_DRAFT);
+    setKeyDetailError(null);
+    setIsCreateDialogOpen(true);
   }
 
   function applyKeyDetail(detail: RedisKeyValueResponse) {
@@ -452,6 +488,51 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
     }
   }
 
+  async function confirmCreateKey(event: React.FormEvent) {
+    event.preventDefault();
+    if (!connectionId) return;
+    const key = createDraft.key.trim();
+    if (!key) {
+      setKeyDetailError(t("redis.key_required"));
+      return;
+    }
+    const ttlSeconds = createDraft.ttlSeconds.trim() ? Number(createDraft.ttlSeconds) : null;
+    if (ttlSeconds !== null && (!Number.isInteger(ttlSeconds) || ttlSeconds <= 0)) {
+      setKeyDetailError(t("redis.ttl_invalid"));
+      return;
+    }
+
+    setIsKeyActionRunning(true);
+    setKeyDetailError(null);
+    try {
+      await callBackend("create_redis_key", {
+        request: {
+          connection_id: connectionId,
+          database,
+          key,
+          key_type: createDraft.keyType,
+          ttl_seconds: ttlSeconds,
+          string_value: createDraft.stringValue,
+          hash_entries: createDraft.hashEntries,
+          list_items: createDraft.listItems,
+          set_members: createDraft.setMembers,
+          zset_entries: createDraft.zsetEntries,
+        },
+      });
+      setIsCreateDialogOpen(false);
+      await loadKeys();
+      await openKeyDetail({
+        key,
+        key_type: createDraft.keyType,
+        ttl: ttlSeconds ?? -1,
+      });
+    } catch (caught) {
+      setKeyDetailError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setIsKeyActionRunning(false);
+    }
+  }
+
   return (
     <section className="redis-workspace">
       <header>
@@ -496,6 +577,9 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
             onChange={(event) => setKeyword(event.target.value)}
           />
         </label>
+        <button type="button" onClick={openCreateDialog}>
+          {t("redis.create_key")}
+        </button>
         <button type="button" onClick={() => void loadKeys()}>
           {t("redis.refresh")}
         </button>
@@ -712,8 +796,208 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
           </section>
         </div>
       ) : null}
+      {isCreateDialogOpen ? (
+        <div className="connection-dialog__backdrop">
+          <section
+            className="connection-dialog sftp-dialog redis-create-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-label={t("redis.create_key_dialog")}
+          >
+            <form className="connection-form" onSubmit={(event) => void confirmCreateKey(event)}>
+              <header className="connection-dialog__header">
+                <h2>{t("redis.create_key_dialog")}</h2>
+                <button type="button" aria-label={t("redis.cancel")} onClick={() => setIsCreateDialogOpen(false)}>
+                  x
+                </button>
+              </header>
+              {keyDetailError ? <p role="alert">{keyDetailError}</p> : null}
+              <label>
+                <span>{t("redis.key_name")}</span>
+                <input
+                  aria-label={t("redis.key_name")}
+                  value={createDraft.key}
+                  onChange={(event) => setCreateDraft((draft) => ({ ...draft, key: event.target.value }))}
+                />
+              </label>
+              <label>
+                <span>{t("redis.type")}</span>
+                <select
+                  aria-label={t("redis.type")}
+                  value={createDraft.keyType}
+                  onChange={(event) => setCreateDraft((draft) => ({
+                    ...draft,
+                    keyType: event.target.value as CreateRedisKeyType,
+                  }))}
+                >
+                  <option value="string">string</option>
+                  <option value="hash">hash</option>
+                  <option value="list">list</option>
+                  <option value="set">set</option>
+                  <option value="zset">zset</option>
+                </select>
+              </label>
+              <label>
+                <span>{t("redis.ttl_seconds")}</span>
+                <input
+                  aria-label={t("redis.ttl_seconds")}
+                  type="number"
+                  min={1}
+                  value={createDraft.ttlSeconds}
+                  onChange={(event) => setCreateDraft((draft) => ({ ...draft, ttlSeconds: event.target.value }))}
+                />
+              </label>
+              {renderCreateKeyValueEditor(createDraft, setCreateDraft, t)}
+              <div className="sftp-dialog__actions">
+                <button type="button" onClick={() => setIsCreateDialogOpen(false)}>
+                  {t("redis.cancel")}
+                </button>
+                <button type="submit" disabled={isKeyActionRunning}>
+                  {t("redis.confirm")}
+                </button>
+              </div>
+            </form>
+          </section>
+        </div>
+      ) : null}
       <ContextMenu menu={contextMenu} onClose={() => setContextMenu(null)} />
     </section>
+  );
+}
+
+function renderCreateKeyValueEditor(
+  draft: CreateRedisKeyDraft,
+  setDraft: Dispatch<SetStateAction<CreateRedisKeyDraft>>,
+  t: ReturnType<typeof useI18n>["t"],
+) {
+  if (draft.keyType === "string") {
+    return (
+      <label>
+        <span>{t("redis.string_content")}</span>
+        <textarea
+          className="redis-create-dialog__textarea"
+          aria-label={t("redis.string_content")}
+          value={draft.stringValue}
+          onChange={(event) => setDraft((current) => ({ ...current, stringValue: event.target.value }))}
+        />
+      </label>
+    );
+  }
+
+  if (draft.keyType === "hash") {
+    return (
+      <div className="redis-create-dialog__rows">
+        {draft.hashEntries.map((entry, index) => (
+          <div className="redis-create-dialog__row" key={index}>
+            <label>
+              <span>{t("redis.hash_field")}</span>
+              <input
+                aria-label={t("redis.hash_field")}
+                value={entry.field}
+                onChange={(event) => setDraft((current) => ({
+                  ...current,
+                  hashEntries: current.hashEntries.map((item, itemIndex) => (
+                    itemIndex === index ? { ...item, field: event.target.value } : item
+                  )),
+                }))}
+              />
+            </label>
+            <label>
+              <span>{t("redis.hash_value")}</span>
+              <input
+                aria-label={t("redis.hash_value")}
+                value={entry.value}
+                onChange={(event) => setDraft((current) => ({
+                  ...current,
+                  hashEntries: current.hashEntries.map((item, itemIndex) => (
+                    itemIndex === index ? { ...item, value: event.target.value } : item
+                  )),
+                }))}
+              />
+            </label>
+          </div>
+        ))}
+        <button
+          type="button"
+          className="redis-create-dialog__add-button"
+          onClick={() => setDraft((current) => ({
+            ...current,
+            hashEntries: [...current.hashEntries, { field: "", value: "" }],
+          }))}
+        >
+          {t("redis.add_entry")}
+        </button>
+      </div>
+    );
+  }
+
+  if (draft.keyType === "zset") {
+    return (
+      <div className="redis-create-dialog__rows">
+        {draft.zsetEntries.map((entry, index) => (
+          <div className="redis-create-dialog__row" key={index}>
+            <label>
+              <span>{t("redis.member")}</span>
+              <input
+                aria-label={t("redis.member")}
+                value={entry.member}
+                onChange={(event) => setDraft((current) => ({
+                  ...current,
+                  zsetEntries: current.zsetEntries.map((item, itemIndex) => (
+                    itemIndex === index ? { ...item, member: event.target.value } : item
+                  )),
+                }))}
+              />
+            </label>
+            <label>
+              <span>{t("redis.score")}</span>
+              <input
+                aria-label={t("redis.score")}
+                value={entry.score}
+                onChange={(event) => setDraft((current) => ({
+                  ...current,
+                  zsetEntries: current.zsetEntries.map((item, itemIndex) => (
+                    itemIndex === index ? { ...item, score: event.target.value } : item
+                  )),
+                }))}
+              />
+            </label>
+          </div>
+        ))}
+        <button
+          type="button"
+          className="redis-create-dialog__add-button"
+          onClick={() => setDraft((current) => ({
+            ...current,
+            zsetEntries: [...current.zsetEntries, { member: "", score: "0" }],
+          }))}
+        >
+          {t("redis.add_entry")}
+        </button>
+      </div>
+    );
+  }
+
+  const isList = draft.keyType === "list";
+  const label = isList ? t("redis.item") : t("redis.member");
+  const value = isList ? draft.listItems.join("\n") : draft.setMembers.join("\n");
+  return (
+    <label>
+      <span>{label}</span>
+      <textarea
+        className="redis-create-dialog__textarea"
+        aria-label={label}
+        value={value}
+        onChange={(event) => {
+          const lines = event.target.value.split("\n");
+          setDraft((current) => (
+            isList
+              ? { ...current, listItems: lines }
+              : { ...current, setMembers: lines }
+          ));
+        }}
+      />
+    </label>
   );
 }
 
