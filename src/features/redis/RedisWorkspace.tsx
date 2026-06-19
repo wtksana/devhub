@@ -1521,8 +1521,6 @@ function renderKeyDetailValue(options: RenderKeyDetailValueOptions) {
           {value.members.map((member) => (
             <div className="redis-key-dialog__edit-row redis-key-dialog__edit-row--set" key={member}>
               <span className="redis-key-dialog__row-key">{member}</span>
-              <span aria-hidden="true" className="redis-key-dialog__row-spacer" />
-              <span aria-hidden="true" className="redis-key-dialog__row-spacer" />
               <button
                 type="button"
                 className="redis-key-dialog__action-button sftp-dialog__danger-button"
@@ -1535,7 +1533,6 @@ function renderKeyDetailValue(options: RenderKeyDetailValueOptions) {
             </div>
           ))}
           <div className="redis-key-dialog__edit-row redis-key-dialog__edit-row--set">
-            <span aria-hidden="true" className="redis-key-dialog__row-spacer" />
             <input
               aria-label={t("redis.new_member")}
               placeholder={t("redis.new_member")}
@@ -1564,7 +1561,6 @@ function renderKeyDetailValue(options: RenderKeyDetailValueOptions) {
           {value.entries.map(([member]) => (
             <div className="redis-key-dialog__edit-row redis-key-dialog__edit-row--zset" key={member}>
               <span className="redis-key-dialog__row-key">{member}</span>
-              <span aria-hidden="true" className="redis-key-dialog__row-spacer" />
               <input
                 aria-label={t("redis.zset_score_label", { member })}
                 value={zsetDrafts[member] ?? ""}
@@ -1594,7 +1590,6 @@ function renderKeyDetailValue(options: RenderKeyDetailValueOptions) {
             </div>
           ))}
           <div className="redis-key-dialog__edit-row redis-key-dialog__edit-row--zset">
-            <span aria-hidden="true" className="redis-key-dialog__row-spacer" />
             <input
               aria-label={t("redis.new_member")}
               placeholder={t("redis.new_member")}
