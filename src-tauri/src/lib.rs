@@ -75,6 +75,7 @@ pub fn run() {
             commands::redis::delete_redis_key,
             commands::redis::set_redis_key_ttl,
             commands::redis::persist_redis_key,
+            commands::redis::rename_redis_key,
             commands::terminal::open_terminal,
             commands::terminal::write_terminal,
             commands::terminal::resize_terminal,

@@ -46,6 +46,14 @@ pub struct SetRedisKeyTtlRequest {
     pub ttl_seconds: u32,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct RenameRedisKeyRequest {
+    pub connection_id: String,
+    pub database: u16,
+    pub key: String,
+    pub new_key: String,
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct RedisKeyEntry {
     pub key: String,
@@ -135,6 +143,13 @@ struct NormalizedSetRedisKeyTtlRequest {
     database: u16,
     key: String,
     ttl_seconds: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NormalizedRenameRedisKeyRequest {
+    database: u16,
+    key: String,
+    new_key: String,
 }
 
 #[tauri::command]
@@ -301,6 +316,34 @@ pub async fn persist_redis_key(
             .query::<bool>(&mut redis_connection)
             .map(|_| ())
             .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn rename_redis_key(
+    settings_store: State<'_, SettingsStore>,
+    request: RenameRedisKeyRequest,
+) -> Result<(), String> {
+    let mut connection = load_redis_connection(settings_store.inner(), &request.connection_id)?;
+    let normalized = normalize_rename_redis_key_request(&request)?;
+    connection.database = normalized.database;
+
+    tokio::task::spawn_blocking(move || {
+        let client =
+            Client::open(redis_connection_url(&connection)).map_err(|error| error.to_string())?;
+        let mut redis_connection = client.get_connection().map_err(|error| error.to_string())?;
+        let renamed = redis::cmd("RENAMENX")
+            .arg(&normalized.key)
+            .arg(&normalized.new_key)
+            .query::<bool>(&mut redis_connection)
+            .map_err(|error| error.to_string())?;
+        if renamed {
+            Ok(())
+        } else {
+            Err("redis target key already exists".to_string())
+        }
     })
     .await
     .map_err(|error| error.to_string())?
@@ -671,14 +714,33 @@ fn normalize_set_redis_key_ttl_request(
     })
 }
 
+fn normalize_rename_redis_key_request(
+    request: &RenameRedisKeyRequest,
+) -> Result<NormalizedRenameRedisKeyRequest, String> {
+    let key = request.key.trim();
+    let new_key = request.new_key.trim();
+    if key.is_empty() || new_key.is_empty() {
+        return Err("redis key is required".to_string());
+    }
+    if key == new_key {
+        return Err("redis new key must be different".to_string());
+    }
+
+    Ok(NormalizedRenameRedisKeyRequest {
+        database: request.database,
+        key: key.to_string(),
+        new_key: new_key.to_string(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         normalize_get_redis_key_value_request, normalize_list_redis_keys_request,
-        normalize_redis_key_request, normalize_set_redis_key_ttl_request,
-        normalize_set_redis_string_value_request, redis_connection_url, GetRedisKeyValueRequest,
-        ListRedisKeysRequest, RedisKeyRequest, RedisKeyValue, SetRedisKeyTtlRequest,
-        SetRedisStringValueRequest,
+        normalize_redis_key_request, normalize_rename_redis_key_request,
+        normalize_set_redis_key_ttl_request, normalize_set_redis_string_value_request,
+        redis_connection_url, GetRedisKeyValueRequest, ListRedisKeysRequest, RedisKeyRequest,
+        RedisKeyValue, RenameRedisKeyRequest, SetRedisKeyTtlRequest, SetRedisStringValueRequest,
     };
     use crate::models::settings::RedisConnectionSettings;
 
@@ -886,6 +948,37 @@ mod tests {
         assert_eq!(
             normalize_set_redis_key_ttl_request(&request).unwrap_err(),
             "redis ttl must be greater than 0"
+        );
+    }
+
+    #[test]
+    fn normalizes_rename_redis_key_request() {
+        let request = RenameRedisKeyRequest {
+            connection_id: "redis-local".to_string(),
+            database: 1,
+            key: " temp:1 ".to_string(),
+            new_key: " temp:renamed ".to_string(),
+        };
+
+        let normalized = normalize_rename_redis_key_request(&request).unwrap();
+
+        assert_eq!(normalized.database, 1);
+        assert_eq!(normalized.key, "temp:1");
+        assert_eq!(normalized.new_key, "temp:renamed");
+    }
+
+    #[test]
+    fn rejects_rename_redis_key_to_same_key() {
+        let request = RenameRedisKeyRequest {
+            connection_id: "redis-local".to_string(),
+            database: 1,
+            key: "temp:1".to_string(),
+            new_key: " temp:1 ".to_string(),
+        };
+
+        assert_eq!(
+            normalize_rename_redis_key_request(&request).unwrap_err(),
+            "redis new key must be different"
         );
     }
 }

@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "../../i18n/I18nProvider";
@@ -477,6 +477,53 @@ describe("RedisWorkspace", () => {
         key: "temp:1",
       },
     });
+  });
+
+  it("renames a Redis key from the context menu and opens the renamed key detail", async () => {
+    callBackendMock.mockResolvedValueOnce({
+      total_count: 1,
+      entries: [
+        { key: "temp:1", key_type: "string", ttl: 30 },
+      ],
+    });
+    callBackendMock.mockResolvedValueOnce(undefined);
+    callBackendMock.mockResolvedValueOnce({
+      total_count: 1,
+      entries: [
+        { key: "temp:renamed", key_type: "string", ttl: 30 },
+      ],
+    });
+    callBackendMock.mockResolvedValueOnce({
+      key: "temp:renamed",
+      key_type: "string",
+      ttl: 30,
+      value: {
+        kind: "string",
+        value: "value",
+        truncated: false,
+        size: 5,
+      },
+    });
+
+    renderRedisWorkspace({ connectionId: "redis-local", initialDatabase: 0 });
+
+    await userEvent.click(await screen.findByRole("button", { name: "展开 temp" }));
+    await userEvent.pointer({ keys: "[MouseRight]", target: screen.getByText("temp:1") });
+    await userEvent.click(screen.getByRole("menuitem", { name: "重命名" }));
+    const dialog = screen.getByRole("dialog", { name: "重命名 Redis key" });
+    await userEvent.clear(within(dialog).getByLabelText("新 key 名称"));
+    await userEvent.type(within(dialog).getByLabelText("新 key 名称"), "temp:renamed");
+    await userEvent.click(within(dialog).getByRole("button", { name: "确认" }));
+
+    expect(callBackendMock).toHaveBeenCalledWith("rename_redis_key", {
+      request: {
+        connection_id: "redis-local",
+        database: 0,
+        key: "temp:1",
+        new_key: "temp:renamed",
+      },
+    });
+    expect(await screen.findByRole("dialog", { name: "查看 temp:renamed" })).toBeInTheDocument();
   });
 
   it("shows an empty state and load errors", async () => {

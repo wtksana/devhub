@@ -1243,6 +1243,11 @@ p {
   font-size: var(--ui-font-size-small, 15px);
 }
 
+.redis-key-dialog__actions > div {
+  display: flex;
+  gap: 8px;
+}
+
 .redis-key-dialog__table {
   width: 100%;
   border-collapse: collapse;

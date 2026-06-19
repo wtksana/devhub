@@ -158,6 +158,8 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
   const [ttlDraft, setTtlDraft] = useState("");
   const [isKeyActionRunning, setIsKeyActionRunning] = useState(false);
   const [deleteCandidate, setDeleteCandidate] = useState<RedisKeyEntry | null>(null);
+  const [renameCandidate, setRenameCandidate] = useState<RedisKeyEntry | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const treeRows = useMemo(
     () => buildRedisTreeRows(keys, keySeparator, expandedFolders),
@@ -198,10 +200,14 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
   }, [connectionId, initialDatabase]);
 
   useEffect(() => {
-    if (!keyDetail && !deleteCandidate) return;
+    if (!keyDetail && !deleteCandidate && !renameCandidate) return;
 
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key !== "Escape") return;
+      if (renameCandidate) {
+        setRenameCandidate(null);
+        return;
+      }
       if (deleteCandidate) {
         setDeleteCandidate(null);
         return;
@@ -211,7 +217,7 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [keyDetail, deleteCandidate]);
+  }, [keyDetail, deleteCandidate, renameCandidate]);
 
   if (!connectionId) {
     return (
@@ -281,11 +287,20 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
           onSelect: () => void openKeyDetail(entry),
         },
         {
+          label: t("redis.rename"),
+          onSelect: () => openRenameDialog(entry),
+        },
+        {
           label: t("redis.delete"),
           onSelect: () => setDeleteCandidate(entry),
         },
       ],
     });
+  }
+
+  function openRenameDialog(entry: RedisKeyEntry) {
+    setRenameCandidate(entry);
+    setRenameDraft(entry.key);
   }
 
   function applyKeyDetail(detail: RedisKeyValueResponse) {
@@ -397,6 +412,41 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
     } catch (caught) {
       setKeyDetailError(caught instanceof Error ? caught.message : String(caught));
       setDeleteCandidate(null);
+    } finally {
+      setIsKeyActionRunning(false);
+    }
+  }
+
+  async function confirmRenameKey(event: React.FormEvent) {
+    event.preventDefault();
+    if (!connectionId || !renameCandidate) return;
+    const source = renameCandidate;
+    const newKey = renameDraft.trim();
+    if (!newKey) {
+      setKeyDetailError(t("redis.rename_key_required"));
+      return;
+    }
+
+    setIsKeyActionRunning(true);
+    setKeyDetailError(null);
+    try {
+      await callBackend("rename_redis_key", {
+        request: {
+          connection_id: connectionId,
+          database,
+          key: source.key,
+          new_key: newKey,
+        },
+      });
+      setRenameCandidate(null);
+      await loadKeys();
+      await openKeyDetail({
+        key: newKey,
+        key_type: source.key_type,
+        ttl: source.ttl,
+      });
+    } catch (caught) {
+      setKeyDetailError(caught instanceof Error ? caught.message : String(caught));
     } finally {
       setIsKeyActionRunning(false);
     }
@@ -564,18 +614,31 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
                     ) : (
                       <span>{t("redis.edit_only_string")}</span>
                     )}
-                    <button
-                      type="button"
-                      className="sftp-dialog__danger-button"
-                      disabled={isKeyActionRunning}
-                      onClick={() => setDeleteCandidate({
-                        key: keyDetail.key,
-                        key_type: keyDetail.key_type,
-                        ttl: keyDetail.ttl,
-                      })}
-                    >
-                      {t("redis.delete_key")}
-                    </button>
+                    <div>
+                      <button
+                        type="button"
+                        disabled={isKeyActionRunning}
+                        onClick={() => openRenameDialog({
+                          key: keyDetail.key,
+                          key_type: keyDetail.key_type,
+                          ttl: keyDetail.ttl,
+                        })}
+                      >
+                        {t("redis.rename")}
+                      </button>
+                      <button
+                        type="button"
+                        className="sftp-dialog__danger-button"
+                        disabled={isKeyActionRunning}
+                        onClick={() => setDeleteCandidate({
+                          key: keyDetail.key,
+                          key_type: keyDetail.key_type,
+                          ttl: keyDetail.ttl,
+                        })}
+                      >
+                        {t("redis.delete_key")}
+                      </button>
+                    </div>
                   </div>
                 </>
               ) : null}
@@ -607,6 +670,41 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
                   {t("redis.cancel")}
                 </button>
                 <button type="submit" className="sftp-dialog__danger-button" disabled={isKeyActionRunning}>
+                  {t("redis.confirm")}
+                </button>
+              </div>
+            </form>
+          </section>
+        </div>
+      ) : null}
+      {renameCandidate ? (
+        <div className="connection-dialog__backdrop">
+          <section
+            className="connection-dialog sftp-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-label={t("redis.rename_key")}
+          >
+            <form className="connection-form" onSubmit={(event) => void confirmRenameKey(event)}>
+              <header className="connection-dialog__header">
+                <h2>{t("redis.rename_key")}</h2>
+                <button type="button" aria-label={t("redis.cancel")} onClick={() => setRenameCandidate(null)}>
+                  x
+                </button>
+              </header>
+              <label>
+                <span>{t("redis.new_key")}</span>
+                <input
+                  aria-label={t("redis.new_key")}
+                  value={renameDraft}
+                  onChange={(event) => setRenameDraft(event.target.value)}
+                />
+              </label>
+              <div className="sftp-dialog__actions">
+                <button type="button" onClick={() => setRenameCandidate(null)}>
+                  {t("redis.cancel")}
+                </button>
+                <button type="submit" disabled={isKeyActionRunning}>
                   {t("redis.confirm")}
                 </button>
               </div>
