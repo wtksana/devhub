@@ -1194,6 +1194,55 @@ p {
   word-break: break-word;
 }
 
+.redis-key-dialog__textarea {
+  width: 100%;
+  min-height: min(42vh, 360px);
+  resize: vertical;
+  padding: 10px;
+  overflow: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: var(--panel-soft);
+  color: var(--text);
+  font-family: var(--terminal-font-family);
+  font-size: var(--terminal-font-size);
+  line-height: 1.45;
+}
+
+.redis-key-dialog__ttl-editor {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 8px;
+}
+
+.redis-key-dialog__ttl-editor label {
+  display: grid;
+  gap: 4px;
+}
+
+.redis-key-dialog__ttl-editor label span {
+  color: var(--muted);
+  font-size: var(--ui-font-size-small, 15px);
+}
+
+.redis-key-dialog__ttl-editor input {
+  width: 116px;
+  height: 28px;
+}
+
+.redis-key-dialog__actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.redis-key-dialog__actions span {
+  color: var(--muted);
+  font-size: var(--ui-font-size-small, 15px);
+}
+
 .redis-key-dialog__table {
   width: 100%;
   border-collapse: collapse;

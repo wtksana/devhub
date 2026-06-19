@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
+import { ContextMenu, type ContextMenuState } from "../../app/ContextMenu";
 import { useI18n } from "../../i18n/useI18n";
 import { callBackend } from "../../lib/tauri";
 import type { RedisKeyEntry, RedisKeyListResponse, RedisKeyValueResponse } from "./redisTypes";
@@ -153,6 +154,11 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
   const [keyDetail, setKeyDetail] = useState<RedisKeyValueResponse | null>(null);
   const [keyDetailError, setKeyDetailError] = useState<string | null>(null);
   const [isKeyDetailLoading, setIsKeyDetailLoading] = useState(false);
+  const [stringDraft, setStringDraft] = useState("");
+  const [ttlDraft, setTtlDraft] = useState("");
+  const [isKeyActionRunning, setIsKeyActionRunning] = useState(false);
+  const [deleteCandidate, setDeleteCandidate] = useState<RedisKeyEntry | null>(null);
+  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const treeRows = useMemo(
     () => buildRedisTreeRows(keys, keySeparator, expandedFolders),
     [keys, keySeparator, expandedFolders],
@@ -191,6 +197,22 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
     void loadKeys(initialDatabase, "", DEFAULT_LOAD_LIMIT);
   }, [connectionId, initialDatabase]);
 
+  useEffect(() => {
+    if (!keyDetail && !deleteCandidate) return;
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key !== "Escape") return;
+      if (deleteCandidate) {
+        setDeleteCandidate(null);
+        return;
+      }
+      setKeyDetail(null);
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [keyDetail, deleteCandidate]);
+
   if (!connectionId) {
     return (
       <section className="workspace-empty">
@@ -214,6 +236,7 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
 
   async function openKeyDetail(entry: RedisKeyEntry) {
     if (!connectionId) return;
+    setContextMenu(null);
     setKeyDetail(null);
     setKeyDetailError(null);
     setIsKeyDetailLoading(true);
@@ -227,10 +250,10 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
           max_string_bytes: DEFAULT_MAX_STRING_BYTES,
         },
       });
-      setKeyDetail(response);
+      applyKeyDetail(response);
     } catch (caught) {
       setKeyDetailError(caught instanceof Error ? caught.message : String(caught));
-      setKeyDetail({
+      applyKeyDetail({
         key: entry.key,
         key_type: entry.key_type,
         ttl: entry.ttl,
@@ -243,6 +266,139 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
       });
     } finally {
       setIsKeyDetailLoading(false);
+    }
+  }
+
+  function openKeyContextMenu(event: React.MouseEvent, entry: RedisKeyEntry) {
+    event.preventDefault();
+    event.stopPropagation();
+    setContextMenu({
+      x: event.clientX,
+      y: event.clientY,
+      items: [
+        {
+          label: t("redis.edit"),
+          onSelect: () => void openKeyDetail(entry),
+        },
+        {
+          label: t("redis.delete"),
+          onSelect: () => setDeleteCandidate(entry),
+        },
+      ],
+    });
+  }
+
+  function applyKeyDetail(detail: RedisKeyValueResponse) {
+    setKeyDetail(detail);
+    setStringDraft(detail.value.kind === "string" ? detail.value.value : "");
+    setTtlDraft(detail.ttl > 0 ? String(detail.ttl) : "");
+  }
+
+  async function reloadKeyDetail() {
+    if (!connectionId || !keyDetail) return;
+    const response = await callBackend<RedisKeyValueResponse>("get_redis_key_value", {
+      request: {
+        connection_id: connectionId,
+        database,
+        key: keyDetail.key,
+        limit: DEFAULT_VALUE_LIMIT,
+        max_string_bytes: DEFAULT_MAX_STRING_BYTES,
+      },
+    });
+    applyKeyDetail(response);
+  }
+
+  async function saveStringValue() {
+    if (!connectionId || !keyDetail || keyDetail.value.kind !== "string") return;
+    setIsKeyActionRunning(true);
+    setKeyDetailError(null);
+    try {
+      await callBackend("set_redis_string_value", {
+        request: {
+          connection_id: connectionId,
+          database,
+          key: keyDetail.key,
+          value: stringDraft,
+        },
+      });
+      await reloadKeyDetail();
+    } catch (caught) {
+      setKeyDetailError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setIsKeyActionRunning(false);
+    }
+  }
+
+  async function setKeyTtl() {
+    if (!connectionId || !keyDetail) return;
+    const ttlSeconds = Number(ttlDraft);
+    if (!Number.isInteger(ttlSeconds) || ttlSeconds <= 0) {
+      setKeyDetailError(t("redis.ttl_invalid"));
+      return;
+    }
+
+    setIsKeyActionRunning(true);
+    setKeyDetailError(null);
+    try {
+      await callBackend("set_redis_key_ttl", {
+        request: {
+          connection_id: connectionId,
+          database,
+          key: keyDetail.key,
+          ttl_seconds: ttlSeconds,
+        },
+      });
+      await reloadKeyDetail();
+    } catch (caught) {
+      setKeyDetailError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setIsKeyActionRunning(false);
+    }
+  }
+
+  async function persistKey() {
+    if (!connectionId || !keyDetail) return;
+    setIsKeyActionRunning(true);
+    setKeyDetailError(null);
+    try {
+      await callBackend("persist_redis_key", {
+        request: {
+          connection_id: connectionId,
+          database,
+          key: keyDetail.key,
+        },
+      });
+      await reloadKeyDetail();
+    } catch (caught) {
+      setKeyDetailError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setIsKeyActionRunning(false);
+    }
+  }
+
+  async function confirmDeleteKey() {
+    if (!connectionId || !deleteCandidate) return;
+    const deletingKey = deleteCandidate.key;
+    setIsKeyActionRunning(true);
+    setKeyDetailError(null);
+    try {
+      await callBackend("delete_redis_key", {
+        request: {
+          connection_id: connectionId,
+          database,
+          key: deletingKey,
+        },
+      });
+      setDeleteCandidate(null);
+      if (keyDetail?.key === deletingKey) {
+        setKeyDetail(null);
+      }
+      await loadKeys();
+    } catch (caught) {
+      setKeyDetailError(caught instanceof Error ? caught.message : String(caught));
+      setDeleteCandidate(null);
+    } finally {
+      setIsKeyActionRunning(false);
     }
   }
 
@@ -331,7 +487,10 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
                     <td />
                   </tr>
                 ) : (
-                  <tr onDoubleClick={() => void openKeyDetail(row.entry)}>
+                  <tr
+                    onDoubleClick={() => void openKeyDetail(row.entry)}
+                    onContextMenu={(event) => openKeyContextMenu(event, row.entry)}
+                  >
                     <td>
                       <span className="redis-key-name" style={{ paddingLeft: `${row.depth * 18}px` }}>
                         {row.entry.key}
@@ -378,13 +537,84 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
                       <span>{t("redis.length")} {keyDetail.value.length}</span>
                     ) : null}
                   </div>
-                  {renderKeyDetailValue(keyDetail, t)}
+                  <div className="redis-key-dialog__ttl-editor">
+                    <label>
+                      <span>{t("redis.ttl_seconds")}</span>
+                      <input
+                        aria-label={t("redis.ttl_seconds")}
+                        type="number"
+                        min={1}
+                        value={ttlDraft}
+                        onChange={(event) => setTtlDraft(event.target.value)}
+                      />
+                    </label>
+                    <button type="button" disabled={isKeyActionRunning} onClick={() => void setKeyTtl()}>
+                      {t("redis.set_ttl")}
+                    </button>
+                    <button type="button" disabled={isKeyActionRunning} onClick={() => void persistKey()}>
+                      {t("redis.remove_ttl")}
+                    </button>
+                  </div>
+                  {renderKeyDetailValue(keyDetail, t, stringDraft, setStringDraft)}
+                  <div className="redis-key-dialog__actions">
+                    {keyDetail.value.kind === "string" ? (
+                      <button type="button" disabled={isKeyActionRunning} onClick={() => void saveStringValue()}>
+                        {t("redis.save_value")}
+                      </button>
+                    ) : (
+                      <span>{t("redis.edit_only_string")}</span>
+                    )}
+                    <button
+                      type="button"
+                      className="sftp-dialog__danger-button"
+                      disabled={isKeyActionRunning}
+                      onClick={() => setDeleteCandidate({
+                        key: keyDetail.key,
+                        key_type: keyDetail.key_type,
+                        ttl: keyDetail.ttl,
+                      })}
+                    >
+                      {t("redis.delete_key")}
+                    </button>
+                  </div>
                 </>
               ) : null}
             </div>
           </section>
         </div>
       ) : null}
+      {deleteCandidate ? (
+        <div className="connection-dialog__backdrop">
+          <section
+            className="connection-dialog sftp-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-label={t("redis.confirm_delete")}
+          >
+            <form className="connection-form" onSubmit={(event) => {
+              event.preventDefault();
+              void confirmDeleteKey();
+            }}>
+              <header className="connection-dialog__header">
+                <h2>{t("redis.confirm_delete")}</h2>
+                <button type="button" aria-label={t("redis.cancel")} onClick={() => setDeleteCandidate(null)}>
+                  x
+                </button>
+              </header>
+              <p>{t("redis.delete_confirm_message", { key: deleteCandidate.key })}</p>
+              <div className="sftp-dialog__actions">
+                <button type="button" onClick={() => setDeleteCandidate(null)}>
+                  {t("redis.cancel")}
+                </button>
+                <button type="submit" className="sftp-dialog__danger-button" disabled={isKeyActionRunning}>
+                  {t("redis.confirm")}
+                </button>
+              </div>
+            </form>
+          </section>
+        </div>
+      ) : null}
+      <ContextMenu menu={contextMenu} onClose={() => setContextMenu(null)} />
     </section>
   );
 }
@@ -392,13 +622,20 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
 function renderKeyDetailValue(
   detail: RedisKeyValueResponse,
   t: ReturnType<typeof useI18n>["t"],
+  stringDraft: string,
+  setStringDraft: (value: string) => void,
 ) {
   const value = detail.value;
   if (value.kind === "string") {
     return (
       <>
         {value.truncated ? <p className="redis-key-dialog__hint">{t("redis.value_truncated")}</p> : null}
-        <pre className="redis-key-dialog__pre">{value.value}</pre>
+        <textarea
+          className="redis-key-dialog__textarea"
+          aria-label={t("redis.string_content")}
+          value={stringDraft}
+          onChange={(event) => setStringDraft(event.target.value)}
+        />
       </>
     );
   }

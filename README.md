@@ -109,9 +109,13 @@ Redis 当前实现第一批基础能力：
 - 双击 key 会打开只读详情弹窗。
 - key 详情支持查看 `string`、`hash`、`list`、`set` 和 `zset`。
 - `string` 内容默认最多读取 5MB，集合类默认最多读取 500 条，避免大 key 阻塞界面。
+- key 详情弹窗支持按 ESC 关闭。
+- `string` 类型支持在详情弹窗中编辑并保存内容。
+- key 详情支持设置 TTL、移除 TTL 和删除 key，删除前会二次确认。
+- key 列表行右键菜单支持编辑和删除，删除前会二次确认。
 - Rust 后端使用 `DBSIZE` 获取总数，使用 `SCAN` 按加载上限扫描 key，并通过 pipeline 批量读取类型和 TTL。
 
-暂不支持 Redis key 内容编辑、删除、TTL 修改、发布订阅或监控面板。
+暂不支持 Redis 集合类型内容编辑、key 重命名、批量操作、发布订阅或监控面板。
 
 ### 设置
 
@@ -216,7 +220,7 @@ docs/
 
 后续优先级建议：
 
-1. Redis key 内容编辑、删除和 TTL 管理。
+1. Redis 集合类型内容编辑、key 重命名和批量操作。
 2. 数据库连接管理：MySQL、PostgreSQL。
 3. SSH tunnel。
 4. 跳板机。

@@ -23,6 +23,29 @@ pub struct GetRedisKeyValueRequest {
     pub max_string_bytes: Option<u32>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct RedisKeyRequest {
+    pub connection_id: String,
+    pub database: u16,
+    pub key: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SetRedisStringValueRequest {
+    pub connection_id: String,
+    pub database: u16,
+    pub key: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SetRedisKeyTtlRequest {
+    pub connection_id: String,
+    pub database: u16,
+    pub key: String,
+    pub ttl_seconds: u32,
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct RedisKeyEntry {
     pub key: String,
@@ -92,6 +115,26 @@ struct NormalizedGetRedisKeyValueRequest {
     key: String,
     limit: u32,
     max_string_bytes: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NormalizedRedisKeyRequest {
+    database: u16,
+    key: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NormalizedSetRedisStringValueRequest {
+    database: u16,
+    key: String,
+    value: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NormalizedSetRedisKeyTtlRequest {
+    database: u16,
+    key: String,
+    ttl_seconds: u32,
 }
 
 #[tauri::command]
@@ -165,6 +208,99 @@ pub async fn get_redis_key_value(
             Client::open(redis_connection_url(&connection)).map_err(|error| error.to_string())?;
         let mut redis_connection = client.get_connection().map_err(|error| error.to_string())?;
         load_redis_key_value(&mut redis_connection, &normalized)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn set_redis_string_value(
+    settings_store: State<'_, SettingsStore>,
+    request: SetRedisStringValueRequest,
+) -> Result<(), String> {
+    let mut connection = load_redis_connection(settings_store.inner(), &request.connection_id)?;
+    let normalized = normalize_set_redis_string_value_request(&request)?;
+    connection.database = normalized.database;
+
+    tokio::task::spawn_blocking(move || {
+        let client =
+            Client::open(redis_connection_url(&connection)).map_err(|error| error.to_string())?;
+        let mut redis_connection = client.get_connection().map_err(|error| error.to_string())?;
+        redis::cmd("SET")
+            .arg(&normalized.key)
+            .arg(&normalized.value)
+            .query::<()>(&mut redis_connection)
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn delete_redis_key(
+    settings_store: State<'_, SettingsStore>,
+    request: RedisKeyRequest,
+) -> Result<(), String> {
+    let mut connection = load_redis_connection(settings_store.inner(), &request.connection_id)?;
+    let normalized = normalize_redis_key_request(&request)?;
+    connection.database = normalized.database;
+
+    tokio::task::spawn_blocking(move || {
+        let client =
+            Client::open(redis_connection_url(&connection)).map_err(|error| error.to_string())?;
+        let mut redis_connection = client.get_connection().map_err(|error| error.to_string())?;
+        redis::cmd("DEL")
+            .arg(&normalized.key)
+            .query::<u64>(&mut redis_connection)
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn set_redis_key_ttl(
+    settings_store: State<'_, SettingsStore>,
+    request: SetRedisKeyTtlRequest,
+) -> Result<(), String> {
+    let mut connection = load_redis_connection(settings_store.inner(), &request.connection_id)?;
+    let normalized = normalize_set_redis_key_ttl_request(&request)?;
+    connection.database = normalized.database;
+
+    tokio::task::spawn_blocking(move || {
+        let client =
+            Client::open(redis_connection_url(&connection)).map_err(|error| error.to_string())?;
+        let mut redis_connection = client.get_connection().map_err(|error| error.to_string())?;
+        redis::cmd("EXPIRE")
+            .arg(&normalized.key)
+            .arg(normalized.ttl_seconds)
+            .query::<bool>(&mut redis_connection)
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn persist_redis_key(
+    settings_store: State<'_, SettingsStore>,
+    request: RedisKeyRequest,
+) -> Result<(), String> {
+    let mut connection = load_redis_connection(settings_store.inner(), &request.connection_id)?;
+    let normalized = normalize_redis_key_request(&request)?;
+    connection.database = normalized.database;
+
+    tokio::task::spawn_blocking(move || {
+        let client =
+            Client::open(redis_connection_url(&connection)).map_err(|error| error.to_string())?;
+        let mut redis_connection = client.get_connection().map_err(|error| error.to_string())?;
+        redis::cmd("PERSIST")
+            .arg(&normalized.key)
+            .query::<bool>(&mut redis_connection)
+            .map(|_| ())
+            .map_err(|error| error.to_string())
     })
     .await
     .map_err(|error| error.to_string())?
@@ -485,11 +621,64 @@ fn normalize_get_redis_key_value_request(
     })
 }
 
+fn normalize_redis_key_request(
+    request: &RedisKeyRequest,
+) -> Result<NormalizedRedisKeyRequest, String> {
+    let key = request.key.trim();
+    if key.is_empty() {
+        return Err("redis key is required".to_string());
+    }
+
+    Ok(NormalizedRedisKeyRequest {
+        database: request.database,
+        key: key.to_string(),
+    })
+}
+
+fn normalize_set_redis_string_value_request(
+    request: &SetRedisStringValueRequest,
+) -> Result<NormalizedSetRedisStringValueRequest, String> {
+    let key = request.key.trim();
+    if key.is_empty() {
+        return Err("redis key is required".to_string());
+    }
+    if request.value.len() > 10 * 1024 * 1024 {
+        return Err("redis string value is too large".to_string());
+    }
+
+    Ok(NormalizedSetRedisStringValueRequest {
+        database: request.database,
+        key: key.to_string(),
+        value: request.value.clone(),
+    })
+}
+
+fn normalize_set_redis_key_ttl_request(
+    request: &SetRedisKeyTtlRequest,
+) -> Result<NormalizedSetRedisKeyTtlRequest, String> {
+    let key = request.key.trim();
+    if key.is_empty() {
+        return Err("redis key is required".to_string());
+    }
+    if request.ttl_seconds == 0 {
+        return Err("redis ttl must be greater than 0".to_string());
+    }
+
+    Ok(NormalizedSetRedisKeyTtlRequest {
+        database: request.database,
+        key: key.to_string(),
+        ttl_seconds: request.ttl_seconds,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         normalize_get_redis_key_value_request, normalize_list_redis_keys_request,
-        redis_connection_url, GetRedisKeyValueRequest, ListRedisKeysRequest, RedisKeyValue,
+        normalize_redis_key_request, normalize_set_redis_key_ttl_request,
+        normalize_set_redis_string_value_request, redis_connection_url, GetRedisKeyValueRequest,
+        ListRedisKeysRequest, RedisKeyRequest, RedisKeyValue, SetRedisKeyTtlRequest,
+        SetRedisStringValueRequest,
     };
     use crate::models::settings::RedisConnectionSettings;
 
@@ -621,6 +810,82 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&value).unwrap(),
             r#"{"kind":"string","value":"hello","truncated":false,"size":5}"#
+        );
+    }
+
+    #[test]
+    fn normalizes_generic_redis_key_request() {
+        let request = RedisKeyRequest {
+            connection_id: "redis-local".to_string(),
+            database: 1,
+            key: " temp:1 ".to_string(),
+        };
+
+        let normalized = normalize_redis_key_request(&request).unwrap();
+
+        assert_eq!(normalized.database, 1);
+        assert_eq!(normalized.key, "temp:1");
+    }
+
+    #[test]
+    fn normalizes_set_redis_string_value_request() {
+        let request = SetRedisStringValueRequest {
+            connection_id: "redis-local".to_string(),
+            database: 2,
+            key: " config:theme ".to_string(),
+            value: "light".to_string(),
+        };
+
+        let normalized = normalize_set_redis_string_value_request(&request).unwrap();
+
+        assert_eq!(normalized.database, 2);
+        assert_eq!(normalized.key, "config:theme");
+        assert_eq!(normalized.value, "light");
+    }
+
+    #[test]
+    fn rejects_too_large_redis_string_value() {
+        let request = SetRedisStringValueRequest {
+            connection_id: "redis-local".to_string(),
+            database: 0,
+            key: "config:theme".to_string(),
+            value: "x".repeat(10 * 1024 * 1024 + 1),
+        };
+
+        assert_eq!(
+            normalize_set_redis_string_value_request(&request).unwrap_err(),
+            "redis string value is too large"
+        );
+    }
+
+    #[test]
+    fn normalizes_set_redis_key_ttl_request() {
+        let request = SetRedisKeyTtlRequest {
+            connection_id: "redis-local".to_string(),
+            database: 3,
+            key: " session:1 ".to_string(),
+            ttl_seconds: 60,
+        };
+
+        let normalized = normalize_set_redis_key_ttl_request(&request).unwrap();
+
+        assert_eq!(normalized.database, 3);
+        assert_eq!(normalized.key, "session:1");
+        assert_eq!(normalized.ttl_seconds, 60);
+    }
+
+    #[test]
+    fn rejects_zero_redis_key_ttl() {
+        let request = SetRedisKeyTtlRequest {
+            connection_id: "redis-local".to_string(),
+            database: 0,
+            key: "session:1".to_string(),
+            ttl_seconds: 0,
+        };
+
+        assert_eq!(
+            normalize_set_redis_key_ttl_request(&request).unwrap_err(),
+            "redis ttl must be greater than 0"
         );
     }
 }

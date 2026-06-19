@@ -235,6 +235,250 @@ describe("RedisWorkspace", () => {
     expect(dialog).toHaveTextContent("devhub");
   });
 
+  it("saves edited Redis string content and reloads the detail", async () => {
+    callBackendMock.mockResolvedValueOnce({
+      total_count: 1,
+      entries: [
+        { key: "config:theme", key_type: "string", ttl: -1 },
+      ],
+    });
+    callBackendMock.mockResolvedValueOnce({
+      key: "config:theme",
+      key_type: "string",
+      ttl: -1,
+      value: {
+        kind: "string",
+        value: "dark",
+        truncated: false,
+        size: 4,
+      },
+    });
+    callBackendMock.mockResolvedValueOnce(undefined);
+    callBackendMock.mockResolvedValueOnce({
+      key: "config:theme",
+      key_type: "string",
+      ttl: -1,
+      value: {
+        kind: "string",
+        value: "light",
+        truncated: false,
+        size: 5,
+      },
+    });
+
+    renderRedisWorkspace({ connectionId: "redis-local", initialDatabase: 0 });
+
+    await userEvent.click(await screen.findByRole("button", { name: "展开 config" }));
+    await userEvent.dblClick(screen.getByText("config:theme"));
+    const editor = await screen.findByLabelText("Redis string 内容");
+    await userEvent.clear(editor);
+    await userEvent.type(editor, "light");
+    await userEvent.click(screen.getByRole("button", { name: "保存内容" }));
+
+    expect(callBackendMock).toHaveBeenCalledWith("set_redis_string_value", {
+      request: {
+        connection_id: "redis-local",
+        database: 0,
+        key: "config:theme",
+        value: "light",
+      },
+    });
+    await waitFor(() => expect(screen.getByLabelText("Redis string 内容")).toHaveValue("light"));
+  });
+
+  it("sets and removes Redis key ttl from the detail dialog", async () => {
+    callBackendMock.mockResolvedValueOnce({
+      total_count: 1,
+      entries: [
+        { key: "session:1", key_type: "string", ttl: -1 },
+      ],
+    });
+    callBackendMock.mockResolvedValueOnce({
+      key: "session:1",
+      key_type: "string",
+      ttl: -1,
+      value: {
+        kind: "string",
+        value: "token",
+        truncated: false,
+        size: 5,
+      },
+    });
+    callBackendMock.mockResolvedValueOnce(undefined);
+    callBackendMock.mockResolvedValueOnce({
+      key: "session:1",
+      key_type: "string",
+      ttl: 60,
+      value: {
+        kind: "string",
+        value: "token",
+        truncated: false,
+        size: 5,
+      },
+    });
+    callBackendMock.mockResolvedValueOnce(undefined);
+    callBackendMock.mockResolvedValueOnce({
+      key: "session:1",
+      key_type: "string",
+      ttl: -1,
+      value: {
+        kind: "string",
+        value: "token",
+        truncated: false,
+        size: 5,
+      },
+    });
+
+    renderRedisWorkspace({ connectionId: "redis-local", initialDatabase: 0 });
+
+    await userEvent.click(await screen.findByRole("button", { name: "展开 session" }));
+    await userEvent.dblClick(screen.getByText("session:1"));
+    await userEvent.clear(await screen.findByLabelText("TTL 秒数"));
+    await userEvent.type(screen.getByLabelText("TTL 秒数"), "60");
+    await userEvent.click(screen.getByRole("button", { name: "设置 TTL" }));
+
+    expect(callBackendMock).toHaveBeenCalledWith("set_redis_key_ttl", {
+      request: {
+        connection_id: "redis-local",
+        database: 0,
+        key: "session:1",
+        ttl_seconds: 60,
+      },
+    });
+    await waitFor(() => expect(screen.getByText("TTL 60")).toBeInTheDocument());
+
+    await userEvent.click(screen.getByRole("button", { name: "移除 TTL" }));
+
+    expect(callBackendMock).toHaveBeenCalledWith("persist_redis_key", {
+      request: {
+        connection_id: "redis-local",
+        database: 0,
+        key: "session:1",
+      },
+    });
+    await waitFor(() => expect(screen.getByText("TTL 永不过期")).toBeInTheDocument());
+  });
+
+  it("deletes a Redis key after confirmation and refreshes the key list", async () => {
+    callBackendMock.mockResolvedValueOnce({
+      total_count: 1,
+      entries: [
+        { key: "temp:1", key_type: "string", ttl: 30 },
+      ],
+    });
+    callBackendMock.mockResolvedValueOnce({
+      key: "temp:1",
+      key_type: "string",
+      ttl: 30,
+      value: {
+        kind: "string",
+        value: "value",
+        truncated: false,
+        size: 5,
+      },
+    });
+    callBackendMock.mockResolvedValueOnce(undefined);
+    callBackendMock.mockResolvedValueOnce({ total_count: 0, entries: [] });
+
+    renderRedisWorkspace({ connectionId: "redis-local", initialDatabase: 0 });
+
+    await userEvent.click(await screen.findByRole("button", { name: "展开 temp" }));
+    await userEvent.dblClick(screen.getByText("temp:1"));
+    await userEvent.click(await screen.findByRole("button", { name: "删除 key" }));
+    expect(screen.getByRole("dialog", { name: "确认删除 Redis key" })).toHaveTextContent(
+      "确认删除 temp:1？该操作不可逆！",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "确认" }));
+
+    expect(callBackendMock).toHaveBeenCalledWith("delete_redis_key", {
+      request: {
+        connection_id: "redis-local",
+        database: 0,
+        key: "temp:1",
+      },
+    });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "查看 temp:1" })).not.toBeInTheDocument());
+    expect(await screen.findByText("没有匹配的 key")).toBeInTheDocument();
+  });
+
+  it("closes Redis detail dialogs with Escape", async () => {
+    callBackendMock.mockResolvedValueOnce({
+      total_count: 1,
+      entries: [
+        { key: "temp:1", key_type: "string", ttl: 30 },
+      ],
+    });
+    callBackendMock.mockResolvedValueOnce({
+      key: "temp:1",
+      key_type: "string",
+      ttl: 30,
+      value: {
+        kind: "string",
+        value: "value",
+        truncated: false,
+        size: 5,
+      },
+    });
+
+    renderRedisWorkspace({ connectionId: "redis-local", initialDatabase: 0 });
+
+    await userEvent.click(await screen.findByRole("button", { name: "展开 temp" }));
+    await userEvent.dblClick(screen.getByText("temp:1"));
+    expect(await screen.findByRole("dialog", { name: "查看 temp:1" })).toBeInTheDocument();
+
+    await userEvent.keyboard("{Escape}");
+
+    expect(screen.queryByRole("dialog", { name: "查看 temp:1" })).not.toBeInTheDocument();
+  });
+
+  it("shows Redis key context menu actions for editing and deleting a key", async () => {
+    callBackendMock.mockResolvedValueOnce({
+      total_count: 1,
+      entries: [
+        { key: "temp:1", key_type: "string", ttl: 30 },
+      ],
+    });
+    callBackendMock.mockResolvedValueOnce({
+      key: "temp:1",
+      key_type: "string",
+      ttl: 30,
+      value: {
+        kind: "string",
+        value: "value",
+        truncated: false,
+        size: 5,
+      },
+    });
+    callBackendMock.mockResolvedValueOnce(undefined);
+    callBackendMock.mockResolvedValueOnce({ total_count: 0, entries: [] });
+
+    renderRedisWorkspace({ connectionId: "redis-local", initialDatabase: 0 });
+
+    await userEvent.click(await screen.findByRole("button", { name: "展开 temp" }));
+    await userEvent.pointer({ keys: "[MouseRight]", target: screen.getByText("temp:1") });
+    expect(screen.getByRole("menuitem", { name: "编辑" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "删除" })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("menuitem", { name: "编辑" }));
+    expect(await screen.findByRole("dialog", { name: "查看 temp:1" })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "关闭 Redis key 详情" }));
+    await userEvent.pointer({ keys: "[MouseRight]", target: screen.getByText("temp:1") });
+    await userEvent.click(screen.getByRole("menuitem", { name: "删除" }));
+    expect(screen.getByRole("dialog", { name: "确认删除 Redis key" })).toHaveTextContent(
+      "确认删除 temp:1？该操作不可逆！",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "确认" }));
+
+    expect(callBackendMock).toHaveBeenCalledWith("delete_redis_key", {
+      request: {
+        connection_id: "redis-local",
+        database: 0,
+        key: "temp:1",
+      },
+    });
+  });
+
   it("shows an empty state and load errors", async () => {
     callBackendMock.mockResolvedValueOnce({ total_count: 0, entries: [] });
 
