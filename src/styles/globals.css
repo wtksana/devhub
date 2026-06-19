@@ -1303,9 +1303,13 @@ p {
 
 .redis-key-dialog__edit-row {
   display: grid;
-  grid-template-columns: minmax(92px, 0.42fr) minmax(160px, 1fr) auto auto;
+  grid-template-columns: minmax(120px, 0.42fr) minmax(180px, 1fr) 52px 52px;
   align-items: center;
   gap: 8px;
+}
+
+.redis-key-dialog__edit-row--set {
+  grid-template-columns: minmax(180px, 1fr) 52px;
 }
 
 .redis-key-dialog__edit-row input {
@@ -1313,7 +1317,12 @@ p {
   min-width: 0;
 }
 
-.redis-key-dialog__edit-row button {
+.redis-key-dialog__action-button {
+  width: 52px;
+  min-width: 52px;
+  padding-right: 0;
+  padding-left: 0;
+  text-align: center;
   white-space: nowrap;
 }
 

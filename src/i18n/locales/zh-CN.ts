@@ -175,6 +175,7 @@ export const zhCN = {
   "redis.ttl_invalid": "TTL 必须是大于 0 的整数",
   "redis.edit_only_string": "当前仅支持编辑 string 类型。",
   "redis.collection_edit_hint": "集合类型修改后会自动刷新当前内容。",
+  "redis.save": "保存",
   "redis.hash_field_value_label": "字段 {field} 的值",
   "redis.save_hash_field": "保存字段 {field}",
   "redis.delete_hash_field": "删除字段 {field}",

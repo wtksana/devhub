@@ -1409,16 +1409,23 @@ function renderKeyDetailValue(options: RenderKeyDetailValueOptions) {
                   [field]: event.target.value,
                 }))}
               />
-              <button type="button" disabled={isKeyActionRunning} onClick={() => void saveHashField(field)}>
-                {t("redis.save_hash_field", { field })}
+              <button
+                type="button"
+                className="redis-key-dialog__action-button"
+                aria-label={t("redis.save_hash_field", { field })}
+                disabled={isKeyActionRunning}
+                onClick={() => void saveHashField(field)}
+              >
+                {t("redis.save")}
               </button>
               <button
                 type="button"
-                className="sftp-dialog__danger-button"
+                className="redis-key-dialog__action-button sftp-dialog__danger-button"
+                aria-label={t("redis.delete_hash_field", { field })}
                 disabled={isKeyActionRunning}
                 onClick={() => void deleteHashField(field)}
               >
-                {t("redis.delete_hash_field", { field })}
+                {t("redis.delete")}
               </button>
             </div>
           ))}
@@ -1458,16 +1465,23 @@ function renderKeyDetailValue(options: RenderKeyDetailValueOptions) {
                   draftIndex === index ? event.target.value : draft
                 )))}
               />
-              <button type="button" disabled={isKeyActionRunning} onClick={() => void saveListItem(index)}>
-                {t("redis.save_list_item", { index })}
+              <button
+                type="button"
+                className="redis-key-dialog__action-button"
+                aria-label={t("redis.save_list_item", { index })}
+                disabled={isKeyActionRunning}
+                onClick={() => void saveListItem(index)}
+              >
+                {t("redis.save")}
               </button>
               <button
                 type="button"
-                className="sftp-dialog__danger-button"
+                className="redis-key-dialog__action-button sftp-dialog__danger-button"
+                aria-label={t("redis.delete_list_item", { index })}
                 disabled={isKeyActionRunning}
                 onClick={() => void deleteListItem(index)}
               >
-                {t("redis.delete_list_item", { index })}
+                {t("redis.delete")}
               </button>
             </div>
           ))}
@@ -1492,15 +1506,16 @@ function renderKeyDetailValue(options: RenderKeyDetailValueOptions) {
         {value.truncated ? <p className="redis-key-dialog__hint">{t("redis.value_truncated")}</p> : null}
         <div className="redis-key-dialog__rows">
           {value.members.map((member) => (
-            <div className="redis-key-dialog__edit-row" key={member}>
+            <div className="redis-key-dialog__edit-row redis-key-dialog__edit-row--set" key={member}>
               <span className="redis-key-dialog__row-key">{member}</span>
               <button
                 type="button"
-                className="sftp-dialog__danger-button"
+                className="redis-key-dialog__action-button sftp-dialog__danger-button"
+                aria-label={t("redis.delete_set_member", { member })}
                 disabled={isKeyActionRunning}
                 onClick={() => void deleteSetMember(member)}
               >
-                {t("redis.delete_set_member", { member })}
+                {t("redis.delete")}
               </button>
             </div>
           ))}
@@ -1535,16 +1550,23 @@ function renderKeyDetailValue(options: RenderKeyDetailValueOptions) {
                   [member]: event.target.value,
                 }))}
               />
-              <button type="button" disabled={isKeyActionRunning} onClick={() => void saveZsetMember(member)}>
-                {t("redis.save_zset_member", { member })}
+              <button
+                type="button"
+                className="redis-key-dialog__action-button"
+                aria-label={t("redis.save_zset_member", { member })}
+                disabled={isKeyActionRunning}
+                onClick={() => void saveZsetMember(member)}
+              >
+                {t("redis.save")}
               </button>
               <button
                 type="button"
-                className="sftp-dialog__danger-button"
+                className="redis-key-dialog__action-button sftp-dialog__danger-button"
+                aria-label={t("redis.delete_set_member", { member })}
                 disabled={isKeyActionRunning}
                 onClick={() => void deleteZsetMember(member)}
               >
-                {t("redis.delete_set_member", { member })}
+                {t("redis.delete")}
               </button>
             </div>
           ))}

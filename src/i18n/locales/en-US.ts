@@ -177,6 +177,7 @@ export const enUS: Dictionary = {
   "redis.ttl_invalid": "TTL must be an integer greater than 0",
   "redis.edit_only_string": "Only string keys can be edited for now.",
   "redis.collection_edit_hint": "Collection changes refresh the current content automatically.",
+  "redis.save": "Save",
   "redis.hash_field_value_label": "Value for field {field}",
   "redis.save_hash_field": "Save field {field}",
   "redis.delete_hash_field": "Delete field {field}",
