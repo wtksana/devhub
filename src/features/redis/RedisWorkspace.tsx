@@ -190,7 +190,11 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
   const [newZsetMember, setNewZsetMember] = useState("");
   const [newZsetScore, setNewZsetScore] = useState("");
   const [isKeyActionRunning, setIsKeyActionRunning] = useState(false);
+  const [selectedKeys, setSelectedKeys] = useState<string[]>([]);
   const [deleteCandidate, setDeleteCandidate] = useState<RedisKeyEntry | null>(null);
+  const [bulkDeleteCandidate, setBulkDeleteCandidate] = useState<string[] | null>(null);
+  const [isBulkTtlDialogOpen, setIsBulkTtlDialogOpen] = useState(false);
+  const [bulkTtlDraft, setBulkTtlDraft] = useState("");
   const [renameCandidate, setRenameCandidate] = useState<RedisKeyEntry | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
@@ -215,6 +219,7 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
       });
       setTotalCount(response.total_count);
       setKeys(response.entries);
+      setSelectedKeys((current) => current.filter((key) => response.entries.some((entry) => entry.key === key)));
       setError(null);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
@@ -231,11 +236,19 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
     setKeySeparator(DEFAULT_KEY_SEPARATOR);
     setLoadLimit(DEFAULT_LOAD_LIMIT);
     setExpandedFolders(new Set());
+    setSelectedKeys([]);
     void loadKeys(initialDatabase, "", DEFAULT_LOAD_LIMIT);
   }, [connectionId, initialDatabase]);
 
   useEffect(() => {
-    if (!keyDetail && !deleteCandidate && !renameCandidate && !isCreateDialogOpen) return;
+    if (
+      !keyDetail
+      && !deleteCandidate
+      && !bulkDeleteCandidate
+      && !isBulkTtlDialogOpen
+      && !renameCandidate
+      && !isCreateDialogOpen
+    ) return;
 
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key !== "Escape") return;
@@ -247,6 +260,14 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
         setRenameCandidate(null);
         return;
       }
+      if (isBulkTtlDialogOpen) {
+        setIsBulkTtlDialogOpen(false);
+        return;
+      }
+      if (bulkDeleteCandidate) {
+        setBulkDeleteCandidate(null);
+        return;
+      }
       if (deleteCandidate) {
         setDeleteCandidate(null);
         return;
@@ -256,7 +277,7 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [keyDetail, deleteCandidate, renameCandidate, isCreateDialogOpen]);
+  }, [keyDetail, deleteCandidate, bulkDeleteCandidate, isBulkTtlDialogOpen, renameCandidate, isCreateDialogOpen]);
 
   if (!connectionId) {
     return (
@@ -277,6 +298,18 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
       }
       return next;
     });
+  }
+
+  function toggleSelectedKey(key: string) {
+    setSelectedKeys((current) => (
+      current.includes(key)
+        ? current.filter((selectedKey) => selectedKey !== key)
+        : [...current, key]
+    ));
+  }
+
+  function selectedKeysForAction(entry: RedisKeyEntry) {
+    return selectedKeys.includes(entry.key) ? selectedKeys : [entry.key];
   }
 
   async function openKeyDetail(entry: RedisKeyEntry) {
@@ -317,6 +350,7 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
   function openKeyContextMenu(event: React.MouseEvent, entry: RedisKeyEntry) {
     event.preventDefault();
     event.stopPropagation();
+    const actionKeys = selectedKeysForAction(entry);
     setContextMenu({
       x: event.clientX,
       y: event.clientY,
@@ -332,6 +366,22 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
         {
           label: t("redis.delete"),
           onSelect: () => setDeleteCandidate(entry),
+        },
+        {
+          label: t("redis.bulk_delete"),
+          onSelect: () => setBulkDeleteCandidate(actionKeys),
+        },
+        {
+          label: t("redis.bulk_set_ttl"),
+          onSelect: () => {
+            setBulkTtlDraft("");
+            setSelectedKeys(actionKeys);
+            setIsBulkTtlDialogOpen(true);
+          },
+        },
+        {
+          label: t("redis.bulk_remove_ttl"),
+          onSelect: () => void persistSelectedKeys(actionKeys),
         },
       ],
     });
@@ -663,6 +713,88 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
     }
   }
 
+  async function confirmBulkDeleteKeys() {
+    if (!connectionId || !bulkDeleteCandidate) return;
+    const deletingKeys = bulkDeleteCandidate;
+    setIsKeyActionRunning(true);
+    setKeyDetailError(null);
+    try {
+      await callBackend("delete_redis_keys", {
+        request: {
+          connection_id: connectionId,
+          database,
+          keys: deletingKeys,
+        },
+      });
+      setBulkDeleteCandidate(null);
+      setSelectedKeys([]);
+      if (keyDetail && deletingKeys.includes(keyDetail.key)) {
+        setKeyDetail(null);
+      }
+      await loadKeys();
+    } catch (caught) {
+      setKeyDetailError(caught instanceof Error ? caught.message : String(caught));
+      setBulkDeleteCandidate(null);
+    } finally {
+      setIsKeyActionRunning(false);
+    }
+  }
+
+  async function confirmSetBulkTtl(event: React.FormEvent) {
+    event.preventDefault();
+    if (!connectionId || selectedKeys.length === 0) return;
+    const ttlSeconds = Number(bulkTtlDraft);
+    if (!Number.isInteger(ttlSeconds) || ttlSeconds <= 0) {
+      setKeyDetailError(t("redis.ttl_invalid"));
+      return;
+    }
+
+    setIsKeyActionRunning(true);
+    setKeyDetailError(null);
+    try {
+      await callBackend("set_redis_keys_ttl", {
+        request: {
+          connection_id: connectionId,
+          database,
+          keys: selectedKeys,
+          ttl_seconds: ttlSeconds,
+        },
+      });
+      setIsBulkTtlDialogOpen(false);
+      await loadKeys();
+      if (keyDetail && selectedKeys.includes(keyDetail.key)) {
+        await reloadKeyDetail();
+      }
+    } catch (caught) {
+      setKeyDetailError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setIsKeyActionRunning(false);
+    }
+  }
+
+  async function persistSelectedKeys(keysToPersist: string[]) {
+    if (!connectionId || keysToPersist.length === 0) return;
+    setIsKeyActionRunning(true);
+    setKeyDetailError(null);
+    try {
+      await callBackend("persist_redis_keys", {
+        request: {
+          connection_id: connectionId,
+          database,
+          keys: keysToPersist,
+        },
+      });
+      await loadKeys();
+      if (keyDetail && keysToPersist.includes(keyDetail.key)) {
+        await reloadKeyDetail();
+      }
+    } catch (caught) {
+      setKeyDetailError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setIsKeyActionRunning(false);
+    }
+  }
+
   async function confirmRenameKey(event: React.FormEvent) {
     event.preventDefault();
     if (!connectionId || !renameCandidate) return;
@@ -800,6 +932,7 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
         <table>
           <thead>
             <tr>
+              <th className="redis-table__selection-cell" aria-label={t("redis.selection")} />
               <th>{t("redis.key")}</th>
               <th>{t("redis.type")}</th>
               <th>{t("redis.ttl")}</th>
@@ -810,6 +943,7 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
               <Fragment key={row.id}>
                 {row.kind === "folder" ? (
                   <tr className="redis-folder-row">
+                    <td className="redis-table__selection-cell" />
                     <td>
                       <button
                         type="button"
@@ -832,9 +966,19 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
                   </tr>
                 ) : (
                   <tr
+                    className={selectedKeys.includes(row.entry.key) ? "redis-key-row--selected" : undefined}
                     onDoubleClick={() => void openKeyDetail(row.entry)}
                     onContextMenu={(event) => openKeyContextMenu(event, row.entry)}
                   >
+                    <td className="redis-table__selection-cell">
+                      <input
+                        type="checkbox"
+                        aria-label={t("redis.select_key", { key: row.entry.key })}
+                        checked={selectedKeys.includes(row.entry.key)}
+                        onChange={() => toggleSelectedKey(row.entry.key)}
+                        onDoubleClick={(event) => event.stopPropagation()}
+                      />
+                    </td>
                     <td>
                       <span className="redis-key-name" style={{ paddingLeft: `${row.depth * 18}px` }}>
                         {row.entry.key}
@@ -999,6 +1143,76 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
                   {t("redis.cancel")}
                 </button>
                 <button type="submit" className="sftp-dialog__danger-button" disabled={isKeyActionRunning}>
+                  {t("redis.confirm")}
+                </button>
+              </div>
+            </form>
+          </section>
+        </div>
+      ) : null}
+      {bulkDeleteCandidate ? (
+        <div className="connection-dialog__backdrop">
+          <section
+            className="connection-dialog sftp-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-label={t("redis.confirm_bulk_delete")}
+          >
+            <form className="connection-form" onSubmit={(event) => {
+              event.preventDefault();
+              void confirmBulkDeleteKeys();
+            }}>
+              <header className="connection-dialog__header">
+                <h2>{t("redis.confirm_bulk_delete")}</h2>
+                <button type="button" aria-label={t("redis.cancel")} onClick={() => setBulkDeleteCandidate(null)}>
+                  x
+                </button>
+              </header>
+              <p>{t("redis.bulk_delete_confirm_message", { count: bulkDeleteCandidate.length })}</p>
+              <div className="sftp-dialog__actions">
+                <button type="button" onClick={() => setBulkDeleteCandidate(null)}>
+                  {t("redis.cancel")}
+                </button>
+                <button type="submit" className="sftp-dialog__danger-button" disabled={isKeyActionRunning}>
+                  {t("redis.confirm")}
+                </button>
+              </div>
+            </form>
+          </section>
+        </div>
+      ) : null}
+      {isBulkTtlDialogOpen ? (
+        <div className="connection-dialog__backdrop">
+          <section
+            className="connection-dialog sftp-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-label={t("redis.bulk_set_ttl")}
+          >
+            <form className="connection-form" onSubmit={(event) => void confirmSetBulkTtl(event)}>
+              <header className="connection-dialog__header">
+                <h2>{t("redis.bulk_set_ttl")}</h2>
+                <button type="button" aria-label={t("redis.cancel")} onClick={() => setIsBulkTtlDialogOpen(false)}>
+                  x
+                </button>
+              </header>
+              {keyDetailError ? <p role="alert">{keyDetailError}</p> : null}
+              <p>{t("redis.selected_count", { count: selectedKeys.length })}</p>
+              <label>
+                <span>{t("redis.ttl_seconds")}</span>
+                <input
+                  aria-label={t("redis.ttl_seconds")}
+                  type="number"
+                  min={1}
+                  value={bulkTtlDraft}
+                  onChange={(event) => setBulkTtlDraft(event.target.value)}
+                />
+              </label>
+              <div className="sftp-dialog__actions">
+                <button type="button" onClick={() => setIsBulkTtlDialogOpen(false)}>
+                  {t("redis.cancel")}
+                </button>
+                <button type="submit" disabled={isKeyActionRunning}>
                   {t("redis.confirm")}
                 </button>
               </div>

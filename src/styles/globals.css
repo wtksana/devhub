@@ -1130,6 +1130,24 @@ p {
   background: var(--panel-raised);
 }
 
+.redis-workspace .redis-table__selection-cell {
+  width: 34px;
+  padding-right: 6px;
+  padding-left: 8px;
+  text-align: center;
+}
+
+.redis-workspace .redis-table__selection-cell input {
+  display: block;
+  width: 14px;
+  height: 14px;
+  margin: 0 auto;
+}
+
+.redis-key-row--selected {
+  background: color-mix(in srgb, var(--accent) 12%, var(--panel));
+}
+
 .redis-folder-row {
   color: var(--text);
   background: color-mix(in srgb, var(--panel-soft) 58%, transparent);

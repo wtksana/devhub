@@ -31,6 +31,13 @@ pub struct RedisKeyRequest {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct RedisKeysRequest {
+    pub connection_id: String,
+    pub database: u16,
+    pub keys: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct SetRedisStringValueRequest {
     pub connection_id: String,
     pub database: u16,
@@ -102,6 +109,14 @@ pub struct SetRedisKeyTtlRequest {
     pub connection_id: String,
     pub database: u16,
     pub key: String,
+    pub ttl_seconds: u32,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SetRedisKeysTtlRequest {
+    pub connection_id: String,
+    pub database: u16,
+    pub keys: Vec<String>,
     pub ttl_seconds: u32,
 }
 
@@ -217,6 +232,12 @@ struct NormalizedRedisKeyRequest {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+struct NormalizedRedisKeysRequest {
+    database: u16,
+    keys: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct NormalizedSetRedisStringValueRequest {
     database: u16,
     key: String,
@@ -279,6 +300,13 @@ struct NormalizedDeleteRedisZsetMemberRequest {
 struct NormalizedSetRedisKeyTtlRequest {
     database: u16,
     key: String,
+    ttl_seconds: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NormalizedSetRedisKeysTtlRequest {
+    database: u16,
+    keys: Vec<String>,
     ttl_seconds: u32,
 }
 
@@ -689,6 +717,32 @@ pub async fn delete_redis_key(
     .map_err(|error| error.to_string())?
 }
 
+#[tauri::command]
+pub async fn delete_redis_keys(
+    settings_store: State<'_, SettingsStore>,
+    request: RedisKeysRequest,
+) -> Result<(), String> {
+    let mut connection = load_redis_connection(settings_store.inner(), &request.connection_id)?;
+    let normalized = normalize_redis_keys_request(&request)?;
+    connection.database = normalized.database;
+
+    tokio::task::spawn_blocking(move || {
+        let client =
+            Client::open(redis_connection_url(&connection)).map_err(|error| error.to_string())?;
+        let mut redis_connection = client.get_connection().map_err(|error| error.to_string())?;
+        let mut command = redis::cmd("DEL");
+        for key in &normalized.keys {
+            command.arg(key);
+        }
+        command
+            .query::<u64>(&mut redis_connection)
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
 fn create_redis_key_value(
     redis_connection: &mut redis::Connection,
     request: &NormalizedCreateRedisKeyRequest,
@@ -759,6 +813,32 @@ pub async fn set_redis_key_ttl(
 }
 
 #[tauri::command]
+pub async fn set_redis_keys_ttl(
+    settings_store: State<'_, SettingsStore>,
+    request: SetRedisKeysTtlRequest,
+) -> Result<(), String> {
+    let mut connection = load_redis_connection(settings_store.inner(), &request.connection_id)?;
+    let normalized = normalize_set_redis_keys_ttl_request(&request)?;
+    connection.database = normalized.database;
+
+    tokio::task::spawn_blocking(move || {
+        let client =
+            Client::open(redis_connection_url(&connection)).map_err(|error| error.to_string())?;
+        let mut redis_connection = client.get_connection().map_err(|error| error.to_string())?;
+        let mut pipeline = redis::pipe();
+        for key in &normalized.keys {
+            pipeline.cmd("EXPIRE").arg(key).arg(normalized.ttl_seconds);
+        }
+        pipeline
+            .query::<Vec<bool>>(&mut redis_connection)
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 pub async fn persist_redis_key(
     settings_store: State<'_, SettingsStore>,
     request: RedisKeyRequest,
@@ -774,6 +854,32 @@ pub async fn persist_redis_key(
         redis::cmd("PERSIST")
             .arg(&normalized.key)
             .query::<bool>(&mut redis_connection)
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn persist_redis_keys(
+    settings_store: State<'_, SettingsStore>,
+    request: RedisKeysRequest,
+) -> Result<(), String> {
+    let mut connection = load_redis_connection(settings_store.inner(), &request.connection_id)?;
+    let normalized = normalize_redis_keys_request(&request)?;
+    connection.database = normalized.database;
+
+    tokio::task::spawn_blocking(move || {
+        let client =
+            Client::open(redis_connection_url(&connection)).map_err(|error| error.to_string())?;
+        let mut redis_connection = client.get_connection().map_err(|error| error.to_string())?;
+        let mut pipeline = redis::pipe();
+        for key in &normalized.keys {
+            pipeline.cmd("PERSIST").arg(key);
+        }
+        pipeline
+            .query::<Vec<bool>>(&mut redis_connection)
             .map(|_| ())
             .map_err(|error| error.to_string())
     })
@@ -1138,6 +1244,30 @@ fn normalize_redis_key_request(
     })
 }
 
+fn normalize_redis_keys_request(
+    request: &RedisKeysRequest,
+) -> Result<NormalizedRedisKeysRequest, String> {
+    let mut keys = Vec::new();
+    for key in &request.keys {
+        let key = key.trim();
+        if key.is_empty() || keys.iter().any(|existing| existing == key) {
+            continue;
+        }
+        keys.push(key.to_string());
+    }
+    if keys.is_empty() {
+        return Err("redis key is required".to_string());
+    }
+    if keys.len() > 5_000 {
+        return Err("redis key count must be <= 5000".to_string());
+    }
+
+    Ok(NormalizedRedisKeysRequest {
+        database: request.database,
+        keys,
+    })
+}
+
 fn normalize_set_redis_string_value_request(
     request: &SetRedisStringValueRequest,
 ) -> Result<NormalizedSetRedisStringValueRequest, String> {
@@ -1292,6 +1422,25 @@ fn normalize_set_redis_key_ttl_request(
     })
 }
 
+fn normalize_set_redis_keys_ttl_request(
+    request: &SetRedisKeysTtlRequest,
+) -> Result<NormalizedSetRedisKeysTtlRequest, String> {
+    let normalized = normalize_redis_keys_request(&RedisKeysRequest {
+        connection_id: request.connection_id.clone(),
+        database: request.database,
+        keys: request.keys.clone(),
+    })?;
+    if request.ttl_seconds == 0 {
+        return Err("redis ttl must be greater than 0".to_string());
+    }
+
+    Ok(NormalizedSetRedisKeysTtlRequest {
+        database: normalized.database,
+        keys: normalized.keys,
+        ttl_seconds: request.ttl_seconds,
+    })
+}
+
 fn normalize_rename_redis_key_request(
     request: &RenameRedisKeyRequest,
 ) -> Result<NormalizedRenameRedisKeyRequest, String> {
@@ -1416,16 +1565,18 @@ mod tests {
         normalize_create_redis_key_request, normalize_delete_redis_hash_field_request,
         normalize_delete_redis_list_item_request, normalize_delete_redis_zset_member_request,
         normalize_get_redis_key_value_request, normalize_list_redis_keys_request,
-        normalize_redis_key_request, normalize_redis_set_member_request,
-        normalize_rename_redis_key_request, normalize_set_redis_hash_field_request,
-        normalize_set_redis_key_ttl_request, normalize_set_redis_list_item_request,
+        normalize_redis_key_request, normalize_redis_keys_request,
+        normalize_redis_set_member_request, normalize_rename_redis_key_request,
+        normalize_set_redis_hash_field_request, normalize_set_redis_key_ttl_request,
+        normalize_set_redis_keys_ttl_request, normalize_set_redis_list_item_request,
         normalize_set_redis_string_value_request, normalize_set_redis_zset_member_request,
         redis_connection_url, CreateRedisKeyRequest, DeleteRedisHashFieldRequest,
         DeleteRedisListItemRequest, DeleteRedisZsetMemberRequest, GetRedisKeyValueRequest,
         ListRedisKeysRequest, NormalizedCreateRedisKeyValue, RedisHashEntryRequest,
-        RedisKeyRequest, RedisKeyValue, RedisSetMemberRequest, RedisZsetEntryRequest,
-        RenameRedisKeyRequest, SetRedisHashFieldRequest, SetRedisKeyTtlRequest,
-        SetRedisListItemRequest, SetRedisStringValueRequest, SetRedisZsetMemberRequest,
+        RedisKeyRequest, RedisKeyValue, RedisKeysRequest, RedisSetMemberRequest,
+        RedisZsetEntryRequest, RenameRedisKeyRequest, SetRedisHashFieldRequest,
+        SetRedisKeyTtlRequest, SetRedisKeysTtlRequest, SetRedisListItemRequest,
+        SetRedisStringValueRequest, SetRedisZsetMemberRequest,
     };
     use crate::models::settings::RedisConnectionSettings;
 
@@ -1572,6 +1723,42 @@ mod tests {
 
         assert_eq!(normalized.database, 1);
         assert_eq!(normalized.key, "temp:1");
+    }
+
+    #[test]
+    fn normalizes_bulk_redis_key_request_with_trim_and_deduplication() {
+        let request = RedisKeysRequest {
+            connection_id: "redis-local".to_string(),
+            database: 1,
+            keys: vec![
+                " temp:1 ".to_string(),
+                "temp:2".to_string(),
+                "temp:1".to_string(),
+                " ".to_string(),
+            ],
+        };
+
+        let normalized = normalize_redis_keys_request(&request).unwrap();
+
+        assert_eq!(normalized.database, 1);
+        assert_eq!(
+            normalized.keys,
+            vec!["temp:1".to_string(), "temp:2".to_string()]
+        );
+    }
+
+    #[test]
+    fn rejects_empty_bulk_redis_key_request() {
+        let request = RedisKeysRequest {
+            connection_id: "redis-local".to_string(),
+            database: 0,
+            keys: vec![" ".to_string()],
+        };
+
+        assert_eq!(
+            normalize_redis_keys_request(&request).unwrap_err(),
+            "redis key is required"
+        );
     }
 
     #[test]
@@ -1780,6 +1967,40 @@ mod tests {
 
         assert_eq!(
             normalize_set_redis_key_ttl_request(&request).unwrap_err(),
+            "redis ttl must be greater than 0"
+        );
+    }
+
+    #[test]
+    fn normalizes_set_redis_keys_ttl_request() {
+        let request = SetRedisKeysTtlRequest {
+            connection_id: "redis-local".to_string(),
+            database: 3,
+            keys: vec![" session:1 ".to_string(), "session:2".to_string()],
+            ttl_seconds: 60,
+        };
+
+        let normalized = normalize_set_redis_keys_ttl_request(&request).unwrap();
+
+        assert_eq!(normalized.database, 3);
+        assert_eq!(
+            normalized.keys,
+            vec!["session:1".to_string(), "session:2".to_string()]
+        );
+        assert_eq!(normalized.ttl_seconds, 60);
+    }
+
+    #[test]
+    fn rejects_zero_redis_keys_ttl() {
+        let request = SetRedisKeysTtlRequest {
+            connection_id: "redis-local".to_string(),
+            database: 0,
+            keys: vec!["session:1".to_string()],
+            ttl_seconds: 0,
+        };
+
+        assert_eq!(
+            normalize_set_redis_keys_ttl_request(&request).unwrap_err(),
             "redis ttl must be greater than 0"
         );
     }

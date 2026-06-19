@@ -880,6 +880,101 @@ describe("RedisWorkspace", () => {
     });
   });
 
+  it("deletes selected Redis keys from the key context menu and refreshes the list", async () => {
+    callBackendMock.mockResolvedValueOnce({
+      total_count: 2,
+      entries: [
+        { key: "temp:1", key_type: "string", ttl: 30 },
+        { key: "temp:2", key_type: "string", ttl: 30 },
+      ],
+    });
+    callBackendMock.mockResolvedValueOnce(undefined);
+    callBackendMock.mockResolvedValueOnce({ total_count: 0, entries: [] });
+
+    renderRedisWorkspace({ connectionId: "redis-local", initialDatabase: 0 });
+
+    await userEvent.click(await screen.findByRole("button", { name: "展开 temp" }));
+    await userEvent.click(screen.getByRole("checkbox", { name: "选择 temp:1" }));
+    await userEvent.click(screen.getByRole("checkbox", { name: "选择 temp:2" }));
+    await userEvent.pointer({ keys: "[MouseRight]", target: screen.getByText("temp:1") });
+    await userEvent.click(screen.getByRole("menuitem", { name: "批量删除" }));
+
+    expect(screen.getByRole("dialog", { name: "确认批量删除 Redis key" })).toHaveTextContent(
+      "确认删除选中的 2 个 key？该操作不可逆！",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "确认" }));
+
+    expect(callBackendMock).toHaveBeenCalledWith("delete_redis_keys", {
+      request: {
+        connection_id: "redis-local",
+        database: 0,
+        keys: ["temp:1", "temp:2"],
+      },
+    });
+    expect(await screen.findByText("没有匹配的 key")).toBeInTheDocument();
+  });
+
+  it("sets and removes ttl for selected Redis keys from the key context menu", async () => {
+    callBackendMock.mockResolvedValueOnce({
+      total_count: 2,
+      entries: [
+        { key: "session:1", key_type: "string", ttl: -1 },
+        { key: "session:2", key_type: "string", ttl: -1 },
+      ],
+    });
+    callBackendMock.mockResolvedValueOnce(undefined);
+    callBackendMock.mockResolvedValueOnce({
+      total_count: 2,
+      entries: [
+        { key: "session:1", key_type: "string", ttl: 120 },
+        { key: "session:2", key_type: "string", ttl: 120 },
+      ],
+    });
+    callBackendMock.mockResolvedValueOnce(undefined);
+    callBackendMock.mockResolvedValueOnce({
+      total_count: 2,
+      entries: [
+        { key: "session:1", key_type: "string", ttl: -1 },
+        { key: "session:2", key_type: "string", ttl: -1 },
+      ],
+    });
+
+    renderRedisWorkspace({ connectionId: "redis-local", initialDatabase: 0 });
+
+    await userEvent.click(await screen.findByRole("button", { name: "展开 session" }));
+    await userEvent.click(screen.getByRole("checkbox", { name: "选择 session:1" }));
+    await userEvent.click(screen.getByRole("checkbox", { name: "选择 session:2" }));
+    await userEvent.pointer({ keys: "[MouseRight]", target: screen.getByText("session:1") });
+    await userEvent.click(screen.getByRole("menuitem", { name: "批量设置 TTL" }));
+
+    const ttlDialog = screen.getByRole("dialog", { name: "批量设置 TTL" });
+    expect(ttlDialog).toHaveTextContent("已选择 2 个 key");
+    await userEvent.type(within(ttlDialog).getByLabelText("TTL 秒数"), "120");
+    await userEvent.click(within(ttlDialog).getByRole("button", { name: "确认" }));
+
+    expect(callBackendMock).toHaveBeenCalledWith("set_redis_keys_ttl", {
+      request: {
+        connection_id: "redis-local",
+        database: 0,
+        keys: ["session:1", "session:2"],
+        ttl_seconds: 120,
+      },
+    });
+    await waitFor(() => expect(screen.getAllByText("120")).toHaveLength(2));
+
+    await userEvent.pointer({ keys: "[MouseRight]", target: screen.getByText("session:1") });
+    await userEvent.click(screen.getByRole("menuitem", { name: "批量移除 TTL" }));
+
+    expect(callBackendMock).toHaveBeenCalledWith("persist_redis_keys", {
+      request: {
+        connection_id: "redis-local",
+        database: 0,
+        keys: ["session:1", "session:2"],
+      },
+    });
+    await waitFor(() => expect(screen.getAllByText("永不过期")).toHaveLength(2));
+  });
+
   it("renames a Redis key from the context menu and opens the renamed key detail", async () => {
     callBackendMock.mockResolvedValueOnce({
       total_count: 1,
