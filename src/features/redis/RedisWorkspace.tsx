@@ -521,11 +521,6 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
       });
       setIsCreateDialogOpen(false);
       await loadKeys();
-      await openKeyDetail({
-        key,
-        key_type: createDraft.keyType,
-        ttl: ttlSeconds ?? -1,
-      });
     } catch (caught) {
       setKeyDetailError(caught instanceof Error ? caught.message : String(caught));
     } finally {
@@ -569,17 +564,22 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
           />
           <span>{t("redis.load_limit_suffix")}</span>
         </label>
+        <button type="button" onClick={openCreateDialog}>
+          {t("redis.create_key")}
+        </button>
         <label className="redis-toolbar__keyword">
           <input
             aria-label={t("redis.keyword")}
             placeholder={t("redis.keyword")}
             value={keyword}
             onChange={(event) => setKeyword(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                void loadKeys();
+              }
+            }}
           />
         </label>
-        <button type="button" onClick={openCreateDialog}>
-          {t("redis.create_key")}
-        </button>
         <button type="button" onClick={() => void loadKeys()}>
           {t("redis.refresh")}
         </button>
@@ -890,9 +890,9 @@ function renderCreateKeyValueEditor(
         {draft.hashEntries.map((entry, index) => (
           <div className="redis-create-dialog__row" key={index}>
             <label>
-              <span>{t("redis.hash_field")}</span>
               <input
                 aria-label={t("redis.hash_field")}
+                placeholder={t("redis.hash_field")}
                 value={entry.field}
                 onChange={(event) => setDraft((current) => ({
                   ...current,
@@ -903,9 +903,9 @@ function renderCreateKeyValueEditor(
               />
             </label>
             <label>
-              <span>{t("redis.hash_value")}</span>
               <input
                 aria-label={t("redis.hash_value")}
+                placeholder={t("redis.hash_value")}
                 value={entry.value}
                 onChange={(event) => setDraft((current) => ({
                   ...current,
@@ -915,6 +915,19 @@ function renderCreateKeyValueEditor(
                 }))}
               />
             </label>
+            <button
+              type="button"
+              className="redis-create-dialog__remove-button"
+              aria-label={t("redis.remove_entry")}
+              onClick={() => setDraft((current) => ({
+                ...current,
+                hashEntries: current.hashEntries.length > 1
+                  ? current.hashEntries.filter((_, itemIndex) => itemIndex !== index)
+                  : [{ field: "", value: "" }],
+              }))}
+            >
+              -
+            </button>
           </div>
         ))}
         <button
@@ -937,9 +950,9 @@ function renderCreateKeyValueEditor(
         {draft.zsetEntries.map((entry, index) => (
           <div className="redis-create-dialog__row" key={index}>
             <label>
-              <span>{t("redis.member")}</span>
               <input
                 aria-label={t("redis.member")}
+                placeholder={t("redis.member")}
                 value={entry.member}
                 onChange={(event) => setDraft((current) => ({
                   ...current,
@@ -950,9 +963,9 @@ function renderCreateKeyValueEditor(
               />
             </label>
             <label>
-              <span>{t("redis.score")}</span>
               <input
                 aria-label={t("redis.score")}
+                placeholder={t("redis.score")}
                 value={entry.score}
                 onChange={(event) => setDraft((current) => ({
                   ...current,
@@ -962,6 +975,19 @@ function renderCreateKeyValueEditor(
                 }))}
               />
             </label>
+            <button
+              type="button"
+              className="redis-create-dialog__remove-button"
+              aria-label={t("redis.remove_entry")}
+              onClick={() => setDraft((current) => ({
+                ...current,
+                zsetEntries: current.zsetEntries.length > 1
+                  ? current.zsetEntries.filter((_, itemIndex) => itemIndex !== index)
+                  : [{ member: "", score: "0" }],
+              }))}
+            >
+              -
+            </button>
           </div>
         ))}
         <button

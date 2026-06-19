@@ -148,6 +148,7 @@ export const zhCN = {
   "redis.add_entry": "添加条目",
   "redis.add_item": "添加元素",
   "redis.add_member": "添加成员",
+  "redis.remove_entry": "删除条目",
   "redis.refresh": "刷新",
   "redis.loading": "加载中...",
   "redis.empty": "没有匹配的 key",

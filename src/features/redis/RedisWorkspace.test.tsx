@@ -93,6 +93,32 @@ describe("RedisWorkspace", () => {
     expect(screen.getByText("共 320 条数据，已加载 1 条")).toBeInTheDocument();
   });
 
+  it("refreshes Redis keys when pressing Enter in the keyword input", async () => {
+    callBackendMock.mockResolvedValueOnce({ total_count: 0, entries: [] });
+    callBackendMock.mockResolvedValueOnce({
+      total_count: 1,
+      entries: [
+        { key: "session:enter", key_type: "string", ttl: -1 },
+      ],
+    });
+
+    renderRedisWorkspace({ connectionId: "redis-local", initialDatabase: 0 });
+
+    await waitFor(() => expect(callBackendMock).toHaveBeenCalledTimes(1));
+    await userEvent.type(screen.getByLabelText("关键字模糊匹配"), "session{Enter}");
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenLastCalledWith("list_redis_keys", {
+        request: {
+          connection_id: "redis-local",
+          database: 0,
+          pattern: "*session*",
+          count: 5000,
+        },
+      });
+    });
+  });
+
   it("groups loaded keys by the editable separator", async () => {
     callBackendMock.mockResolvedValueOnce({
       total_count: 4,
@@ -526,7 +552,7 @@ describe("RedisWorkspace", () => {
     expect(await screen.findByRole("dialog", { name: "查看 temp:renamed" })).toBeInTheDocument();
   });
 
-  it("creates a Redis hash key from the toolbar and opens the new key detail", async () => {
+  it("creates a Redis hash key from the toolbar without opening the new key detail", async () => {
     callBackendMock.mockResolvedValueOnce({ total_count: 0, entries: [] });
     callBackendMock.mockResolvedValueOnce(undefined);
     callBackendMock.mockResolvedValueOnce({
@@ -535,21 +561,12 @@ describe("RedisWorkspace", () => {
         { key: "user:1", key_type: "hash", ttl: 60 },
       ],
     });
-    callBackendMock.mockResolvedValueOnce({
-      key: "user:1",
-      key_type: "hash",
-      ttl: 60,
-      value: {
-        kind: "hash",
-        entries: [["name", "devhub"]],
-        truncated: false,
-        length: 1,
-      },
-    });
 
     renderRedisWorkspace({ connectionId: "redis-local", initialDatabase: 0 });
 
     await waitFor(() => expect(callBackendMock).toHaveBeenCalledTimes(1));
+    const toolbarButtons = screen.getAllByRole("button").map((button) => button.textContent);
+    expect(toolbarButtons.indexOf("新建 key")).toBeLessThan(toolbarButtons.indexOf("刷新"));
     await userEvent.click(screen.getByRole("button", { name: "新建 key" }));
     const dialog = screen.getByRole("dialog", { name: "新建 Redis key" });
     await userEvent.type(within(dialog).getByLabelText("Key 名称"), "user:1");
@@ -562,6 +579,7 @@ describe("RedisWorkspace", () => {
     const valueInputs = within(dialog).getAllByLabelText("字段值");
     await userEvent.type(fieldInputs[1], "role");
     await userEvent.type(valueInputs[1], "admin");
+    await userEvent.click(within(dialog).getAllByRole("button", { name: "删除条目" })[0]);
     await userEvent.type(within(dialog).getByLabelText("TTL 秒数"), "60");
     await userEvent.click(within(dialog).getByRole("button", { name: "确认" }));
 
@@ -573,16 +591,16 @@ describe("RedisWorkspace", () => {
         key_type: "hash",
         ttl_seconds: 60,
         string_value: "",
-        hash_entries: [
-          { field: "name", value: "devhub" },
-          { field: "role", value: "admin" },
-        ],
+        hash_entries: [{ field: "role", value: "admin" }],
         list_items: [""],
         set_members: [""],
         zset_entries: [{ member: "", score: "0" }],
       },
     });
-    expect(await screen.findByRole("dialog", { name: "查看 user:1" })).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "新建 Redis key" })).not.toBeInTheDocument());
+    expect(screen.queryByRole("dialog", { name: "查看 user:1" })).not.toBeInTheDocument();
+    await userEvent.click(await screen.findByRole("button", { name: "展开 user" }));
+    expect(screen.getByText("user:1")).toBeInTheDocument();
   });
 
   it("shows an empty state and load errors", async () => {

@@ -1308,12 +1308,19 @@ p {
 
 .redis-create-dialog__row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 28px;
+  align-items: end;
   gap: 10px;
 }
 
 .redis-create-dialog__row input {
   width: 100%;
+}
+
+.redis-create-dialog__remove-button {
+  width: 28px;
+  height: 28px;
+  padding: 0;
 }
 
 .redis-create-dialog__rows {
