@@ -146,6 +146,7 @@ export const zhCN = {
   "redis.member": "成员",
   "redis.score": "分数",
   "redis.add_entry": "添加条目",
+  "redis.add": "添加",
   "redis.add_item": "添加元素",
   "redis.add_member": "添加成员",
   "redis.remove_entry": "删除条目",

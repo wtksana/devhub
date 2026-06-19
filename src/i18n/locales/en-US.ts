@@ -148,6 +148,7 @@ export const enUS: Dictionary = {
   "redis.member": "Member",
   "redis.score": "Score",
   "redis.add_entry": "Add entry",
+  "redis.add": "Add",
   "redis.add_item": "Add item",
   "redis.add_member": "Add member",
   "redis.remove_entry": "Remove entry",

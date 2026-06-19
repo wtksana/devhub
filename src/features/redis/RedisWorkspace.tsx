@@ -1442,8 +1442,14 @@ function renderKeyDetailValue(options: RenderKeyDetailValueOptions) {
               value={newHashValue}
               onChange={(event) => setNewHashValue(event.target.value)}
             />
-            <button type="button" disabled={isKeyActionRunning} onClick={() => void addHashField()}>
-              {t("redis.add_hash_field")}
+            <button
+              type="button"
+              className="redis-key-dialog__action-button"
+              aria-label={t("redis.add_hash_field")}
+              disabled={isKeyActionRunning}
+              onClick={() => void addHashField()}
+            >
+              {t("redis.add")}
             </button>
           </div>
         </div>
@@ -1486,14 +1492,21 @@ function renderKeyDetailValue(options: RenderKeyDetailValueOptions) {
             </div>
           ))}
           <div className="redis-key-dialog__edit-row">
+            <span aria-hidden="true" className="redis-key-dialog__row-spacer" />
             <input
               aria-label={t("redis.new_item")}
               placeholder={t("redis.new_item")}
               value={newListItem}
               onChange={(event) => setNewListItem(event.target.value)}
             />
-            <button type="button" disabled={isKeyActionRunning} onClick={() => void appendListItem()}>
-              {t("redis.add_item")}
+            <button
+              type="button"
+              className="redis-key-dialog__action-button"
+              aria-label={t("redis.add_item")}
+              disabled={isKeyActionRunning}
+              onClick={() => void appendListItem()}
+            >
+              {t("redis.add")}
             </button>
           </div>
         </div>
@@ -1508,6 +1521,8 @@ function renderKeyDetailValue(options: RenderKeyDetailValueOptions) {
           {value.members.map((member) => (
             <div className="redis-key-dialog__edit-row redis-key-dialog__edit-row--set" key={member}>
               <span className="redis-key-dialog__row-key">{member}</span>
+              <span aria-hidden="true" className="redis-key-dialog__row-spacer" />
+              <span aria-hidden="true" className="redis-key-dialog__row-spacer" />
               <button
                 type="button"
                 className="redis-key-dialog__action-button sftp-dialog__danger-button"
@@ -1519,15 +1534,22 @@ function renderKeyDetailValue(options: RenderKeyDetailValueOptions) {
               </button>
             </div>
           ))}
-          <div className="redis-key-dialog__edit-row">
+          <div className="redis-key-dialog__edit-row redis-key-dialog__edit-row--set">
+            <span aria-hidden="true" className="redis-key-dialog__row-spacer" />
             <input
               aria-label={t("redis.new_member")}
               placeholder={t("redis.new_member")}
               value={newSetMember}
               onChange={(event) => setNewSetMember(event.target.value)}
             />
-            <button type="button" disabled={isKeyActionRunning} onClick={() => void addSetMember()}>
-              {t("redis.add_member")}
+            <button
+              type="button"
+              className="redis-key-dialog__action-button"
+              aria-label={t("redis.add_member")}
+              disabled={isKeyActionRunning}
+              onClick={() => void addSetMember()}
+            >
+              {t("redis.add")}
             </button>
           </div>
         </div>
@@ -1540,8 +1562,9 @@ function renderKeyDetailValue(options: RenderKeyDetailValueOptions) {
         {value.truncated ? <p className="redis-key-dialog__hint">{t("redis.value_truncated")}</p> : null}
         <div className="redis-key-dialog__rows">
           {value.entries.map(([member]) => (
-            <div className="redis-key-dialog__edit-row" key={member}>
+            <div className="redis-key-dialog__edit-row redis-key-dialog__edit-row--zset" key={member}>
               <span className="redis-key-dialog__row-key">{member}</span>
+              <span aria-hidden="true" className="redis-key-dialog__row-spacer" />
               <input
                 aria-label={t("redis.zset_score_label", { member })}
                 value={zsetDrafts[member] ?? ""}
@@ -1570,7 +1593,8 @@ function renderKeyDetailValue(options: RenderKeyDetailValueOptions) {
               </button>
             </div>
           ))}
-          <div className="redis-key-dialog__edit-row">
+          <div className="redis-key-dialog__edit-row redis-key-dialog__edit-row--zset">
+            <span aria-hidden="true" className="redis-key-dialog__row-spacer" />
             <input
               aria-label={t("redis.new_member")}
               placeholder={t("redis.new_member")}
@@ -1583,8 +1607,14 @@ function renderKeyDetailValue(options: RenderKeyDetailValueOptions) {
               value={newZsetScore}
               onChange={(event) => setNewZsetScore(event.target.value)}
             />
-            <button type="button" disabled={isKeyActionRunning} onClick={() => void addZsetMember()}>
-              {t("redis.add_member")}
+            <button
+              type="button"
+              className="redis-key-dialog__action-button"
+              aria-label={t("redis.add_member")}
+              disabled={isKeyActionRunning}
+              onClick={() => void addZsetMember()}
+            >
+              {t("redis.add")}
             </button>
           </div>
         </div>

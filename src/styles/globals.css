@@ -1309,7 +1309,11 @@ p {
 }
 
 .redis-key-dialog__edit-row--set {
-  grid-template-columns: minmax(180px, 1fr) 52px;
+  grid-template-columns: minmax(120px, 0.42fr) minmax(180px, 1fr) 52px 52px;
+}
+
+.redis-key-dialog__edit-row--zset {
+  grid-template-columns: minmax(120px, 0.42fr) minmax(180px, 1fr) minmax(72px, 112px) 52px 52px;
 }
 
 .redis-key-dialog__edit-row input {
@@ -1335,10 +1339,18 @@ p {
   white-space: nowrap;
 }
 
+.redis-key-dialog__row-spacer {
+  min-width: 0;
+}
+
 @media (max-width: 760px) {
   .redis-key-dialog__edit-row {
     grid-template-columns: 1fr;
     justify-items: stretch;
+  }
+
+  .redis-key-dialog__row-spacer {
+    display: none;
   }
 }
 
