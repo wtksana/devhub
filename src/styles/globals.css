@@ -1041,16 +1041,24 @@ p {
 
 .redis-workspace > header {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 10px;
 }
 
 .redis-workspace > header label {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: 6px;
   color: var(--muted);
   font-size: var(--ui-font-size-small, 15px);
+  white-space: nowrap;
+}
+
+.redis-workspace > header button {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .redis-workspace > header input[aria-label="Redis 数据库"],
@@ -1078,13 +1086,13 @@ p {
 }
 
 .redis-toolbar__keyword {
-  flex: 0 0 240px;
-  width: 240px;
-  margin-left: auto;
+  flex: 1 1 240px;
+  min-width: 180px;
+  max-width: 320px;
 }
 
 .redis-toolbar__keyword input {
-  width: 240px;
+  width: 100%;
 }
 
 .redis-table-scroll {
