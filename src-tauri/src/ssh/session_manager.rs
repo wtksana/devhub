@@ -26,6 +26,8 @@ const INPUT_CHANNEL_SIZE: usize = 256;
 const OUTPUT_BUFFER_SIZE: usize = 8192;
 pub const LOCAL_CONNECTION_ID: &str = "local";
 const SSH_IDLE_SLEEP: Duration = Duration::from_millis(10);
+const SSH_TRANSIENT_WRITE_RETRIES: usize = 8;
+const SSH_TRANSIENT_WRITE_RETRY_DELAY: Duration = Duration::from_millis(5);
 
 #[derive(Debug, Error)]
 pub enum TerminalSessionError {
@@ -464,9 +466,13 @@ fn drain_ssh_worker_messages(
     loop {
         match input_rx.try_recv() {
             Ok(TerminalWorkerMessage::Input(input)) => {
-                channel
-                    .write_all(input.as_bytes())
-                    .map_err(|error| TerminalSessionError::Io(error.to_string()))?;
+                write_all_retrying_transient(
+                    channel,
+                    input.as_bytes(),
+                    SSH_TRANSIENT_WRITE_RETRIES,
+                    SSH_TRANSIENT_WRITE_RETRY_DELAY,
+                )
+                .map_err(|error| TerminalSessionError::Io(error.to_string()))?;
                 wrote = true;
             }
             Ok(TerminalWorkerMessage::Resize { cols, rows }) => {
@@ -482,11 +488,78 @@ fn drain_ssh_worker_messages(
     flush_terminal_input(channel, wrote)
 }
 
+pub fn write_all_retrying_transient<W: Write>(
+    writer: &mut W,
+    mut buffer: &[u8],
+    max_retries: usize,
+    retry_delay: Duration,
+) -> std::io::Result<()> {
+    let mut transient_retries = 0;
+    while !buffer.is_empty() {
+        match writer.write(buffer) {
+            Ok(0) => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::WriteZero,
+                    "failed to write terminal input",
+                ));
+            }
+            Ok(size) => {
+                buffer = &buffer[size..];
+                transient_retries = 0;
+            }
+            Err(error)
+                if is_ignorable_terminal_write_error(&error) && transient_retries < max_retries =>
+            {
+                transient_retries += 1;
+                if !retry_delay.is_zero() {
+                    std::thread::sleep(retry_delay);
+                }
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
+}
+
+fn is_ignorable_terminal_write_error(error: &std::io::Error) -> bool {
+    matches!(
+        error.kind(),
+        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+    ) || error
+        .to_string()
+        .contains("Failure while draining incoming flow")
+}
+
+fn flush_retrying_transient<W: Write>(
+    writer: &mut W,
+    max_retries: usize,
+    retry_delay: Duration,
+) -> std::io::Result<()> {
+    let mut transient_retries = 0;
+    loop {
+        match writer.flush() {
+            Ok(()) => return Ok(()),
+            Err(error)
+                if is_ignorable_terminal_write_error(&error) && transient_retries < max_retries =>
+            {
+                transient_retries += 1;
+                if !retry_delay.is_zero() {
+                    std::thread::sleep(retry_delay);
+                }
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
 fn flush_terminal_input<W: Write>(writer: &mut W, wrote: bool) -> Result<InputDrain> {
     if wrote {
-        writer
-            .flush()
-            .map_err(|error| TerminalSessionError::Io(error.to_string()))?;
+        flush_retrying_transient(
+            writer,
+            SSH_TRANSIENT_WRITE_RETRIES,
+            SSH_TRANSIENT_WRITE_RETRY_DELAY,
+        )
+        .map_err(|error| TerminalSessionError::Io(error.to_string()))?;
         Ok(InputDrain::Wrote)
     } else {
         Ok(InputDrain::Idle)

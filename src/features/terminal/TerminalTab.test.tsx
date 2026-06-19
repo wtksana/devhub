@@ -33,6 +33,15 @@ interface MockTerminal {
   refresh: ReturnType<typeof vi.fn>;
   getSelection: ReturnType<typeof vi.fn>;
   clear: ReturnType<typeof vi.fn>;
+  buffer?: {
+    active: {
+      type: "normal" | "alternate";
+      cursorX: number;
+      cursorY: number;
+      length: number;
+      getLine: (index: number) => { translateToString: (trimRight?: boolean) => string } | undefined;
+    };
+  };
 }
 
 interface MockFitAddon {
@@ -61,6 +70,7 @@ describe("TerminalTab", () => {
   afterEach(() => {
     cleanup();
     vi.clearAllMocks();
+    vi.useRealTimers();
     MockResizeObserver.instances = [];
     vi.unstubAllGlobals();
   });
@@ -162,6 +172,102 @@ describe("TerminalTab", () => {
     });
   });
 
+  it("requests a redraw when alternate buffer content is sparse after opening a full-screen program", async () => {
+    let outputHandler: ((payload: { session_id: string; data: string }) => void) | null = null;
+    callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
+    listenBackendMock.mockImplementationOnce(async (_event, handler) => {
+      outputHandler = handler as (payload: { session_id: string; data: string }) => void;
+      return vi.fn<() => void>();
+    });
+
+    renderTerminalTab({
+      connectionId: "prod-web-01",
+      fontFamily: "Maple Mono",
+      fontSize: 16,
+      theme: "light",
+      isActive: true,
+    });
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+        request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
+      });
+    });
+    callBackendMock.mockClear();
+    vi.useFakeTimers();
+
+    const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
+    terminal.rows = 46;
+    terminal.buffer = {
+      active: {
+        type: "alternate",
+        cursorX: 0,
+        cursorY: 0,
+        length: 46,
+        getLine: (index) => ({
+          translateToString: () => (index === 45 ? "\"server-restart.sh\" 34L, 851C" : ""),
+        }),
+      },
+    };
+
+    const emitOutput = outputHandler as unknown as (payload: { session_id: string; data: string }) => void;
+    emitOutput({ session_id: "session-1", data: "\u001b[?1049h\"server-restart.sh\" 34L, 851C" });
+
+    vi.advanceTimersByTime(64);
+
+    expect(callBackendMock).toHaveBeenCalledWith("write_terminal", {
+      request: { session_id: "session-1", data: "\f" },
+    });
+    vi.useRealTimers();
+  });
+
+  it("does not request a redraw when alternate buffer already contains file content", async () => {
+    let outputHandler: ((payload: { session_id: string; data: string }) => void) | null = null;
+    callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
+    listenBackendMock.mockImplementationOnce(async (_event, handler) => {
+      outputHandler = handler as (payload: { session_id: string; data: string }) => void;
+      return vi.fn<() => void>();
+    });
+
+    renderTerminalTab({
+      connectionId: "prod-web-01",
+      fontFamily: "Maple Mono",
+      fontSize: 16,
+      theme: "light",
+      isActive: true,
+    });
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+        request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
+      });
+    });
+    callBackendMock.mockClear();
+    vi.useFakeTimers();
+
+    const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
+    terminal.rows = 46;
+    terminal.buffer = {
+      active: {
+        type: "alternate",
+        cursorX: 0,
+        cursorY: 0,
+        length: 46,
+        getLine: (index) => ({
+          translateToString: () => (index < 20 ? `line ${index}` : ""),
+        }),
+      },
+    };
+
+    const emitOutput = outputHandler as unknown as (payload: { session_id: string; data: string }) => void;
+    emitOutput({ session_id: "session-1", data: "\u001b[?1049hline 0" });
+
+    vi.advanceTimersByTime(64);
+
+    expect(callBackendMock).not.toHaveBeenCalledWith("write_terminal", expect.anything());
+    vi.useRealTimers();
+  });
+
   it("refits and resizes the backend session when the terminal container changes size", async () => {
     vi.stubGlobal("ResizeObserver", MockResizeObserver);
     callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
@@ -203,6 +309,72 @@ describe("TerminalTab", () => {
           background: "#fafafa",
           foreground: "#383a42",
         }),
+      }),
+    );
+  });
+
+  it("keeps light terminal ANSI white colors visible on the light background", () => {
+    callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
+    listenBackendMock.mockResolvedValueOnce(vi.fn());
+
+    renderTerminalTab({ connectionId: "prod-web-01", fontFamily: "Maple Mono", fontSize: 16, theme: "light", isActive: true });
+
+    expect(vi.mocked(Terminal)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        theme: expect.objectContaining({
+          background: "#fafafa",
+          white: "#383a42",
+          brightWhite: "#383a42",
+        }),
+      }),
+    );
+  });
+
+  it("keeps ANSI black visible on the dark terminal background", () => {
+    callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
+    listenBackendMock.mockResolvedValueOnce(vi.fn());
+
+    renderTerminalTab({ connectionId: "prod-web-01", fontFamily: "Maple Mono", fontSize: 16, theme: "dark", isActive: true });
+
+    expect(vi.mocked(Terminal)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        theme: expect.objectContaining({
+          background: "#282c34",
+          black: "#5c6370",
+        }),
+      }),
+    );
+  });
+
+  it("keeps low-contrast 256-color entries readable against terminal backgrounds", () => {
+    callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
+    listenBackendMock.mockResolvedValueOnce(vi.fn());
+
+    renderTerminalTab({ connectionId: "prod-web-01", fontFamily: "Maple Mono", fontSize: 16, theme: "light", isActive: true });
+
+    expect(vi.mocked(Terminal)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        theme: expect.objectContaining({
+          extendedAnsi: expect.arrayContaining([
+            "#383a42",
+          ]),
+        }),
+      }),
+    );
+    const terminalOptions = vi.mocked(Terminal).mock.calls[0][0] as { theme: { extendedAnsi: string[] } };
+    expect(terminalOptions.theme.extendedAnsi[215]).toBe("#383a42");
+    expect(terminalOptions.theme.extendedAnsi[239]).toBe("#383a42");
+  });
+
+  it("enables terminal minimum contrast protection for full-screen TUI color schemes", () => {
+    callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
+    listenBackendMock.mockResolvedValueOnce(vi.fn());
+
+    renderTerminalTab({ connectionId: "prod-web-01", fontFamily: "Maple Mono", fontSize: 16, theme: "light", isActive: true });
+
+    expect(vi.mocked(Terminal)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        minimumContrastRatio: 4.5,
       }),
     );
   });
