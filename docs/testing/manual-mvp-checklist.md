@@ -29,11 +29,15 @@
 - [x] Redis key 列表显示 key 名称、类型和 TTL。
 - [x] Redis 工作区支持新建 `string`、`hash`、`list`、`set` 和 `zset` 类型 key。
 - [x] 新建 Redis key 时不会覆盖已有 key。
-- [x] 双击 Redis key 会打开只读详情弹窗。
+- [x] 双击 Redis key 会打开详情弹窗。
 - [x] Redis key 详情支持查看 `string`、`hash`、`list`、`set` 和 `zset`。
 - [x] Redis key 详情读取有上限：`string` 默认最多 5MB，集合类默认最多 500 条。
 - [x] Redis key 详情弹窗可以按 ESC 关闭。
 - [x] Redis `string` 类型可以在详情弹窗中编辑并保存。
+- [x] Redis `hash` 支持新增字段、编辑字段值和删除字段。
+- [x] Redis `list` 支持编辑指定下标元素、尾部追加元素和删除指定下标元素。
+- [x] Redis `set` 支持新增成员和删除成员。
+- [x] Redis `zset` 支持新增成员、编辑成员分数和删除成员。
 - [x] Redis key 可以在详情弹窗中设置 TTL 和移除 TTL。
 - [x] Redis key 可以在详情弹窗中删除，删除前会二次确认。
 - [x] Redis key 可以在详情弹窗中重命名，目标 key 已存在时不会覆盖。
@@ -139,4 +143,4 @@
 - 暂不支持 SFTP sudo 写入。
 - 暂不支持传输任务暂停和恢复。
 - 暂不支持完整数据库管理。
-- 暂不支持 Redis 集合类型内容编辑、批量操作、发布订阅和监控面板。
+- 暂不支持 Redis 批量操作、发布订阅和监控面板。

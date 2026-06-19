@@ -39,6 +39,65 @@ pub struct SetRedisStringValueRequest {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct SetRedisHashFieldRequest {
+    pub connection_id: String,
+    pub database: u16,
+    pub key: String,
+    pub field: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct DeleteRedisHashFieldRequest {
+    pub connection_id: String,
+    pub database: u16,
+    pub key: String,
+    pub field: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SetRedisListItemRequest {
+    pub connection_id: String,
+    pub database: u16,
+    pub key: String,
+    pub index: u32,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct DeleteRedisListItemRequest {
+    pub connection_id: String,
+    pub database: u16,
+    pub key: String,
+    pub index: u32,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct RedisSetMemberRequest {
+    pub connection_id: String,
+    pub database: u16,
+    pub key: String,
+    pub member: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SetRedisZsetMemberRequest {
+    pub connection_id: String,
+    pub database: u16,
+    pub key: String,
+    pub member: String,
+    pub score: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct DeleteRedisZsetMemberRequest {
+    pub connection_id: String,
+    pub database: u16,
+    pub key: String,
+    pub member: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct SetRedisKeyTtlRequest {
     pub connection_id: String,
     pub database: u16,
@@ -165,6 +224,58 @@ struct NormalizedSetRedisStringValueRequest {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+struct NormalizedSetRedisHashFieldRequest {
+    database: u16,
+    key: String,
+    field: String,
+    value: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NormalizedDeleteRedisHashFieldRequest {
+    database: u16,
+    key: String,
+    field: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NormalizedSetRedisListItemRequest {
+    database: u16,
+    key: String,
+    index: u32,
+    value: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NormalizedDeleteRedisListItemRequest {
+    database: u16,
+    key: String,
+    index: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NormalizedRedisSetMemberRequest {
+    database: u16,
+    key: String,
+    member: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct NormalizedSetRedisZsetMemberRequest {
+    database: u16,
+    key: String,
+    member: String,
+    score: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NormalizedDeleteRedisZsetMemberRequest {
+    database: u16,
+    key: String,
+    member: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct NormalizedSetRedisKeyTtlRequest {
     database: u16,
     key: String,
@@ -288,6 +399,232 @@ pub async fn set_redis_string_value(
             .arg(&normalized.key)
             .arg(&normalized.value)
             .query::<()>(&mut redis_connection)
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn set_redis_hash_field(
+    settings_store: State<'_, SettingsStore>,
+    request: SetRedisHashFieldRequest,
+) -> Result<(), String> {
+    let mut connection = load_redis_connection(settings_store.inner(), &request.connection_id)?;
+    let normalized = normalize_set_redis_hash_field_request(&request)?;
+    connection.database = normalized.database;
+
+    tokio::task::spawn_blocking(move || {
+        let client =
+            Client::open(redis_connection_url(&connection)).map_err(|error| error.to_string())?;
+        let mut redis_connection = client.get_connection().map_err(|error| error.to_string())?;
+        redis::cmd("HSET")
+            .arg(&normalized.key)
+            .arg(&normalized.field)
+            .arg(&normalized.value)
+            .query::<u64>(&mut redis_connection)
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn delete_redis_hash_field(
+    settings_store: State<'_, SettingsStore>,
+    request: DeleteRedisHashFieldRequest,
+) -> Result<(), String> {
+    let mut connection = load_redis_connection(settings_store.inner(), &request.connection_id)?;
+    let normalized = normalize_delete_redis_hash_field_request(&request)?;
+    connection.database = normalized.database;
+
+    tokio::task::spawn_blocking(move || {
+        let client =
+            Client::open(redis_connection_url(&connection)).map_err(|error| error.to_string())?;
+        let mut redis_connection = client.get_connection().map_err(|error| error.to_string())?;
+        redis::cmd("HDEL")
+            .arg(&normalized.key)
+            .arg(&normalized.field)
+            .query::<u64>(&mut redis_connection)
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn set_redis_list_item(
+    settings_store: State<'_, SettingsStore>,
+    request: SetRedisListItemRequest,
+) -> Result<(), String> {
+    let mut connection = load_redis_connection(settings_store.inner(), &request.connection_id)?;
+    let normalized = normalize_set_redis_list_item_request(&request)?;
+    connection.database = normalized.database;
+
+    tokio::task::spawn_blocking(move || {
+        let client =
+            Client::open(redis_connection_url(&connection)).map_err(|error| error.to_string())?;
+        let mut redis_connection = client.get_connection().map_err(|error| error.to_string())?;
+        redis::cmd("LSET")
+            .arg(&normalized.key)
+            .arg(normalized.index)
+            .arg(&normalized.value)
+            .query::<()>(&mut redis_connection)
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn append_redis_list_item(
+    settings_store: State<'_, SettingsStore>,
+    request: SetRedisStringValueRequest,
+) -> Result<(), String> {
+    let mut connection = load_redis_connection(settings_store.inner(), &request.connection_id)?;
+    let normalized = normalize_set_redis_string_value_request(&request)?;
+    connection.database = normalized.database;
+
+    tokio::task::spawn_blocking(move || {
+        let client =
+            Client::open(redis_connection_url(&connection)).map_err(|error| error.to_string())?;
+        let mut redis_connection = client.get_connection().map_err(|error| error.to_string())?;
+        redis::cmd("RPUSH")
+            .arg(&normalized.key)
+            .arg(&normalized.value)
+            .query::<u64>(&mut redis_connection)
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn delete_redis_list_item(
+    settings_store: State<'_, SettingsStore>,
+    request: DeleteRedisListItemRequest,
+) -> Result<(), String> {
+    let mut connection = load_redis_connection(settings_store.inner(), &request.connection_id)?;
+    let normalized = normalize_delete_redis_list_item_request(&request)?;
+    connection.database = normalized.database;
+
+    tokio::task::spawn_blocking(move || {
+        let client =
+            Client::open(redis_connection_url(&connection)).map_err(|error| error.to_string())?;
+        let mut redis_connection = client.get_connection().map_err(|error| error.to_string())?;
+        let marker = format!("__devhub_deleted_list_item__{}__", uuid::Uuid::new_v4());
+        redis::cmd("LSET")
+            .arg(&normalized.key)
+            .arg(normalized.index)
+            .arg(&marker)
+            .query::<()>(&mut redis_connection)
+            .map_err(|error| error.to_string())?;
+        redis::cmd("LREM")
+            .arg(&normalized.key)
+            .arg(1)
+            .arg(&marker)
+            .query::<i64>(&mut redis_connection)
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn add_redis_set_member(
+    settings_store: State<'_, SettingsStore>,
+    request: RedisSetMemberRequest,
+) -> Result<(), String> {
+    let mut connection = load_redis_connection(settings_store.inner(), &request.connection_id)?;
+    let normalized = normalize_redis_set_member_request(&request)?;
+    connection.database = normalized.database;
+
+    tokio::task::spawn_blocking(move || {
+        let client =
+            Client::open(redis_connection_url(&connection)).map_err(|error| error.to_string())?;
+        let mut redis_connection = client.get_connection().map_err(|error| error.to_string())?;
+        redis::cmd("SADD")
+            .arg(&normalized.key)
+            .arg(&normalized.member)
+            .query::<u64>(&mut redis_connection)
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn delete_redis_set_member(
+    settings_store: State<'_, SettingsStore>,
+    request: RedisSetMemberRequest,
+) -> Result<(), String> {
+    let mut connection = load_redis_connection(settings_store.inner(), &request.connection_id)?;
+    let normalized = normalize_redis_set_member_request(&request)?;
+    connection.database = normalized.database;
+
+    tokio::task::spawn_blocking(move || {
+        let client =
+            Client::open(redis_connection_url(&connection)).map_err(|error| error.to_string())?;
+        let mut redis_connection = client.get_connection().map_err(|error| error.to_string())?;
+        redis::cmd("SREM")
+            .arg(&normalized.key)
+            .arg(&normalized.member)
+            .query::<u64>(&mut redis_connection)
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn set_redis_zset_member(
+    settings_store: State<'_, SettingsStore>,
+    request: SetRedisZsetMemberRequest,
+) -> Result<(), String> {
+    let mut connection = load_redis_connection(settings_store.inner(), &request.connection_id)?;
+    let normalized = normalize_set_redis_zset_member_request(&request)?;
+    connection.database = normalized.database;
+
+    tokio::task::spawn_blocking(move || {
+        let client =
+            Client::open(redis_connection_url(&connection)).map_err(|error| error.to_string())?;
+        let mut redis_connection = client.get_connection().map_err(|error| error.to_string())?;
+        redis::cmd("ZADD")
+            .arg(&normalized.key)
+            .arg(normalized.score)
+            .arg(&normalized.member)
+            .query::<u64>(&mut redis_connection)
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn delete_redis_zset_member(
+    settings_store: State<'_, SettingsStore>,
+    request: DeleteRedisZsetMemberRequest,
+) -> Result<(), String> {
+    let mut connection = load_redis_connection(settings_store.inner(), &request.connection_id)?;
+    let normalized = normalize_delete_redis_zset_member_request(&request)?;
+    connection.database = normalized.database;
+
+    tokio::task::spawn_blocking(move || {
+        let client =
+            Client::open(redis_connection_url(&connection)).map_err(|error| error.to_string())?;
+        let mut redis_connection = client.get_connection().map_err(|error| error.to_string())?;
+        redis::cmd("ZREM")
+            .arg(&normalized.key)
+            .arg(&normalized.member)
+            .query::<u64>(&mut redis_connection)
+            .map(|_| ())
             .map_err(|error| error.to_string())
     })
     .await
@@ -819,6 +1156,124 @@ fn normalize_set_redis_string_value_request(
     })
 }
 
+fn normalize_set_redis_hash_field_request(
+    request: &SetRedisHashFieldRequest,
+) -> Result<NormalizedSetRedisHashFieldRequest, String> {
+    let key = request.key.trim();
+    let field = request.field.trim();
+    if key.is_empty() || field.is_empty() {
+        return Err("redis key and field are required".to_string());
+    }
+
+    Ok(NormalizedSetRedisHashFieldRequest {
+        database: request.database,
+        key: key.to_string(),
+        field: field.to_string(),
+        value: request.value.clone(),
+    })
+}
+
+fn normalize_delete_redis_hash_field_request(
+    request: &DeleteRedisHashFieldRequest,
+) -> Result<NormalizedDeleteRedisHashFieldRequest, String> {
+    let key = request.key.trim();
+    let field = request.field.trim();
+    if key.is_empty() || field.is_empty() {
+        return Err("redis key and field are required".to_string());
+    }
+
+    Ok(NormalizedDeleteRedisHashFieldRequest {
+        database: request.database,
+        key: key.to_string(),
+        field: field.to_string(),
+    })
+}
+
+fn normalize_set_redis_list_item_request(
+    request: &SetRedisListItemRequest,
+) -> Result<NormalizedSetRedisListItemRequest, String> {
+    let key = request.key.trim();
+    if key.is_empty() {
+        return Err("redis key is required".to_string());
+    }
+
+    Ok(NormalizedSetRedisListItemRequest {
+        database: request.database,
+        key: key.to_string(),
+        index: request.index,
+        value: request.value.clone(),
+    })
+}
+
+fn normalize_delete_redis_list_item_request(
+    request: &DeleteRedisListItemRequest,
+) -> Result<NormalizedDeleteRedisListItemRequest, String> {
+    let key = request.key.trim();
+    if key.is_empty() {
+        return Err("redis key is required".to_string());
+    }
+
+    Ok(NormalizedDeleteRedisListItemRequest {
+        database: request.database,
+        key: key.to_string(),
+        index: request.index,
+    })
+}
+
+fn normalize_redis_set_member_request(
+    request: &RedisSetMemberRequest,
+) -> Result<NormalizedRedisSetMemberRequest, String> {
+    let key = request.key.trim();
+    let member = request.member.trim();
+    if key.is_empty() || member.is_empty() {
+        return Err("redis key and member are required".to_string());
+    }
+
+    Ok(NormalizedRedisSetMemberRequest {
+        database: request.database,
+        key: key.to_string(),
+        member: member.to_string(),
+    })
+}
+
+fn normalize_set_redis_zset_member_request(
+    request: &SetRedisZsetMemberRequest,
+) -> Result<NormalizedSetRedisZsetMemberRequest, String> {
+    let key = request.key.trim();
+    let member = request.member.trim();
+    if key.is_empty() || member.is_empty() {
+        return Err("redis key and member are required".to_string());
+    }
+    let score = request
+        .score
+        .trim()
+        .parse::<f64>()
+        .map_err(|_| "redis zset score must be a number".to_string())?;
+
+    Ok(NormalizedSetRedisZsetMemberRequest {
+        database: request.database,
+        key: key.to_string(),
+        member: member.to_string(),
+        score,
+    })
+}
+
+fn normalize_delete_redis_zset_member_request(
+    request: &DeleteRedisZsetMemberRequest,
+) -> Result<NormalizedDeleteRedisZsetMemberRequest, String> {
+    let key = request.key.trim();
+    let member = request.member.trim();
+    if key.is_empty() || member.is_empty() {
+        return Err("redis key and member are required".to_string());
+    }
+
+    Ok(NormalizedDeleteRedisZsetMemberRequest {
+        database: request.database,
+        key: key.to_string(),
+        member: member.to_string(),
+    })
+}
+
 fn normalize_set_redis_key_ttl_request(
     request: &SetRedisKeyTtlRequest,
 ) -> Result<NormalizedSetRedisKeyTtlRequest, String> {
@@ -958,13 +1413,19 @@ fn normalize_zset_entries(
 #[cfg(test)]
 mod tests {
     use super::{
-        normalize_create_redis_key_request, normalize_get_redis_key_value_request,
-        normalize_list_redis_keys_request, normalize_redis_key_request,
-        normalize_rename_redis_key_request, normalize_set_redis_key_ttl_request,
-        normalize_set_redis_string_value_request, redis_connection_url, CreateRedisKeyRequest,
-        GetRedisKeyValueRequest, ListRedisKeysRequest, NormalizedCreateRedisKeyValue,
-        RedisHashEntryRequest, RedisKeyRequest, RedisKeyValue, RedisZsetEntryRequest,
-        RenameRedisKeyRequest, SetRedisKeyTtlRequest, SetRedisStringValueRequest,
+        normalize_create_redis_key_request, normalize_delete_redis_hash_field_request,
+        normalize_delete_redis_list_item_request, normalize_delete_redis_zset_member_request,
+        normalize_get_redis_key_value_request, normalize_list_redis_keys_request,
+        normalize_redis_key_request, normalize_redis_set_member_request,
+        normalize_rename_redis_key_request, normalize_set_redis_hash_field_request,
+        normalize_set_redis_key_ttl_request, normalize_set_redis_list_item_request,
+        normalize_set_redis_string_value_request, normalize_set_redis_zset_member_request,
+        redis_connection_url, CreateRedisKeyRequest, DeleteRedisHashFieldRequest,
+        DeleteRedisListItemRequest, DeleteRedisZsetMemberRequest, GetRedisKeyValueRequest,
+        ListRedisKeysRequest, NormalizedCreateRedisKeyValue, RedisHashEntryRequest,
+        RedisKeyRequest, RedisKeyValue, RedisSetMemberRequest, RedisZsetEntryRequest,
+        RenameRedisKeyRequest, SetRedisHashFieldRequest, SetRedisKeyTtlRequest,
+        SetRedisListItemRequest, SetRedisStringValueRequest, SetRedisZsetMemberRequest,
     };
     use crate::models::settings::RedisConnectionSettings;
 
@@ -1142,6 +1603,154 @@ mod tests {
             normalize_set_redis_string_value_request(&request).unwrap_err(),
             "redis string value is too large"
         );
+    }
+
+    #[test]
+    fn normalizes_set_redis_hash_field_request() {
+        let request = SetRedisHashFieldRequest {
+            connection_id: "redis-local".to_string(),
+            database: 1,
+            key: " profile:1 ".to_string(),
+            field: " name ".to_string(),
+            value: "devhub".to_string(),
+        };
+
+        let normalized = normalize_set_redis_hash_field_request(&request).unwrap();
+
+        assert_eq!(normalized.database, 1);
+        assert_eq!(normalized.key, "profile:1");
+        assert_eq!(normalized.field, "name");
+        assert_eq!(normalized.value, "devhub");
+    }
+
+    #[test]
+    fn rejects_empty_redis_hash_field_request() {
+        let request = DeleteRedisHashFieldRequest {
+            connection_id: "redis-local".to_string(),
+            database: 0,
+            key: "profile:1".to_string(),
+            field: " ".to_string(),
+        };
+
+        assert_eq!(
+            normalize_delete_redis_hash_field_request(&request).unwrap_err(),
+            "redis key and field are required"
+        );
+    }
+
+    #[test]
+    fn normalizes_set_redis_list_item_request() {
+        let request = SetRedisListItemRequest {
+            connection_id: "redis-local".to_string(),
+            database: 2,
+            key: " queue ".to_string(),
+            index: 3,
+            value: "job".to_string(),
+        };
+
+        let normalized = normalize_set_redis_list_item_request(&request).unwrap();
+
+        assert_eq!(normalized.database, 2);
+        assert_eq!(normalized.key, "queue");
+        assert_eq!(normalized.index, 3);
+        assert_eq!(normalized.value, "job");
+    }
+
+    #[test]
+    fn normalizes_delete_redis_list_item_request() {
+        let request = DeleteRedisListItemRequest {
+            connection_id: "redis-local".to_string(),
+            database: 2,
+            key: " queue ".to_string(),
+            index: 1,
+        };
+
+        let normalized = normalize_delete_redis_list_item_request(&request).unwrap();
+
+        assert_eq!(normalized.database, 2);
+        assert_eq!(normalized.key, "queue");
+        assert_eq!(normalized.index, 1);
+    }
+
+    #[test]
+    fn normalizes_redis_set_member_request() {
+        let request = RedisSetMemberRequest {
+            connection_id: "redis-local".to_string(),
+            database: 0,
+            key: " tags ".to_string(),
+            member: " prod ".to_string(),
+        };
+
+        let normalized = normalize_redis_set_member_request(&request).unwrap();
+
+        assert_eq!(normalized.database, 0);
+        assert_eq!(normalized.key, "tags");
+        assert_eq!(normalized.member, "prod");
+    }
+
+    #[test]
+    fn rejects_empty_redis_set_member_request() {
+        let request = RedisSetMemberRequest {
+            connection_id: "redis-local".to_string(),
+            database: 0,
+            key: "tags".to_string(),
+            member: " ".to_string(),
+        };
+
+        assert_eq!(
+            normalize_redis_set_member_request(&request).unwrap_err(),
+            "redis key and member are required"
+        );
+    }
+
+    #[test]
+    fn normalizes_set_redis_zset_member_request() {
+        let request = SetRedisZsetMemberRequest {
+            connection_id: "redis-local".to_string(),
+            database: 0,
+            key: " rank ".to_string(),
+            member: " alice ".to_string(),
+            score: " 2.5 ".to_string(),
+        };
+
+        let normalized = normalize_set_redis_zset_member_request(&request).unwrap();
+
+        assert_eq!(normalized.database, 0);
+        assert_eq!(normalized.key, "rank");
+        assert_eq!(normalized.member, "alice");
+        assert_eq!(normalized.score, 2.5);
+    }
+
+    #[test]
+    fn rejects_set_redis_zset_member_with_invalid_score() {
+        let request = SetRedisZsetMemberRequest {
+            connection_id: "redis-local".to_string(),
+            database: 0,
+            key: "rank".to_string(),
+            member: "alice".to_string(),
+            score: "bad".to_string(),
+        };
+
+        assert_eq!(
+            normalize_set_redis_zset_member_request(&request).unwrap_err(),
+            "redis zset score must be a number"
+        );
+    }
+
+    #[test]
+    fn normalizes_delete_redis_zset_member_request() {
+        let request = DeleteRedisZsetMemberRequest {
+            connection_id: "redis-local".to_string(),
+            database: 0,
+            key: " rank ".to_string(),
+            member: " alice ".to_string(),
+        };
+
+        let normalized = normalize_delete_redis_zset_member_request(&request).unwrap();
+
+        assert_eq!(normalized.database, 0);
+        assert_eq!(normalized.key, "rank");
+        assert_eq!(normalized.member, "alice");
     }
 
     #[test]

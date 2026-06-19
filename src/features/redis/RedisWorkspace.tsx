@@ -180,6 +180,15 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
   const [isKeyDetailLoading, setIsKeyDetailLoading] = useState(false);
   const [stringDraft, setStringDraft] = useState("");
   const [ttlDraft, setTtlDraft] = useState("");
+  const [hashDrafts, setHashDrafts] = useState<Record<string, string>>({});
+  const [newHashField, setNewHashField] = useState("");
+  const [newHashValue, setNewHashValue] = useState("");
+  const [listDrafts, setListDrafts] = useState<string[]>([]);
+  const [newListItem, setNewListItem] = useState("");
+  const [newSetMember, setNewSetMember] = useState("");
+  const [zsetDrafts, setZsetDrafts] = useState<Record<string, string>>({});
+  const [newZsetMember, setNewZsetMember] = useState("");
+  const [newZsetScore, setNewZsetScore] = useState("");
   const [isKeyActionRunning, setIsKeyActionRunning] = useState(false);
   const [deleteCandidate, setDeleteCandidate] = useState<RedisKeyEntry | null>(null);
   const [renameCandidate, setRenameCandidate] = useState<RedisKeyEntry | null>(null);
@@ -342,6 +351,19 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
   function applyKeyDetail(detail: RedisKeyValueResponse) {
     setKeyDetail(detail);
     setStringDraft(detail.value.kind === "string" ? detail.value.value : "");
+    setHashDrafts(detail.value.kind === "hash"
+      ? Object.fromEntries(detail.value.entries)
+      : {});
+    setNewHashField("");
+    setNewHashValue("");
+    setListDrafts(detail.value.kind === "list" ? detail.value.items : []);
+    setNewListItem("");
+    setNewSetMember("");
+    setZsetDrafts(detail.value.kind === "zset"
+      ? Object.fromEntries(detail.value.entries.map(([member, score]) => [member, String(score)]))
+      : {});
+    setNewZsetMember("");
+    setNewZsetScore("0");
     setTtlDraft(detail.ttl > 0 ? String(detail.ttl) : "");
   }
 
@@ -378,6 +400,194 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
     } finally {
       setIsKeyActionRunning(false);
     }
+  }
+
+  async function runKeyDetailAction(action: () => Promise<void>) {
+    setIsKeyActionRunning(true);
+    setKeyDetailError(null);
+    try {
+      await action();
+      await reloadKeyDetail();
+    } catch (caught) {
+      setKeyDetailError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setIsKeyActionRunning(false);
+    }
+  }
+
+  async function saveHashField(field: string) {
+    if (!connectionId || !keyDetail || keyDetail.value.kind !== "hash") return;
+    const value = hashDrafts[field] ?? "";
+    await runKeyDetailAction(async () => {
+      await callBackend("set_redis_hash_field", {
+        request: {
+          connection_id: connectionId,
+          database,
+          key: keyDetail.key,
+          field,
+          value,
+        },
+      });
+    });
+  }
+
+  async function addHashField() {
+    if (!connectionId || !keyDetail || keyDetail.value.kind !== "hash") return;
+    const field = newHashField.trim();
+    if (!field) {
+      setKeyDetailError(t("redis.hash_field_required"));
+      return;
+    }
+    await runKeyDetailAction(async () => {
+      await callBackend("set_redis_hash_field", {
+        request: {
+          connection_id: connectionId,
+          database,
+          key: keyDetail.key,
+          field,
+          value: newHashValue,
+        },
+      });
+    });
+  }
+
+  async function deleteHashField(field: string) {
+    if (!connectionId || !keyDetail || keyDetail.value.kind !== "hash") return;
+    await runKeyDetailAction(async () => {
+      await callBackend("delete_redis_hash_field", {
+        request: {
+          connection_id: connectionId,
+          database,
+          key: keyDetail.key,
+          field,
+        },
+      });
+    });
+  }
+
+  async function saveListItem(index: number) {
+    if (!connectionId || !keyDetail || keyDetail.value.kind !== "list") return;
+    await runKeyDetailAction(async () => {
+      await callBackend("set_redis_list_item", {
+        request: {
+          connection_id: connectionId,
+          database,
+          key: keyDetail.key,
+          index,
+          value: listDrafts[index] ?? "",
+        },
+      });
+    });
+  }
+
+  async function appendListItem() {
+    if (!connectionId || !keyDetail || keyDetail.value.kind !== "list") return;
+    await runKeyDetailAction(async () => {
+      await callBackend("append_redis_list_item", {
+        request: {
+          connection_id: connectionId,
+          database,
+          key: keyDetail.key,
+          value: newListItem,
+        },
+      });
+    });
+  }
+
+  async function deleteListItem(index: number) {
+    if (!connectionId || !keyDetail || keyDetail.value.kind !== "list") return;
+    await runKeyDetailAction(async () => {
+      await callBackend("delete_redis_list_item", {
+        request: {
+          connection_id: connectionId,
+          database,
+          key: keyDetail.key,
+          index,
+        },
+      });
+    });
+  }
+
+  async function addSetMember() {
+    if (!connectionId || !keyDetail || keyDetail.value.kind !== "set") return;
+    const member = newSetMember.trim();
+    if (!member) {
+      setKeyDetailError(t("redis.member_required"));
+      return;
+    }
+    await runKeyDetailAction(async () => {
+      await callBackend("add_redis_set_member", {
+        request: {
+          connection_id: connectionId,
+          database,
+          key: keyDetail.key,
+          member,
+        },
+      });
+    });
+  }
+
+  async function deleteSetMember(member: string) {
+    if (!connectionId || !keyDetail || keyDetail.value.kind !== "set") return;
+    await runKeyDetailAction(async () => {
+      await callBackend("delete_redis_set_member", {
+        request: {
+          connection_id: connectionId,
+          database,
+          key: keyDetail.key,
+          member,
+        },
+      });
+    });
+  }
+
+  async function saveZsetMember(member: string) {
+    if (!connectionId || !keyDetail || keyDetail.value.kind !== "zset") return;
+    await runKeyDetailAction(async () => {
+      await callBackend("set_redis_zset_member", {
+        request: {
+          connection_id: connectionId,
+          database,
+          key: keyDetail.key,
+          member,
+          score: zsetDrafts[member] ?? "0",
+        },
+      });
+    });
+  }
+
+  async function addZsetMember() {
+    if (!connectionId || !keyDetail || keyDetail.value.kind !== "zset") return;
+    const member = newZsetMember.trim();
+    if (!member) {
+      setKeyDetailError(t("redis.member_required"));
+      return;
+    }
+    await runKeyDetailAction(async () => {
+      await callBackend("set_redis_zset_member", {
+        request: {
+          connection_id: connectionId,
+          database,
+          key: keyDetail.key,
+          member,
+          score: newZsetScore,
+        },
+      });
+    });
+  }
+
+  async function deleteZsetMember(member: string) {
+    if (!connectionId || !keyDetail || keyDetail.value.kind !== "zset") return;
+    await runKeyDetailAction(async () => {
+      await callBackend("delete_redis_zset_member", {
+        request: {
+          connection_id: connectionId,
+          database,
+          key: keyDetail.key,
+          member,
+        },
+      });
+    });
   }
 
   async function setKeyTtl() {
@@ -689,14 +899,49 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
                       {t("redis.remove_ttl")}
                     </button>
                   </div>
-                  {renderKeyDetailValue(keyDetail, t, stringDraft, setStringDraft)}
+                  {renderKeyDetailValue({
+                    detail: keyDetail,
+                    t,
+                    stringDraft,
+                    setStringDraft,
+                    hashDrafts,
+                    setHashDrafts,
+                    newHashField,
+                    setNewHashField,
+                    newHashValue,
+                    setNewHashValue,
+                    listDrafts,
+                    setListDrafts,
+                    newListItem,
+                    setNewListItem,
+                    newSetMember,
+                    setNewSetMember,
+                    zsetDrafts,
+                    setZsetDrafts,
+                    newZsetMember,
+                    setNewZsetMember,
+                    newZsetScore,
+                    setNewZsetScore,
+                    isKeyActionRunning,
+                    saveHashField,
+                    addHashField,
+                    deleteHashField,
+                    saveListItem,
+                    appendListItem,
+                    deleteListItem,
+                    addSetMember,
+                    deleteSetMember,
+                    saveZsetMember,
+                    addZsetMember,
+                    deleteZsetMember,
+                  })}
                   <div className="redis-key-dialog__actions">
                     {keyDetail.value.kind === "string" ? (
                       <button type="button" disabled={isKeyActionRunning} onClick={() => void saveStringValue()}>
                         {t("redis.save_value")}
                       </button>
                     ) : (
-                      <span>{t("redis.edit_only_string")}</span>
+                      <span>{t("redis.collection_edit_hint")}</span>
                     )}
                     <div>
                       <button
@@ -1060,12 +1305,80 @@ function renderCreateKeyValueEditor(
   );
 }
 
-function renderKeyDetailValue(
-  detail: RedisKeyValueResponse,
-  t: ReturnType<typeof useI18n>["t"],
-  stringDraft: string,
-  setStringDraft: (value: string) => void,
-) {
+interface RenderKeyDetailValueOptions {
+  detail: RedisKeyValueResponse;
+  t: ReturnType<typeof useI18n>["t"];
+  stringDraft: string;
+  setStringDraft: (value: string) => void;
+  hashDrafts: Record<string, string>;
+  setHashDrafts: Dispatch<SetStateAction<Record<string, string>>>;
+  newHashField: string;
+  setNewHashField: (value: string) => void;
+  newHashValue: string;
+  setNewHashValue: (value: string) => void;
+  listDrafts: string[];
+  setListDrafts: Dispatch<SetStateAction<string[]>>;
+  newListItem: string;
+  setNewListItem: (value: string) => void;
+  newSetMember: string;
+  setNewSetMember: (value: string) => void;
+  zsetDrafts: Record<string, string>;
+  setZsetDrafts: Dispatch<SetStateAction<Record<string, string>>>;
+  newZsetMember: string;
+  setNewZsetMember: (value: string) => void;
+  newZsetScore: string;
+  setNewZsetScore: (value: string) => void;
+  isKeyActionRunning: boolean;
+  saveHashField: (field: string) => Promise<void>;
+  addHashField: () => Promise<void>;
+  deleteHashField: (field: string) => Promise<void>;
+  saveListItem: (index: number) => Promise<void>;
+  appendListItem: () => Promise<void>;
+  deleteListItem: (index: number) => Promise<void>;
+  addSetMember: () => Promise<void>;
+  deleteSetMember: (member: string) => Promise<void>;
+  saveZsetMember: (member: string) => Promise<void>;
+  addZsetMember: () => Promise<void>;
+  deleteZsetMember: (member: string) => Promise<void>;
+}
+
+function renderKeyDetailValue(options: RenderKeyDetailValueOptions) {
+  const {
+    detail,
+    t,
+    stringDraft,
+    setStringDraft,
+    hashDrafts,
+    setHashDrafts,
+    newHashField,
+    setNewHashField,
+    newHashValue,
+    setNewHashValue,
+    listDrafts,
+    setListDrafts,
+    newListItem,
+    setNewListItem,
+    newSetMember,
+    setNewSetMember,
+    zsetDrafts,
+    setZsetDrafts,
+    newZsetMember,
+    setNewZsetMember,
+    newZsetScore,
+    setNewZsetScore,
+    isKeyActionRunning,
+    saveHashField,
+    addHashField,
+    deleteHashField,
+    saveListItem,
+    appendListItem,
+    deleteListItem,
+    addSetMember,
+    deleteSetMember,
+    saveZsetMember,
+    addZsetMember,
+    deleteZsetMember,
+  } = options;
   const value = detail.value;
   if (value.kind === "string") {
     return (
@@ -1084,16 +1397,49 @@ function renderKeyDetailValue(
     return (
       <>
         {value.truncated ? <p className="redis-key-dialog__hint">{t("redis.value_truncated")}</p> : null}
-        <table className="redis-key-dialog__table">
-          <tbody>
-            {value.entries.map(([field, fieldValue]) => (
-              <tr key={field}>
-                <th>{field}</th>
-                <td>{fieldValue}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <div className="redis-key-dialog__rows">
+          {value.entries.map(([field]) => (
+            <div className="redis-key-dialog__edit-row" key={field}>
+              <span className="redis-key-dialog__row-key">{field}</span>
+              <input
+                aria-label={t("redis.hash_field_value_label", { field })}
+                value={hashDrafts[field] ?? ""}
+                onChange={(event) => setHashDrafts((current) => ({
+                  ...current,
+                  [field]: event.target.value,
+                }))}
+              />
+              <button type="button" disabled={isKeyActionRunning} onClick={() => void saveHashField(field)}>
+                {t("redis.save_hash_field", { field })}
+              </button>
+              <button
+                type="button"
+                className="sftp-dialog__danger-button"
+                disabled={isKeyActionRunning}
+                onClick={() => void deleteHashField(field)}
+              >
+                {t("redis.delete_hash_field", { field })}
+              </button>
+            </div>
+          ))}
+          <div className="redis-key-dialog__edit-row">
+            <input
+              aria-label={t("redis.new_hash_field")}
+              placeholder={t("redis.new_hash_field")}
+              value={newHashField}
+              onChange={(event) => setNewHashField(event.target.value)}
+            />
+            <input
+              aria-label={t("redis.new_hash_value")}
+              placeholder={t("redis.new_hash_value")}
+              value={newHashValue}
+              onChange={(event) => setNewHashValue(event.target.value)}
+            />
+            <button type="button" disabled={isKeyActionRunning} onClick={() => void addHashField()}>
+              {t("redis.add_hash_field")}
+            </button>
+          </div>
+        </div>
       </>
     );
   }
@@ -1101,11 +1447,42 @@ function renderKeyDetailValue(
     return (
       <>
         {value.truncated ? <p className="redis-key-dialog__hint">{t("redis.value_truncated")}</p> : null}
-        <ol className="redis-key-dialog__list">
+        <div className="redis-key-dialog__rows">
           {value.items.map((item, index) => (
-            <li key={`${index}:${item}`}>{item}</li>
+            <div className="redis-key-dialog__edit-row" key={`${index}:${item}`}>
+              <span className="redis-key-dialog__row-key">#{index}</span>
+              <input
+                aria-label={t("redis.list_item_label", { index })}
+                value={listDrafts[index] ?? ""}
+                onChange={(event) => setListDrafts((current) => current.map((draft, draftIndex) => (
+                  draftIndex === index ? event.target.value : draft
+                )))}
+              />
+              <button type="button" disabled={isKeyActionRunning} onClick={() => void saveListItem(index)}>
+                {t("redis.save_list_item", { index })}
+              </button>
+              <button
+                type="button"
+                className="sftp-dialog__danger-button"
+                disabled={isKeyActionRunning}
+                onClick={() => void deleteListItem(index)}
+              >
+                {t("redis.delete_list_item", { index })}
+              </button>
+            </div>
           ))}
-        </ol>
+          <div className="redis-key-dialog__edit-row">
+            <input
+              aria-label={t("redis.new_item")}
+              placeholder={t("redis.new_item")}
+              value={newListItem}
+              onChange={(event) => setNewListItem(event.target.value)}
+            />
+            <button type="button" disabled={isKeyActionRunning} onClick={() => void appendListItem()}>
+              {t("redis.add_item")}
+            </button>
+          </div>
+        </div>
       </>
     );
   }
@@ -1113,11 +1490,32 @@ function renderKeyDetailValue(
     return (
       <>
         {value.truncated ? <p className="redis-key-dialog__hint">{t("redis.value_truncated")}</p> : null}
-        <ul className="redis-key-dialog__list">
+        <div className="redis-key-dialog__rows">
           {value.members.map((member) => (
-            <li key={member}>{member}</li>
+            <div className="redis-key-dialog__edit-row" key={member}>
+              <span className="redis-key-dialog__row-key">{member}</span>
+              <button
+                type="button"
+                className="sftp-dialog__danger-button"
+                disabled={isKeyActionRunning}
+                onClick={() => void deleteSetMember(member)}
+              >
+                {t("redis.delete_set_member", { member })}
+              </button>
+            </div>
           ))}
-        </ul>
+          <div className="redis-key-dialog__edit-row">
+            <input
+              aria-label={t("redis.new_member")}
+              placeholder={t("redis.new_member")}
+              value={newSetMember}
+              onChange={(event) => setNewSetMember(event.target.value)}
+            />
+            <button type="button" disabled={isKeyActionRunning} onClick={() => void addSetMember()}>
+              {t("redis.add_member")}
+            </button>
+          </div>
+        </div>
       </>
     );
   }
@@ -1125,16 +1523,49 @@ function renderKeyDetailValue(
     return (
       <>
         {value.truncated ? <p className="redis-key-dialog__hint">{t("redis.value_truncated")}</p> : null}
-        <table className="redis-key-dialog__table">
-          <tbody>
-            {value.entries.map(([member, score]) => (
-              <tr key={member}>
-                <th>{member}</th>
-                <td>{score}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <div className="redis-key-dialog__rows">
+          {value.entries.map(([member]) => (
+            <div className="redis-key-dialog__edit-row" key={member}>
+              <span className="redis-key-dialog__row-key">{member}</span>
+              <input
+                aria-label={t("redis.zset_score_label", { member })}
+                value={zsetDrafts[member] ?? ""}
+                onChange={(event) => setZsetDrafts((current) => ({
+                  ...current,
+                  [member]: event.target.value,
+                }))}
+              />
+              <button type="button" disabled={isKeyActionRunning} onClick={() => void saveZsetMember(member)}>
+                {t("redis.save_zset_member", { member })}
+              </button>
+              <button
+                type="button"
+                className="sftp-dialog__danger-button"
+                disabled={isKeyActionRunning}
+                onClick={() => void deleteZsetMember(member)}
+              >
+                {t("redis.delete_set_member", { member })}
+              </button>
+            </div>
+          ))}
+          <div className="redis-key-dialog__edit-row">
+            <input
+              aria-label={t("redis.new_member")}
+              placeholder={t("redis.new_member")}
+              value={newZsetMember}
+              onChange={(event) => setNewZsetMember(event.target.value)}
+            />
+            <input
+              aria-label={t("redis.new_score")}
+              placeholder={t("redis.new_score")}
+              value={newZsetScore}
+              onChange={(event) => setNewZsetScore(event.target.value)}
+            />
+            <button type="button" disabled={isKeyActionRunning} onClick={() => void addZsetMember()}>
+              {t("redis.add_member")}
+            </button>
+          </div>
+        </div>
       </>
     );
   }

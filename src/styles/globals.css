@@ -1290,6 +1290,49 @@ p {
   font-family: var(--terminal-font-family);
 }
 
+.redis-key-dialog__rows {
+  display: grid;
+  gap: 8px;
+  max-height: min(56vh, 520px);
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: var(--panel-soft);
+}
+
+.redis-key-dialog__edit-row {
+  display: grid;
+  grid-template-columns: minmax(92px, 0.42fr) minmax(160px, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.redis-key-dialog__edit-row input {
+  width: 100%;
+  min-width: 0;
+}
+
+.redis-key-dialog__edit-row button {
+  white-space: nowrap;
+}
+
+.redis-key-dialog__row-key {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-family: var(--terminal-font-family);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 760px) {
+  .redis-key-dialog__edit-row {
+    grid-template-columns: 1fr;
+    justify-items: stretch;
+  }
+}
+
 .redis-key-dialog__hint {
   margin: 0;
   color: var(--muted);

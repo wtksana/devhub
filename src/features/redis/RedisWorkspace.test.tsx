@@ -258,7 +258,7 @@ describe("RedisWorkspace", () => {
     const dialog = await screen.findByRole("dialog", { name: "查看 profile:1" });
     expect(dialog).toHaveTextContent("长度 1");
     expect(dialog).toHaveTextContent("name");
-    expect(dialog).toHaveTextContent("devhub");
+    expect(within(dialog).getByLabelText("字段 name 的值")).toHaveValue("devhub");
   });
 
   it("saves edited Redis string content and reloads the detail", async () => {
@@ -310,6 +310,381 @@ describe("RedisWorkspace", () => {
       },
     });
     await waitFor(() => expect(screen.getByLabelText("Redis string 内容")).toHaveValue("light"));
+  });
+
+  it("edits Redis hash fields from the detail dialog", async () => {
+    callBackendMock.mockResolvedValueOnce({
+      total_count: 1,
+      entries: [
+        { key: "profile:1", key_type: "hash", ttl: -1 },
+      ],
+    });
+    callBackendMock.mockResolvedValueOnce({
+      key: "profile:1",
+      key_type: "hash",
+      ttl: -1,
+      value: {
+        kind: "hash",
+        entries: [["name", "devhub"]],
+        truncated: false,
+        length: 1,
+      },
+    });
+    callBackendMock.mockResolvedValueOnce(undefined);
+    callBackendMock.mockResolvedValueOnce({
+      key: "profile:1",
+      key_type: "hash",
+      ttl: -1,
+      value: {
+        kind: "hash",
+        entries: [["name", "devhub-app"]],
+        truncated: false,
+        length: 1,
+      },
+    });
+    callBackendMock.mockResolvedValueOnce(undefined);
+    callBackendMock.mockResolvedValueOnce({
+      key: "profile:1",
+      key_type: "hash",
+      ttl: -1,
+      value: {
+        kind: "hash",
+        entries: [
+          ["name", "devhub-app"],
+          ["role", "admin"],
+        ],
+        truncated: false,
+        length: 2,
+      },
+    });
+    callBackendMock.mockResolvedValueOnce(undefined);
+    callBackendMock.mockResolvedValueOnce({
+      key: "profile:1",
+      key_type: "hash",
+      ttl: -1,
+      value: {
+        kind: "hash",
+        entries: [["role", "admin"]],
+        truncated: false,
+        length: 1,
+      },
+    });
+
+    renderRedisWorkspace({ connectionId: "redis-local", initialDatabase: 0 });
+
+    await userEvent.click(await screen.findByRole("button", { name: "展开 profile" }));
+    await userEvent.dblClick(screen.getByText("profile:1"));
+    const valueInput = await screen.findByLabelText("字段 name 的值");
+    await userEvent.clear(valueInput);
+    await userEvent.type(valueInput, "devhub-app");
+    await userEvent.click(screen.getByRole("button", { name: "保存字段 name" }));
+
+    expect(callBackendMock).toHaveBeenCalledWith("set_redis_hash_field", {
+      request: {
+        connection_id: "redis-local",
+        database: 0,
+        key: "profile:1",
+        field: "name",
+        value: "devhub-app",
+      },
+    });
+    await waitFor(() => expect(screen.getByLabelText("字段 name 的值")).toHaveValue("devhub-app"));
+
+    await userEvent.type(screen.getByLabelText("新字段名"), "role");
+    await userEvent.type(screen.getByLabelText("新字段值"), "admin");
+    await userEvent.click(screen.getByRole("button", { name: "添加字段" }));
+
+    expect(callBackendMock).toHaveBeenCalledWith("set_redis_hash_field", {
+      request: {
+        connection_id: "redis-local",
+        database: 0,
+        key: "profile:1",
+        field: "role",
+        value: "admin",
+      },
+    });
+    await waitFor(() => expect(screen.getByLabelText("字段 role 的值")).toHaveValue("admin"));
+
+    await userEvent.click(screen.getByRole("button", { name: "删除字段 name" }));
+
+    expect(callBackendMock).toHaveBeenCalledWith("delete_redis_hash_field", {
+      request: {
+        connection_id: "redis-local",
+        database: 0,
+        key: "profile:1",
+        field: "name",
+      },
+    });
+  });
+
+  it("edits Redis list items from the detail dialog", async () => {
+    callBackendMock.mockResolvedValueOnce({
+      total_count: 1,
+      entries: [
+        { key: "queue", key_type: "list", ttl: -1 },
+      ],
+    });
+    callBackendMock.mockResolvedValueOnce({
+      key: "queue",
+      key_type: "list",
+      ttl: -1,
+      value: {
+        kind: "list",
+        items: ["one"],
+        truncated: false,
+        length: 1,
+      },
+    });
+    callBackendMock.mockResolvedValueOnce(undefined);
+    callBackendMock.mockResolvedValueOnce({
+      key: "queue",
+      key_type: "list",
+      ttl: -1,
+      value: {
+        kind: "list",
+        items: ["two"],
+        truncated: false,
+        length: 1,
+      },
+    });
+    callBackendMock.mockResolvedValueOnce(undefined);
+    callBackendMock.mockResolvedValueOnce({
+      key: "queue",
+      key_type: "list",
+      ttl: -1,
+      value: {
+        kind: "list",
+        items: ["two", "three"],
+        truncated: false,
+        length: 2,
+      },
+    });
+    callBackendMock.mockResolvedValueOnce(undefined);
+    callBackendMock.mockResolvedValueOnce({
+      key: "queue",
+      key_type: "list",
+      ttl: -1,
+      value: {
+        kind: "list",
+        items: ["three"],
+        truncated: false,
+        length: 1,
+      },
+    });
+
+    renderRedisWorkspace({ connectionId: "redis-local", initialDatabase: 0 });
+
+    await userEvent.dblClick(await screen.findByText("queue"));
+    const itemInput = await screen.findByLabelText("第 0 个元素");
+    await userEvent.clear(itemInput);
+    await userEvent.type(itemInput, "two");
+    await userEvent.click(screen.getByRole("button", { name: "保存第 0 个元素" }));
+
+    expect(callBackendMock).toHaveBeenCalledWith("set_redis_list_item", {
+      request: {
+        connection_id: "redis-local",
+        database: 0,
+        key: "queue",
+        index: 0,
+        value: "two",
+      },
+    });
+
+    await userEvent.type(screen.getByLabelText("新元素"), "three");
+    await userEvent.click(screen.getByRole("button", { name: "添加元素" }));
+
+    expect(callBackendMock).toHaveBeenCalledWith("append_redis_list_item", {
+      request: {
+        connection_id: "redis-local",
+        database: 0,
+        key: "queue",
+        value: "three",
+      },
+    });
+
+    await userEvent.click(screen.getByRole("button", { name: "删除第 0 个元素" }));
+
+    expect(callBackendMock).toHaveBeenCalledWith("delete_redis_list_item", {
+      request: {
+        connection_id: "redis-local",
+        database: 0,
+        key: "queue",
+        index: 0,
+      },
+    });
+  });
+
+  it("edits Redis set members from the detail dialog", async () => {
+    callBackendMock.mockResolvedValueOnce({
+      total_count: 1,
+      entries: [
+        { key: "tags", key_type: "set", ttl: -1 },
+      ],
+    });
+    callBackendMock.mockResolvedValueOnce({
+      key: "tags",
+      key_type: "set",
+      ttl: -1,
+      value: {
+        kind: "set",
+        members: ["dev"],
+        truncated: false,
+        length: 1,
+      },
+    });
+    callBackendMock.mockResolvedValueOnce(undefined);
+    callBackendMock.mockResolvedValueOnce({
+      key: "tags",
+      key_type: "set",
+      ttl: -1,
+      value: {
+        kind: "set",
+        members: ["dev", "prod"],
+        truncated: false,
+        length: 2,
+      },
+    });
+    callBackendMock.mockResolvedValueOnce(undefined);
+    callBackendMock.mockResolvedValueOnce({
+      key: "tags",
+      key_type: "set",
+      ttl: -1,
+      value: {
+        kind: "set",
+        members: ["prod"],
+        truncated: false,
+        length: 1,
+      },
+    });
+
+    renderRedisWorkspace({ connectionId: "redis-local", initialDatabase: 0 });
+
+    await userEvent.dblClick(await screen.findByText("tags"));
+    await userEvent.type(await screen.findByLabelText("新成员"), "prod");
+    await userEvent.click(screen.getByRole("button", { name: "添加成员" }));
+
+    expect(callBackendMock).toHaveBeenCalledWith("add_redis_set_member", {
+      request: {
+        connection_id: "redis-local",
+        database: 0,
+        key: "tags",
+        member: "prod",
+      },
+    });
+
+    await userEvent.click(await screen.findByRole("button", { name: "删除成员 dev" }));
+
+    expect(callBackendMock).toHaveBeenCalledWith("delete_redis_set_member", {
+      request: {
+        connection_id: "redis-local",
+        database: 0,
+        key: "tags",
+        member: "dev",
+      },
+    });
+  });
+
+  it("edits Redis zset entries from the detail dialog", async () => {
+    callBackendMock.mockResolvedValueOnce({
+      total_count: 1,
+      entries: [
+        { key: "rank", key_type: "zset", ttl: -1 },
+      ],
+    });
+    callBackendMock.mockResolvedValueOnce({
+      key: "rank",
+      key_type: "zset",
+      ttl: -1,
+      value: {
+        kind: "zset",
+        entries: [["alice", 1]],
+        truncated: false,
+        length: 1,
+      },
+    });
+    callBackendMock.mockResolvedValueOnce(undefined);
+    callBackendMock.mockResolvedValueOnce({
+      key: "rank",
+      key_type: "zset",
+      ttl: -1,
+      value: {
+        kind: "zset",
+        entries: [["alice", 2]],
+        truncated: false,
+        length: 1,
+      },
+    });
+    callBackendMock.mockResolvedValueOnce(undefined);
+    callBackendMock.mockResolvedValueOnce({
+      key: "rank",
+      key_type: "zset",
+      ttl: -1,
+      value: {
+        kind: "zset",
+        entries: [
+          ["alice", 2],
+          ["bob", 3],
+        ],
+        truncated: false,
+        length: 2,
+      },
+    });
+    callBackendMock.mockResolvedValueOnce(undefined);
+    callBackendMock.mockResolvedValueOnce({
+      key: "rank",
+      key_type: "zset",
+      ttl: -1,
+      value: {
+        kind: "zset",
+        entries: [["bob", 3]],
+        truncated: false,
+        length: 1,
+      },
+    });
+
+    renderRedisWorkspace({ connectionId: "redis-local", initialDatabase: 0 });
+
+    await userEvent.dblClick(await screen.findByText("rank"));
+    const scoreInput = await screen.findByLabelText("成员 alice 的分数");
+    await userEvent.clear(scoreInput);
+    await userEvent.type(scoreInput, "2");
+    await userEvent.click(screen.getByRole("button", { name: "保存成员 alice" }));
+
+    expect(callBackendMock).toHaveBeenCalledWith("set_redis_zset_member", {
+      request: {
+        connection_id: "redis-local",
+        database: 0,
+        key: "rank",
+        member: "alice",
+        score: "2",
+      },
+    });
+
+    await userEvent.type(screen.getByLabelText("新成员"), "bob");
+    await userEvent.clear(screen.getByLabelText("新分数"));
+    await userEvent.type(screen.getByLabelText("新分数"), "3");
+    await userEvent.click(screen.getByRole("button", { name: "添加成员" }));
+
+    expect(callBackendMock).toHaveBeenCalledWith("set_redis_zset_member", {
+      request: {
+        connection_id: "redis-local",
+        database: 0,
+        key: "rank",
+        member: "bob",
+        score: "3",
+      },
+    });
+
+    await userEvent.click(screen.getByRole("button", { name: "删除成员 alice" }));
+
+    expect(callBackendMock).toHaveBeenCalledWith("delete_redis_zset_member", {
+      request: {
+        connection_id: "redis-local",
+        database: 0,
+        key: "rank",
+        member: "alice",
+      },
+    });
   });
 
   it("sets and removes Redis key ttl from the detail dialog", async () => {
