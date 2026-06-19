@@ -914,6 +914,47 @@ describe("RedisWorkspace", () => {
     expect(await screen.findByText("没有匹配的 key")).toBeInTheDocument();
   });
 
+  it("selects and unselects loaded keys by folder", async () => {
+    callBackendMock.mockResolvedValueOnce({
+      total_count: 4,
+      entries: [
+        { key: "app:user:1", key_type: "hash", ttl: -1 },
+        { key: "app:user:2", key_type: "hash", ttl: -1 },
+        { key: "app:config", key_type: "string", ttl: -1 },
+        { key: "other:user:1", key_type: "hash", ttl: -1 },
+      ],
+    });
+    callBackendMock.mockResolvedValueOnce(undefined);
+    callBackendMock.mockResolvedValueOnce({ total_count: 2, entries: [] });
+
+    renderRedisWorkspace({ connectionId: "redis-local", initialDatabase: 0 });
+
+    await userEvent.click(await screen.findByRole("button", { name: "展开 app" }));
+    await userEvent.click(screen.getByRole("button", { name: "展开 app/user" }));
+    await userEvent.click(screen.getByRole("checkbox", { name: "选择目录 app/user" }));
+
+    expect(screen.getByRole("checkbox", { name: "选择 app:user:1" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "选择 app:user:2" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "选择 app:config" })).not.toBeChecked();
+
+    await userEvent.click(screen.getByRole("checkbox", { name: "选择目录 app/user" }));
+    expect(screen.getByRole("checkbox", { name: "选择 app:user:1" })).not.toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "选择 app:user:2" })).not.toBeChecked();
+
+    await userEvent.click(screen.getByRole("checkbox", { name: "选择目录 app/user" }));
+    await userEvent.pointer({ keys: "[MouseRight]", target: screen.getByText("app:user:1") });
+    await userEvent.click(screen.getByRole("menuitem", { name: "批量删除" }));
+    await userEvent.click(screen.getByRole("button", { name: "确认" }));
+
+    expect(callBackendMock).toHaveBeenCalledWith("delete_redis_keys", {
+      request: {
+        connection_id: "redis-local",
+        database: 0,
+        keys: ["app:user:1", "app:user:2"],
+      },
+    });
+  });
+
   it("sets and removes ttl for selected Redis keys from the key context menu", async () => {
     callBackendMock.mockResolvedValueOnce({
       total_count: 2,

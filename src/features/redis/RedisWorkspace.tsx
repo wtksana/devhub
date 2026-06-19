@@ -79,6 +79,14 @@ function formatBytes(size: number) {
   return `${(size / 1024 / 1024).toFixed(1)} MB`;
 }
 
+function keyFolderPath(key: string, separator: string) {
+  const normalizedSeparator = separator.trim();
+  if (!normalizedSeparator) return "";
+  const parts = key.split(normalizedSeparator).filter(Boolean);
+  if (parts.length <= 1) return "";
+  return parts.slice(0, -1).join("/");
+}
+
 function buildRedisTreeRows(keys: RedisKeyEntry[], separator: string, expandedFolders: Set<string>) {
   const normalizedSeparator = separator.trim();
   if (!normalizedSeparator) {
@@ -306,6 +314,32 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
         ? current.filter((selectedKey) => selectedKey !== key)
         : [...current, key]
     ));
+  }
+
+  function folderKeys(path: string) {
+    return keys
+      .filter((entry) => {
+        const folderPath = keyFolderPath(entry.key, keySeparator);
+        return folderPath === path || folderPath.startsWith(`${path}/`);
+      })
+      .map((entry) => entry.key);
+  }
+
+  function toggleSelectedFolder(path: string) {
+    const keysInFolder = folderKeys(path);
+    if (keysInFolder.length === 0) return;
+    setSelectedKeys((current) => {
+      const selectedSet = new Set(current);
+      const isFullySelected = keysInFolder.every((key) => selectedSet.has(key));
+      for (const key of keysInFolder) {
+        if (isFullySelected) {
+          selectedSet.delete(key);
+        } else {
+          selectedSet.add(key);
+        }
+      }
+      return keys.filter((entry) => selectedSet.has(entry.key)).map((entry) => entry.key);
+    });
   }
 
   function selectedKeysForAction(entry: RedisKeyEntry) {
@@ -943,7 +977,25 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
               <Fragment key={row.id}>
                 {row.kind === "folder" ? (
                   <tr className="redis-folder-row">
-                    <td className="redis-table__selection-cell" />
+                    <td className="redis-table__selection-cell">
+                      {(() => {
+                        const keysInFolder = folderKeys(row.path);
+                        const selectedCount = keysInFolder.filter((key) => selectedKeys.includes(key)).length;
+                        return (
+                          <input
+                            type="checkbox"
+                            aria-label={t("redis.select_folder", { name: row.path })}
+                            checked={keysInFolder.length > 0 && selectedCount === keysInFolder.length}
+                            ref={(element) => {
+                              if (element) {
+                                element.indeterminate = selectedCount > 0 && selectedCount < keysInFolder.length;
+                              }
+                            }}
+                            onChange={() => toggleSelectedFolder(row.path)}
+                          />
+                        );
+                      })()}
+                    </td>
                     <td>
                       <button
                         type="button"

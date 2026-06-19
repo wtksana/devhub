@@ -43,6 +43,7 @@
 - [x] Redis key 可以在详情弹窗中重命名，目标 key 已存在时不会覆盖。
 - [x] Redis key 列表行右键菜单包含：编辑、重命名、删除；删除前会二次确认。
 - [x] Redis key 列表支持多选。
+- [x] Redis key 列表支持按目录选择当前已加载的 key。
 - [x] Redis key 列表右键菜单支持批量删除，删除前会二次确认。
 - [x] Redis key 列表右键菜单支持批量设置 TTL。
 - [x] Redis key 列表右键菜单支持批量移除 TTL。

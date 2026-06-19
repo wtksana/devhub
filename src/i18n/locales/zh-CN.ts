@@ -156,6 +156,7 @@ export const zhCN = {
   "redis.key_list": "Redis key 列表",
   "redis.selection": "选择",
   "redis.select_key": "选择 {key}",
+  "redis.select_folder": "选择目录 {name}",
   "redis.key": "Key",
   "redis.type": "类型",
   "redis.ttl": "TTL",

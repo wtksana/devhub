@@ -158,6 +158,7 @@ export const enUS: Dictionary = {
   "redis.key_list": "Redis key list",
   "redis.selection": "Selection",
   "redis.select_key": "Select {key}",
+  "redis.select_folder": "Select folder {name}",
   "redis.key": "Key",
   "redis.type": "Type",
   "redis.ttl": "TTL",
