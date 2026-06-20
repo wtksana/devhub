@@ -1,4 +1,5 @@
 import type { DatabaseWorkspaceProps } from "./databaseTypes";
+import { DatabaseObjectTree } from "./DatabaseObjectTree";
 import { useI18n } from "../../i18n/useI18n";
 
 export function DatabaseWorkspace({ connectionId }: DatabaseWorkspaceProps) {
@@ -6,7 +7,10 @@ export function DatabaseWorkspace({ connectionId }: DatabaseWorkspaceProps) {
 
   return (
     <section className="database-workspace" aria-label={t("database.workspace")}>
-      <div className="database-workspace__empty">{connectionId}</div>
+      <DatabaseObjectTree connectionId={connectionId} />
+      <div className="database-workspace__main">
+        <div className="database-workspace__empty">{connectionId}</div>
+      </div>
     </section>
   );
 }

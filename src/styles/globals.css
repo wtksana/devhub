@@ -839,6 +839,7 @@ p {
 
 .settings-panel,
 .sftp-workspace,
+.database-workspace,
 .redis-workspace,
 .terminal-workspace {
   min-height: 0;
@@ -861,6 +862,77 @@ p {
   height: 100%;
   overflow: hidden;
   padding: 0;
+}
+
+.database-workspace {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  gap: 0;
+  height: 100%;
+  overflow: hidden;
+  padding: 0;
+}
+
+.database-object-tree {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 10px;
+  border-right: 1px solid var(--border-subtle);
+  background: var(--panel);
+}
+
+.database-object-tree ul {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.database-object-tree li {
+  display: grid;
+  grid-template-columns: 24px minmax(0, max-content) minmax(0, 1fr);
+  gap: 6px;
+  align-items: center;
+  min-height: 28px;
+  color: var(--text);
+}
+
+.database-object-tree li:hover {
+  background: var(--hover);
+}
+
+.database-object-tree button {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  overflow: hidden;
+  border-color: transparent;
+  color: transparent;
+  background: transparent;
+}
+
+.database-object-tree button::before {
+  color: var(--muted);
+  content: ">";
+}
+
+.database-object-tree small {
+  color: var(--muted);
+}
+
+.database-object-tree__leaf {
+  width: 22px;
+  height: 22px;
+}
+
+.database-workspace__main {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 18px;
 }
 
 .settings-sidebar {

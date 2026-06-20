@@ -380,6 +380,10 @@ describe("AppShell", () => {
       ...createSettings(),
       connections: [mysqlConnection],
     };
+    callBackendMock.mockImplementation((command) => {
+      if (command === "list_database_objects") return Promise.resolve([]);
+      return Promise.resolve({ session_id: "session-1" });
+    });
 
     render(<AppShell />);
 
