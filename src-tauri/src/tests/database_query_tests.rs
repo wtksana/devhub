@@ -1,6 +1,6 @@
 use crate::db::connection::database_connection_url;
 use crate::db::metadata::{metadata_query_for_columns, metadata_query_for_tables};
-use crate::db::query::{apply_select_limit, is_dangerous_sql};
+use crate::db::query::{apply_select_limit, is_dangerous_sql, quote_identifier};
 use crate::models::settings::DatabaseConnectionSettings;
 
 #[test]
@@ -79,4 +79,20 @@ fn keeps_select_with_existing_limit() {
 fn detects_dangerous_sql() {
     assert!(is_dangerous_sql("delete from users"));
     assert!(!is_dangerous_sql("select * from users"));
+}
+
+#[test]
+fn quotes_mysql_identifier() {
+    assert_eq!(
+        quote_identifier("mysql", "user`log").unwrap(),
+        "`user``log`"
+    );
+}
+
+#[test]
+fn quotes_postgresql_identifier() {
+    assert_eq!(
+        quote_identifier("postgresql", "user\"log").unwrap(),
+        "\"user\"\"log\""
+    );
 }

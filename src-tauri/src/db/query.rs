@@ -68,6 +68,14 @@ pub fn apply_select_limit(sql: &str, limit: u32) -> Result<String, String> {
     Ok(format!("{without_semicolon} LIMIT {limit}"))
 }
 
+pub fn quote_identifier(kind: &str, identifier: &str) -> Result<String, String> {
+    match kind {
+        "mysql" => Ok(format!("`{}`", identifier.replace('`', "``"))),
+        "postgresql" => Ok(format!("\"{}\"", identifier.replace('"', "\"\""))),
+        kind => Err(format!("unsupported database connection kind: {kind}")),
+    }
+}
+
 async fn execute_mysql_query(
     connection: &DatabaseConnectionSettings,
     sql: &str,

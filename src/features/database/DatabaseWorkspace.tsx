@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { callBackend } from "../../lib/tauri";
-import type { DatabaseCellValue, DatabaseQueryResult, DatabaseWorkspaceProps } from "./databaseTypes";
+import type { DatabaseCellValue, DatabaseQueryResult, DatabaseTreeNode, DatabaseWorkspaceProps } from "./databaseTypes";
 import { DatabaseObjectTree } from "./DatabaseObjectTree";
 import { useI18n } from "../../i18n/useI18n";
 
@@ -61,9 +61,15 @@ export function DatabaseWorkspace({ connectionId }: DatabaseWorkspaceProps) {
     }
   }
 
+  function openTable(node: DatabaseTreeNode) {
+    const tableSql = `SELECT * FROM ${quoteTableName(connectionId, node.name)} LIMIT ${DEFAULT_SQL_LIMIT}`;
+    setSql(tableSql);
+    void executeSql(tableSql);
+  }
+
   return (
     <section className="database-workspace" aria-label={t("database.workspace")}>
-      <DatabaseObjectTree connectionId={connectionId} />
+      <DatabaseObjectTree connectionId={connectionId} onOpenTable={openTable} />
       <div className="database-workspace__main">
         <div className="database-query-panel">
           <label className="database-query-panel__editor">
@@ -205,4 +211,11 @@ function firstSqlKeyword(sql: string) {
     return remaining.split(/[^a-zA-Z]+/).find(Boolean) ?? null;
   }
   return null;
+}
+
+function quoteTableName(connectionId: string, tableName: string) {
+  if (connectionId.startsWith("postgresql") || connectionId.startsWith("postgres")) {
+    return `"${tableName.split("\"").join("\"\"")}"`;
+  }
+  return `\`${tableName.split("`").join("``")}\``;
 }

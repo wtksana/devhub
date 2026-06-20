@@ -5,6 +5,7 @@ import type { DatabaseTreeNode } from "./databaseTypes";
 
 interface DatabaseObjectTreeProps {
   connectionId: string;
+  onOpenTable?: (node: DatabaseTreeNode) => void;
 }
 
 interface DatabaseTreeRow {
@@ -61,7 +62,7 @@ function flattenRows(nodes: DatabaseTreeNode[], childrenByNode: Map<string, Data
   return rows;
 }
 
-export function DatabaseObjectTree({ connectionId }: DatabaseObjectTreeProps) {
+export function DatabaseObjectTree({ connectionId, onOpenTable }: DatabaseObjectTreeProps) {
   const { t } = useI18n();
   const [rootNodes, setRootNodes] = useState<DatabaseTreeNode[]>([]);
   const [childrenByNode, setChildrenByNode] = useState<Map<string, DatabaseTreeNode[]>>(new Map());
@@ -132,7 +133,13 @@ export function DatabaseObjectTree({ connectionId }: DatabaseObjectTreeProps) {
             ) : (
               <span className="database-object-tree__leaf" />
             )}
-            <span>{node.name}</span>
+            <span onDoubleClick={() => {
+              if (node.kind === "table" || node.kind === "view") {
+                onOpenTable?.(node);
+              }
+            }}>
+              {node.name}
+            </span>
             {node.detail ? <small>{node.detail}</small> : null}
           </li>
         ))}

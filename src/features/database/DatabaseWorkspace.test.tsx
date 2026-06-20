@@ -197,4 +197,46 @@ describe("DatabaseWorkspace", () => {
     });
     expect(await screen.findByText("影响 1 行，耗时 2 ms")).toBeInTheDocument();
   });
+
+  it("loads table data when double clicking a table node", async () => {
+    callBackendMock.mockImplementation((command, payload) => {
+      if (command === "list_database_objects") {
+        const request = (payload as { request: { parent_kind?: string; database?: string } }).request;
+        if (!request.parent_kind) {
+          return Promise.resolve([{ id: "database:app", name: "app", kind: "database", has_children: true }]);
+        }
+        return Promise.resolve([
+          { id: "table:app.users", name: "users", kind: "table", has_children: true, detail: "BASE TABLE" },
+        ]);
+      }
+      if (command === "execute_database_query") {
+        return Promise.resolve({
+          columns: [{ name: "id", data_type: "INT" }],
+          rows: [[{ kind: "number", value: "1" }]],
+          affected_rows: 0,
+          duration_ms: 6,
+          limited: false,
+        });
+      }
+      return Promise.resolve([]);
+    });
+
+    renderDatabaseWorkspace();
+
+    await userEvent.click(await screen.findByRole("button", { name: "展开 app" }));
+    await userEvent.dblClick(await screen.findByText("users"));
+
+    expect(screen.getByLabelText("SQL 编辑器")).toHaveValue("SELECT * FROM `users` LIMIT 200");
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("execute_database_query", {
+        request: {
+          connection_id: "mysql-dev",
+          database: null,
+          sql: "SELECT * FROM `users` LIMIT 200",
+          limit: 200,
+        },
+      });
+    });
+    expect(await screen.findByText("1 行，耗时 6 ms")).toBeInTheDocument();
+  });
 });
