@@ -238,6 +238,7 @@ export const enUS: Dictionary = {
   "redis.rename_key_required": "Enter a new key name",
   "redis.confirm_delete": "Confirm Redis key deletion",
   "redis.confirm_bulk_delete": "Confirm Redis key bulk deletion",
+  "database.workspace": "Database workspace",
   "redis.delete_confirm_message": "Delete {key}? This cannot be undone.",
   "redis.bulk_delete_confirm_message": "Delete {count} selected keys? This cannot be undone.",
   "redis.selected_count": "{count} keys selected",

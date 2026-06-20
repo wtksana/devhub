@@ -65,6 +65,17 @@ const redisConnection = {
   password: "redis-password",
 };
 
+const mysqlConnection = {
+  kind: "mysql" as const,
+  id: "mysql-dev",
+  name: "开发 MySQL",
+  host: "127.0.0.1",
+  port: 3306,
+  username: "root",
+  password: "secret",
+  database: "app",
+};
+
 vi.mock("../features/settings/useSettings", () => ({
   useSettings: () => ({
     settings,
@@ -362,6 +373,24 @@ describe("AppShell", () => {
         cursor: 0,
       },
     });
+  });
+
+  it("opens a database workspace tab from a MySQL connection", async () => {
+    settings = {
+      ...createSettings(),
+      connections: [mysqlConnection],
+    };
+
+    render(<AppShell />);
+
+    await userEvent.dblClick(screen.getByText("开发 MySQL").closest("li") as HTMLElement);
+
+    expect(within(screen.getByLabelText("工作区标签")).getByRole("button", { name: "开发 MySQL" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByLabelText("数据库工作区")).toBeInTheDocument();
+    expect(screen.getByText("mysql-dev")).toBeInTheDocument();
   });
 
   it("toggles panels from the status bar", async () => {

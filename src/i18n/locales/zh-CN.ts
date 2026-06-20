@@ -236,6 +236,7 @@ export const zhCN = {
   "redis.rename_key_required": "请填写新 key 名称",
   "redis.confirm_delete": "确认删除 Redis key",
   "redis.confirm_bulk_delete": "确认批量删除 Redis key",
+  "database.workspace": "数据库工作区",
   "redis.delete_confirm_message": "确认删除 {key}？该操作不可逆！",
   "redis.bulk_delete_confirm_message": "确认删除选中的 {count} 个 key？该操作不可逆！",
   "redis.selected_count": "已选择 {count} 个 key",

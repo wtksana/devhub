@@ -20,6 +20,7 @@ interface ConnectionListProps {
   onOpenNewTerminal: (connectionId: string) => void;
   onOpenSftp: (connectionId: string) => void;
   onOpenRedis: (connectionId: string) => void;
+  onOpenDatabase: (connectionId: string) => void;
   onAddConnection: (connection: ConnectionSettings) => void;
   onUpdateConnection: (connection: ConnectionSettings) => void;
   connectionGroups: string[];
@@ -115,6 +116,7 @@ export function ConnectionList({
   onOpenNewTerminal,
   onOpenSftp,
   onOpenRedis,
+  onOpenDatabase,
   onAddConnection,
   onUpdateConnection,
   connectionGroups,
@@ -406,6 +408,7 @@ export function ConnectionList({
       return;
     }
     if (isDatabaseConnection(connection)) {
+      onOpenDatabase(connection.id);
       return;
     }
     onOpenTerminal(connection.id);

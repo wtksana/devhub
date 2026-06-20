@@ -5,6 +5,7 @@ import { DockPanel } from "./DockPanel";
 import { StatusBar } from "./StatusBar";
 import { WorkspaceTabs, type WorkspaceTabItem } from "./WorkspaceTabs";
 import { ConnectionList } from "../features/connections/ConnectionList";
+import { DatabaseWorkspace } from "../features/database/DatabaseWorkspace";
 import { RedisWorkspace } from "../features/redis/RedisWorkspace";
 import { SettingsPanel } from "../features/settings/SettingsPanel";
 import type { RedisConnectionSettings } from "../features/settings/settingsTypes";
@@ -35,7 +36,12 @@ interface RedisWorkspaceTab extends WorkspaceTabItem {
   connectionId: string;
 }
 
-type AppWorkspaceTab = SettingsWorkspaceTab | TerminalWorkspaceTab | SftpWorkspaceTab | RedisWorkspaceTab;
+interface DatabaseWorkspaceTab extends WorkspaceTabItem {
+  kind: "database";
+  connectionId: string;
+}
+
+type AppWorkspaceTab = SettingsWorkspaceTab | TerminalWorkspaceTab | SftpWorkspaceTab | RedisWorkspaceTab | DatabaseWorkspaceTab;
 
 function mergeConnectionGroups(groups: string[], group?: string) {
   const nextGroup = group?.trim();
@@ -171,6 +177,23 @@ function AppShellContent({ settingsState }: { settingsState: ReturnType<typeof u
           kind: "redis",
           connectionId,
           title: connectionTitle(connectionId, settings, t("connections.type_redis")),
+        },
+      ];
+    });
+    setActiveTabId(tabId);
+  }
+
+  function openDatabaseTab(connectionId: string) {
+    const tabId = `database:${connectionId}`;
+    setWorkspaceTabs((tabs) => {
+      if (tabs.some((tab) => tab.id === tabId)) return tabs;
+      return [
+        ...tabs,
+        {
+          id: tabId,
+          kind: "database",
+          connectionId,
+          title: connectionTitle(connectionId, settings, t("database.workspace")),
         },
       ];
     });
@@ -316,6 +339,9 @@ function AppShellContent({ settingsState }: { settingsState: ReturnType<typeof u
               onOpenRedis={(connectionId) => {
                 openRedisTab(connectionId);
               }}
+              onOpenDatabase={(connectionId) => {
+                openDatabaseTab(connectionId);
+              }}
             />
           </DockPanel>
         ) : null}
@@ -354,6 +380,7 @@ function AppShellContent({ settingsState }: { settingsState: ReturnType<typeof u
                   initialDatabase={redisConnection(tab.connectionId, settings)?.database ?? 0}
                 />
               ) : null}
+              {tab.kind === "database" ? <DatabaseWorkspace connectionId={tab.connectionId} /> : null}
               {tab.kind === "settings" ? <SettingsPanel settingsState={settingsState} /> : null}
             </div>
           ))}

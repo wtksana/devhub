@@ -94,6 +94,7 @@ describe("ConnectionList", () => {
           onOpenNewTerminal={vi.fn()}
           onOpenSftp={vi.fn()}
           onOpenRedis={vi.fn()}
+          onOpenDatabase={vi.fn()}
           onAddConnection={vi.fn()}
           onUpdateConnection={vi.fn()}
           connectionGroups={[]}
@@ -345,10 +346,11 @@ describe("ConnectionList", () => {
     expect(within(dialog).getByLabelText("默认数据库")).toHaveValue("app");
   });
 
-  it("shows database connections without SSH or Redis actions before workspace support is added", async () => {
+  it("opens database connections without SSH or Redis actions", async () => {
     const onOpenTerminal = vi.fn();
     const onOpenRedis = vi.fn();
     const onOpenSftp = vi.fn();
+    const onOpenDatabase = vi.fn();
 
     renderConnectionList({
       connections: [
@@ -365,6 +367,7 @@ describe("ConnectionList", () => {
       onOpenTerminal,
       onOpenRedis,
       onOpenSftp,
+      onOpenDatabase,
     });
 
     const connectionItem = screen.getByText("本地 PostgreSQL").closest("li");
@@ -373,6 +376,7 @@ describe("ConnectionList", () => {
     expect(within(connectionItem as HTMLElement).getByRole("img", { name: "PostgreSQL 连接" })).toBeInTheDocument();
 
     await userEvent.dblClick(connectionItem as HTMLElement);
+    expect(onOpenDatabase).toHaveBeenCalledWith("postgres-local");
     expect(onOpenTerminal).not.toHaveBeenCalled();
     expect(onOpenRedis).not.toHaveBeenCalled();
 
