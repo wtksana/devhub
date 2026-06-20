@@ -1,4 +1,5 @@
 use crate::db::connection::database_connection_url;
+use crate::db::metadata::{metadata_query_for_columns, metadata_query_for_tables};
 use crate::models::settings::DatabaseConnectionSettings;
 
 #[test]
@@ -39,4 +40,20 @@ fn builds_postgresql_connection_url_without_database() {
         database_connection_url(&connection).unwrap(),
         "postgresql://postgres:secret@127.0.0.1:5432"
     );
+}
+
+#[test]
+fn builds_mysql_table_metadata_query() {
+    let query = metadata_query_for_tables("mysql", "app", None).unwrap();
+
+    assert!(query.sql.contains("information_schema.tables"));
+    assert!(query.sql.contains("table_schema"));
+}
+
+#[test]
+fn builds_postgresql_column_metadata_query() {
+    let query = metadata_query_for_columns("postgresql", "public", "users").unwrap();
+
+    assert!(query.sql.contains("information_schema.columns"));
+    assert!(query.sql.contains("table_schema"));
 }
