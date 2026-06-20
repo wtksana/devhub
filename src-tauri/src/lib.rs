@@ -13,6 +13,7 @@ use crate::core::credential_store::CredentialStore;
 use crate::core::settings_store::SettingsStore;
 use crate::core::window_state::{WindowState, WindowStateStore};
 use crate::db::connection::DatabaseConnectionManager;
+use crate::db::history::QueryHistoryStore;
 use crate::ssh::session_manager::SessionManager;
 use crate::ssh::sftp_manager::SftpSessionManager;
 use tauri::image::Image;
@@ -57,7 +58,8 @@ pub fn run() {
                 });
             }
 
-            app.manage(SettingsStore::new_for_dir(app_dir));
+            app.manage(SettingsStore::new_for_dir(app_dir.clone()));
+            app.manage(QueryHistoryStore::new_for_dir(app_dir));
             app.manage(CredentialStore::new("devhub"));
             app.manage(DatabaseConnectionManager);
             app.manage(RedisConnectionManager::default());
@@ -76,6 +78,7 @@ pub fn run() {
             commands::database::test_database_connection_config,
             commands::database::list_database_objects,
             commands::database::execute_database_query,
+            commands::database::list_database_query_history,
             commands::redis::test_redis_connection,
             commands::redis::test_redis_connection_config,
             commands::redis::list_redis_keys,

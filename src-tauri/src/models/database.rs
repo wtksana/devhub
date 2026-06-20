@@ -49,3 +49,16 @@ pub struct DatabaseQueryResult {
     pub duration_ms: u128,
     pub limited: bool,
 }
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct QueryHistoryItem {
+    pub id: i64,
+    pub connection_id: String,
+    pub database_kind: String,
+    pub database_name: Option<String>,
+    pub sql_text: String,
+    pub executed_at: String,
+    pub duration_ms: i64,
+    pub success: bool,
+    pub error_message: Option<String>,
+}
