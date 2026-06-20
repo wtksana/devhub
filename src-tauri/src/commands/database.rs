@@ -3,6 +3,8 @@ use tauri::State;
 use crate::core::settings_store::SettingsStore;
 use crate::db::connection::DatabaseConnectionManager;
 use crate::db::metadata;
+use crate::db::query;
+use crate::models::database::{DatabaseQueryResult, ExecuteDatabaseQueryRequest};
 use crate::models::database::{DatabaseTreeNode, ListDatabaseObjectsRequest};
 use crate::models::settings::{ConnectionSettings, DatabaseConnectionSettings};
 
@@ -38,6 +40,16 @@ pub async fn list_database_objects(
 ) -> Result<Vec<DatabaseTreeNode>, String> {
     let connection = load_database_connection(settings_store.inner(), &request.connection_id)?;
     metadata::list_database_objects(database_manager.inner(), &connection, &request).await
+}
+
+#[tauri::command]
+pub async fn execute_database_query(
+    settings_store: State<'_, SettingsStore>,
+    database_manager: State<'_, DatabaseConnectionManager>,
+    request: ExecuteDatabaseQueryRequest,
+) -> Result<DatabaseQueryResult, String> {
+    let connection = load_database_connection(settings_store.inner(), &request.connection_id)?;
+    query::execute_database_query(database_manager.inner(), &connection, &request).await
 }
 
 fn load_database_connection(

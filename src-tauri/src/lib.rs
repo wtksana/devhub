@@ -75,6 +75,7 @@ pub fn run() {
             commands::database::test_database_connection,
             commands::database::test_database_connection_config,
             commands::database::list_database_objects,
+            commands::database::execute_database_query,
             commands::redis::test_redis_connection,
             commands::redis::test_redis_connection_config,
             commands::redis::list_redis_keys,

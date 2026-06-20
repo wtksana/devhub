@@ -17,3 +17,35 @@ pub struct ListDatabaseObjectsRequest {
     pub schema: Option<String>,
     pub table: Option<String>,
 }
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct ExecuteDatabaseQueryRequest {
+    pub connection_id: String,
+    pub database: Option<String>,
+    pub sql: String,
+    pub limit: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct DatabaseResultColumn {
+    pub name: String,
+    pub data_type: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum DatabaseCellValue {
+    Null,
+    Text { value: String },
+    Number { value: String },
+    Bool { value: bool },
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct DatabaseQueryResult {
+    pub columns: Vec<DatabaseResultColumn>,
+    pub rows: Vec<Vec<DatabaseCellValue>>,
+    pub affected_rows: u64,
+    pub duration_ms: u128,
+    pub limited: bool,
+}

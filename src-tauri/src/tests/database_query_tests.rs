@@ -1,5 +1,6 @@
 use crate::db::connection::database_connection_url;
 use crate::db::metadata::{metadata_query_for_columns, metadata_query_for_tables};
+use crate::db::query::{apply_select_limit, is_dangerous_sql};
 use crate::models::settings::DatabaseConnectionSettings;
 
 #[test]
@@ -56,4 +57,26 @@ fn builds_postgresql_column_metadata_query() {
 
     assert!(query.sql.contains("information_schema.columns"));
     assert!(query.sql.contains("table_schema"));
+}
+
+#[test]
+fn appends_default_limit_to_select_without_limit() {
+    assert_eq!(
+        apply_select_limit("select * from users", 200).unwrap(),
+        "select * from users LIMIT 200"
+    );
+}
+
+#[test]
+fn keeps_select_with_existing_limit() {
+    assert_eq!(
+        apply_select_limit("select * from users limit 20", 200).unwrap(),
+        "select * from users limit 20"
+    );
+}
+
+#[test]
+fn detects_dangerous_sql() {
+    assert!(is_dangerous_sql("delete from users"));
+    assert!(!is_dangerous_sql("select * from users"));
 }
