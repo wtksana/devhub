@@ -938,6 +938,18 @@ p {
   padding: 18px;
 }
 
+.database-workspace__content {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.database-workspace__content[data-history-open="true"] {
+  grid-template-columns: minmax(0, 1fr) 280px;
+}
+
 .database-query-panel {
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto auto;
@@ -1044,6 +1056,62 @@ p {
 
 .database-result tbody tr:hover {
   background: var(--hover);
+}
+
+.database-history-panel {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--border-subtle);
+  background: var(--panel);
+}
+
+.database-history-panel header {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--muted);
+}
+
+.database-history-panel p {
+  margin: 10px;
+  color: var(--muted);
+}
+
+.database-history-panel ul {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  margin: 0;
+  list-style: none;
+}
+
+.database-history-panel button {
+  display: grid;
+  width: 100%;
+  gap: 4px;
+  padding: 8px;
+  border-color: transparent;
+  color: var(--text);
+  text-align: left;
+  background: transparent;
+}
+
+.database-history-panel button:hover {
+  background: var(--hover);
+}
+
+.database-history-panel button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.database-history-panel button small {
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .settings-sidebar {

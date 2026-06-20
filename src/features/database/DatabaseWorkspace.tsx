@@ -2,6 +2,7 @@ import { useState } from "react";
 import { callBackend } from "../../lib/tauri";
 import type { DatabaseCellValue, DatabaseQueryResult, DatabaseTreeNode, DatabaseWorkspaceProps } from "./databaseTypes";
 import { DatabaseObjectTree } from "./DatabaseObjectTree";
+import { QueryHistoryPanel } from "./QueryHistoryPanel";
 import { useI18n } from "../../i18n/useI18n";
 
 const DEFAULT_SQL_LIMIT = 200;
@@ -25,6 +26,7 @@ export function DatabaseWorkspace({ connectionId }: DatabaseWorkspaceProps) {
   const [error, setError] = useState<string | null>(null);
   const [isExecuting, setIsExecuting] = useState(false);
   const [dangerousSqlToConfirm, setDangerousSqlToConfirm] = useState<string | null>(null);
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
 
   async function requestExecuteSql() {
     const trimmedSql = sql.trim();
@@ -86,14 +88,25 @@ export function DatabaseWorkspace({ connectionId }: DatabaseWorkspaceProps) {
             <button type="button" disabled={isExecuting} onClick={() => void requestExecuteSql()}>
               {isExecuting ? t("database.executing") : t("database.execute_sql")}
             </button>
+            <button type="button" onClick={() => setIsHistoryOpen((current) => !current)}>
+              {t("database.query_history")}
+            </button>
             <span>{t("database.default_limit", { limit: DEFAULT_SQL_LIMIT })}</span>
             <span>{connectionId}</span>
           </div>
           {error ? <p className="database-query-panel__error" role="alert">{error}</p> : null}
         </div>
-        {result ? <DatabaseResultView result={result} /> : (
-          <div className="database-workspace__empty">{t("database.empty_query_result")}</div>
-        )}
+        <div className="database-workspace__content" data-history-open={isHistoryOpen}>
+          {result ? <DatabaseResultView result={result} /> : (
+            <div className="database-workspace__empty">{t("database.empty_query_result")}</div>
+          )}
+          {isHistoryOpen ? (
+            <QueryHistoryPanel
+              connectionId={connectionId}
+              onSelectSql={(historySql) => setSql(historySql)}
+            />
+          ) : null}
+        </div>
       </div>
       {dangerousSqlToConfirm ? (
         <div className="connection-dialog__backdrop">

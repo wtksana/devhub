@@ -239,4 +239,36 @@ describe("DatabaseWorkspace", () => {
     });
     expect(await screen.findByText("1 行，耗时 6 ms")).toBeInTheDocument();
   });
+
+  it("loads query history and fills the SQL editor from a history item", async () => {
+    callBackendMock.mockImplementation((command) => {
+      if (command === "list_database_query_history") {
+        return Promise.resolve([
+          {
+            id: 1,
+            connection_id: "mysql-dev",
+            database_kind: "mysql",
+            database_name: "app",
+            sql_text: "select * from users",
+            executed_at: "2026-06-20 12:00:00",
+            duration_ms: 10,
+            success: true,
+            error_message: null,
+          },
+        ]);
+      }
+      return Promise.resolve([]);
+    });
+
+    renderDatabaseWorkspace();
+
+    await userEvent.click(screen.getByRole("button", { name: "查询历史" }));
+    expect(callBackendMock).toHaveBeenCalledWith("list_database_query_history", {
+      connection_id: "mysql-dev",
+    });
+
+    await userEvent.click(await screen.findByText("select * from users"));
+
+    expect(screen.getByLabelText("SQL 编辑器")).toHaveValue("select * from users");
+  });
 });
