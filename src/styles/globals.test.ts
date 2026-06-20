@@ -27,4 +27,15 @@ describe("global style defaults", () => {
     expect(globalsCss).toContain("font-size: var(--ui-font-size-large, 18px);");
     expect(globalsCss).toContain("font-size: var(--terminal-font-size, 14px);");
   });
+
+  it("keeps inactive workspace panels out of display none for fast terminal tab switching", () => {
+    const globalsCss = readCssSource();
+
+    expect(globalsCss).not.toContain(".workspace-tab-panel[hidden]");
+    expect(globalsCss).not.toContain(".workspace-tab-panel[hidden] {\n  display: none;");
+    expect(globalsCss).toContain('.workspace-tab-panel[data-active="false"]');
+    expect(globalsCss).toContain("visibility: hidden;");
+    expect(globalsCss).toContain("content-visibility: hidden;");
+    expect(globalsCss).toContain("contain: layout paint style;");
+  });
 });

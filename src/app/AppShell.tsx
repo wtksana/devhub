@@ -1,4 +1,4 @@
-import { useState, type CSSProperties } from "react";
+import { useRef, useState, type CSSProperties } from "react";
 import { CommandPalette } from "./CommandPalette";
 import { ContextMenu, type ContextMenuState } from "./ContextMenu";
 import { DockPanel } from "./DockPanel";
@@ -35,6 +35,12 @@ interface RedisWorkspaceTab extends WorkspaceTabItem {
 
 type AppWorkspaceTab = SettingsWorkspaceTab | TerminalWorkspaceTab | SftpWorkspaceTab | RedisWorkspaceTab;
 
+function mergeConnectionGroups(groups: string[], group?: string) {
+  const nextGroup = group?.trim();
+  if (!nextGroup || groups.includes(nextGroup)) return groups;
+  return [...groups, nextGroup];
+}
+
 function connectionTitle(connectionId: string, settings: ReturnType<typeof useSettings>["settings"], localTitle: string) {
   if (connectionId === "local") return localTitle;
   return settings.connections.find((connection) => connection.id === connectionId)?.name ?? connectionId;
@@ -63,9 +69,11 @@ function AppShellContent({ settingsState }: { settingsState: ReturnType<typeof u
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
   const [isConnectionPanelVisible, setIsConnectionPanelVisible] = useState(true);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+  const nextWorkspaceTabSerialRef = useRef(1);
   const theme = settings.appearance.theme === "system" ? "dark" : settings.appearance.theme;
   const uiFontSize = settings.appearance.ui_font_size;
-  const activeTab = workspaceTabs.find((tab) => tab.id === activeTabId) ?? null;
+  const activeTab = workspaceTabs.find((tab) => tab.id === activeTabId) ?? workspaceTabs[workspaceTabs.length - 1] ?? null;
+  const effectiveActiveTabId = activeTab?.id ?? null;
   const bodyClassName = [
     "app-shell__body",
     activeTab?.kind === "settings" ? "app-shell__body--settings" : "",
@@ -109,7 +117,7 @@ function AppShellContent({ settingsState }: { settingsState: ReturnType<typeof u
       }
 
       const count = existingCount + 1;
-      const tabId = `terminal:${connectionId}:${Date.now()}`;
+      const tabId = `terminal:${connectionId}:${nextWorkspaceTabSerialRef.current++}`;
       const title = `${connectionTitle(connectionId, settings, t("connections.local_terminal"))} ${count}`;
       setActiveTabId(tabId);
       return [
@@ -274,12 +282,14 @@ function AppShellContent({ settingsState }: { settingsState: ReturnType<typeof u
               onAddConnection={(connection) => {
                 void settingsState.saveSettings({
                   ...settings,
+                  connection_groups: mergeConnectionGroups(settings.connection_groups, connection.group),
                   connections: [...settings.connections, connection],
                 });
               }}
               onUpdateConnection={(connection) => {
                 void settingsState.saveSettings({
                   ...settings,
+                  connection_groups: mergeConnectionGroups(settings.connection_groups, connection.group),
                   connections: settings.connections.map((item) => (item.id === connection.id ? connection : item)),
                 });
               }}
@@ -301,20 +311,26 @@ function AppShellContent({ settingsState }: { settingsState: ReturnType<typeof u
         <section className="workspace" aria-label={t("app.workspace")}>
           <WorkspaceTabs
             tabs={workspaceTabs}
-            activeTabId={activeTabId}
+            activeTabId={effectiveActiveTabId}
             onSelect={setActiveTabId}
             onClose={closeTab}
             onContextMenu={openTabContextMenu}
           />
           {workspaceTabs.map((tab) => (
-            <div key={tab.id} hidden={activeTabId !== tab.id} className="workspace-tab-panel">
+            <div
+              key={tab.id}
+              aria-hidden={effectiveActiveTabId !== tab.id}
+              data-active={effectiveActiveTabId === tab.id}
+              className="workspace-tab-panel"
+            >
               {tab.kind === "terminal" ? (
                 <TerminalWorkspace
                   connectionId={tab.connectionId}
                   fontFamily={settings.appearance.terminal_font_family}
                   fontSize={settings.appearance.terminal_font_size}
                   theme={theme}
-                  isActive={activeTabId === tab.id}
+                  isActive={effectiveActiveTabId === tab.id}
+                  terminalSettings={settings.terminal}
                 />
               ) : null}
               {tab.kind === "sftp" ? (

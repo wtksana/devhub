@@ -38,6 +38,53 @@ fn default_sftp_file_size_unit() -> String {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TerminalLogHighlightRule {
+    pub pattern: String,
+    pub color: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TerminalLogHighlightSettings {
+    #[serde(default = "default_true")]
+    pub auto_detect_tail: bool,
+    #[serde(default)]
+    pub case_sensitive: bool,
+    #[serde(default = "default_log_highlight_rules")]
+    pub rules: Vec<TerminalLogHighlightRule>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TerminalSettings {
+    #[serde(default)]
+    pub log_highlight: TerminalLogHighlightSettings,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_log_highlight_rules() -> Vec<TerminalLogHighlightRule> {
+    vec![
+        TerminalLogHighlightRule {
+            pattern: "\\bERROR\\b|Exception|Traceback".to_string(),
+            color: "#e06c75".to_string(),
+        },
+        TerminalLogHighlightRule {
+            pattern: "\\bWARN\\b".to_string(),
+            color: "#e5c07b".to_string(),
+        },
+        TerminalLogHighlightRule {
+            pattern: "\\bINFO\\b".to_string(),
+            color: "#56b6c2".to_string(),
+        },
+        TerminalLogHighlightRule {
+            pattern: "\\b\\d{4}-\\d{2}-\\d{2}[ T]\\d{2}:\\d{2}:\\d{2}\\b".to_string(),
+            color: "#7f848e".to_string(),
+        },
+    ]
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type")]
 pub enum ConnectionAuthSettings {
     #[serde(rename = "password")]
@@ -153,6 +200,8 @@ pub struct DevHubSettings {
     #[serde(default)]
     pub sftp: SftpSettings,
     #[serde(default)]
+    pub terminal: TerminalSettings,
+    #[serde(default)]
     pub connection_groups: Vec<String>,
     pub connections: Vec<ConnectionSettings>,
 }
@@ -161,6 +210,24 @@ impl Default for SftpSettings {
     fn default() -> Self {
         Self {
             file_size_unit: default_sftp_file_size_unit(),
+        }
+    }
+}
+
+impl Default for TerminalLogHighlightSettings {
+    fn default() -> Self {
+        Self {
+            auto_detect_tail: true,
+            case_sensitive: false,
+            rules: default_log_highlight_rules(),
+        }
+    }
+}
+
+impl Default for TerminalSettings {
+    fn default() -> Self {
+        Self {
+            log_highlight: TerminalLogHighlightSettings::default(),
         }
     }
 }
@@ -180,6 +247,7 @@ impl Default for DevHubSettings {
                 connection_sidebar_width: 280,
             },
             sftp: SftpSettings::default(),
+            terminal: TerminalSettings::default(),
             connection_groups: Vec::new(),
             connections: Vec::new(),
         }

@@ -16,6 +16,7 @@ const DEFAULT_VALUE_LIMIT = 500;
 const DEFAULT_MAX_STRING_BYTES = 5 * 1024 * 1024;
 const REDIS_ROW_HEIGHT = 30;
 const REDIS_OVERSCAN_ROWS = 8;
+const REDIS_DEFAULT_VISIBLE_ROWS = 32;
 
 interface RedisFolderNode {
   kind: "folder";
@@ -241,7 +242,7 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
     if (tableViewportHeight <= 0) {
       return {
         start: 0,
-        end: treeRows.length,
+        end: Math.min(treeRows.length, REDIS_DEFAULT_VISIBLE_ROWS + REDIS_OVERSCAN_ROWS),
       };
     }
     const start = Math.max(0, Math.floor(tableScrollTop / REDIS_ROW_HEIGHT) - REDIS_OVERSCAN_ROWS);

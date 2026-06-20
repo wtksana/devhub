@@ -10,18 +10,21 @@ const navItems = ["通用", "外观", "布局", "连接", "SFTP", "快捷键", "
 type SettingsCategory = (typeof navItems)[number];
 type SettingsState = ReturnType<typeof useSettings>;
 const fallbackFonts = ["Inter", "Segoe UI", "Zed Sans", "JetBrains Mono", "Consolas"];
+const defaultLogHighlightRule = { pattern: "", color: "#56b6c2" };
 
 function SettingsRow({
   title,
   description,
   children,
+  isStacked = false,
 }: {
   title: string;
   description: string;
   children: ReactNode;
+  isStacked?: boolean;
 }) {
   return (
-    <div className="settings-row">
+    <div className={isStacked ? "settings-row settings-row--stacked" : "settings-row"}>
       <div className="settings-row__meta">
         <h3>{title}</h3>
         <p>{description}</p>
@@ -167,6 +170,61 @@ function SettingsPanelView({ settingsState }: { settingsState: SettingsState }) 
     });
   }
 
+  function updateTerminal(nextTerminal: Partial<DevHubSettings["terminal"]>) {
+    updateSettings({
+      ...draftSettings,
+      terminal: {
+        ...draftSettings.terminal,
+        ...nextTerminal,
+      },
+    });
+  }
+
+  function updateLogHighlight(nextLogHighlight: Partial<DevHubSettings["terminal"]["log_highlight"]>) {
+    updateTerminal({
+      log_highlight: {
+        ...draftSettings.terminal.log_highlight,
+        ...nextLogHighlight,
+      },
+    });
+  }
+
+  function updateLogHighlightRule(
+    index: number,
+    nextRule: Partial<DevHubSettings["terminal"]["log_highlight"]["rules"][number]>,
+    shouldSave: boolean,
+  ) {
+    const nextRules = draftSettings.terminal.log_highlight.rules.map((rule, ruleIndex) =>
+      ruleIndex === index ? { ...rule, ...nextRule } : rule,
+    );
+    if (shouldSave) {
+      updateLogHighlight({ rules: nextRules });
+      return;
+    }
+    setDraftSettings({
+      ...draftSettings,
+      terminal: {
+        ...draftSettings.terminal,
+        log_highlight: {
+          ...draftSettings.terminal.log_highlight,
+          rules: nextRules,
+        },
+      },
+    });
+  }
+
+  function addLogHighlightRule() {
+    updateLogHighlight({
+      rules: [...draftSettings.terminal.log_highlight.rules, defaultLogHighlightRule],
+    });
+  }
+
+  function removeLogHighlightRule(index: number) {
+    updateLogHighlight({
+      rules: draftSettings.terminal.log_highlight.rules.filter((_, ruleIndex) => ruleIndex !== index),
+    });
+  }
+
   function selectCategory(category: SettingsCategory) {
     setActiveCategory(category);
     sectionRefs.current[category]?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -305,6 +363,59 @@ function SettingsPanelView({ settingsState }: { settingsState: SettingsState }) 
               onBlur={(event) => updateAppearance({ terminal_font_size: Number(event.target.value) })}
               onKeyDown={commitOnEnter}
             />
+          </SettingsRow>
+          <SettingsRow title={t("settings.terminal_log_highlight_auto")} description={t("settings.terminal_log_highlight_auto_desc")}>
+            <input
+              aria-label={t("settings.terminal_log_highlight_auto")}
+              type="checkbox"
+              checked={draftSettings.terminal.log_highlight.auto_detect_tail}
+              onChange={(event) => updateLogHighlight({ auto_detect_tail: event.target.checked })}
+            />
+          </SettingsRow>
+          <SettingsRow title={t("settings.terminal_log_highlight_case")} description={t("settings.terminal_log_highlight_case_desc")}>
+            <input
+              aria-label={t("settings.terminal_log_highlight_case")}
+              type="checkbox"
+              checked={draftSettings.terminal.log_highlight.case_sensitive}
+              onChange={(event) => updateLogHighlight({ case_sensitive: event.target.checked })}
+            />
+          </SettingsRow>
+          <SettingsRow
+            title={t("settings.terminal_log_highlight_rules")}
+            description={t("settings.terminal_log_highlight_rules_desc")}
+            isStacked
+          >
+            <div className="settings-log-rules">
+              <button type="button" onClick={addLogHighlightRule}>
+                {t("settings.terminal_log_highlight_add_rule")}
+              </button>
+              <div className="settings-log-rules__list">
+                {draftSettings.terminal.log_highlight.rules.map((rule, index) => (
+                  <div className="settings-log-rules__row" key={index}>
+                    <input
+                      aria-label={t("settings.terminal_log_highlight_rule_label", { index: index + 1 })}
+                      value={rule.pattern}
+                      onChange={(event) => updateLogHighlightRule(index, { pattern: event.target.value }, false)}
+                      onBlur={(event) => updateLogHighlightRule(index, { pattern: event.target.value }, true)}
+                      onKeyDown={commitOnEnter}
+                    />
+                    <input
+                      aria-label={t("settings.terminal_log_highlight_color_label", { index: index + 1 })}
+                      type="color"
+                      value={rule.color}
+                      onChange={(event) => updateLogHighlightRule(index, { color: event.target.value }, true)}
+                    />
+                    <button
+                      type="button"
+                      aria-label={t("settings.terminal_log_highlight_delete_rule", { index: index + 1 })}
+                      onClick={() => removeLogHighlightRule(index)}
+                    >
+                      -
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
           </SettingsRow>
         </section>
 

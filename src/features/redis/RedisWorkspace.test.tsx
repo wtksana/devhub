@@ -201,6 +201,22 @@ describe("RedisWorkspace", () => {
     expect(screen.getByText("order_item_1")).toBeInTheDocument();
   });
 
+  it("does not render every loaded key before the table viewport is measured", async () => {
+    callBackendMock.mockResolvedValueOnce({
+      total_count: 1200,
+      entries: Array.from({ length: 1200 }, (_, index) => ({
+        key: `plain-${index}`,
+        key_type: "string",
+        ttl: -1,
+      })),
+    });
+
+    renderRedisWorkspace({ connectionId: "redis-local", initialDatabase: 0 });
+
+    expect(await screen.findByText("plain-0")).toBeInTheDocument();
+    expect(screen.queryByText("plain-1199")).not.toBeInTheDocument();
+  });
+
   it("keeps keys with the same folder prefix together when scan results are interleaved", async () => {
     callBackendMock.mockResolvedValueOnce({
       total_count: 5,

@@ -1,29 +1,12 @@
 use crate::ssh::session_manager::{
-    drain_terminal_input, is_ignorable_terminal_read_error, local_shell_command,
-    write_all_retrying_transient, InputDrain, SessionManager, TerminalWorkerMessage,
+    drain_terminal_input, is_ignorable_terminal_read_error, local_shell_command, InputDrain,
+    SessionManager, SshConnectLimiter, TerminalWorkerMessage,
 };
 use std::io::{Error, ErrorKind, Result as IoResult, Write};
-use std::time::Duration;
-
-struct TransientWriteFailure {
-    failures_remaining: usize,
-    written: Vec<u8>,
-}
-
-impl Write for TransientWriteFailure {
-    fn write(&mut self, buffer: &[u8]) -> IoResult<usize> {
-        if self.failures_remaining > 0 {
-            self.failures_remaining -= 1;
-            return Err(Error::other("Failure while draining incoming flow"));
-        }
-        self.written.extend_from_slice(buffer);
-        Ok(buffer.len())
-    }
-
-    fn flush(&mut self) -> IoResult<()> {
-        Ok(())
-    }
-}
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc,
+};
 
 struct PermanentWriteFailure;
 
@@ -33,26 +16,6 @@ impl Write for PermanentWriteFailure {
     }
 
     fn flush(&mut self) -> IoResult<()> {
-        Ok(())
-    }
-}
-
-struct TransientFlushFailure {
-    failures_remaining: usize,
-    written: Vec<u8>,
-}
-
-impl Write for TransientFlushFailure {
-    fn write(&mut self, buffer: &[u8]) -> IoResult<usize> {
-        self.written.extend_from_slice(buffer);
-        Ok(buffer.len())
-    }
-
-    fn flush(&mut self) -> IoResult<()> {
-        if self.failures_remaining > 0 {
-            self.failures_remaining -= 1;
-            return Err(Error::other("Failure while draining incoming flow"));
-        }
         Ok(())
     }
 }
@@ -118,41 +81,50 @@ fn treats_transport_read_as_a_transient_ssh_read_error() {
     assert!(is_ignorable_terminal_read_error(&error));
 }
 
-#[test]
-fn retries_transient_ssh_write_failures_without_dropping_input() {
-    let mut writer = TransientWriteFailure {
-        failures_remaining: 2,
-        written: Vec::new(),
-    };
-
-    write_all_retrying_transient(&mut writer, b"\x1b[A", 3, Duration::ZERO).unwrap();
-
-    assert_eq!(writer.written, b"\x1b[A");
-}
-
-#[test]
-fn keeps_permanent_ssh_write_failures_fatal() {
+#[tokio::test]
+async fn keeps_permanent_terminal_write_failures_fatal() {
+    let (input_tx, mut input_rx) = tokio::sync::mpsc::channel(8);
+    input_tx
+        .send(TerminalWorkerMessage::Input("i".to_string()))
+        .await
+        .unwrap();
     let mut writer = PermanentWriteFailure;
 
-    let result = write_all_retrying_transient(&mut writer, b"i", 3, Duration::ZERO);
+    let result = drain_terminal_input(&mut input_rx, &mut writer);
 
     assert!(result.is_err());
 }
 
 #[tokio::test]
-async fn retries_transient_ssh_flush_failures() {
-    let (input_tx, mut input_rx) = tokio::sync::mpsc::channel(8);
-    input_tx
-        .send(TerminalWorkerMessage::Input("j".to_string()))
-        .await
-        .unwrap();
-    let mut writer = TransientFlushFailure {
-        failures_remaining: 2,
-        written: Vec::new(),
-    };
+async fn limits_concurrent_ssh_connects_per_remote_endpoint() {
+    let limiter = SshConnectLimiter::default();
+    let active_same_endpoint = Arc::new(AtomicUsize::new(0));
+    let max_same_endpoint = Arc::new(AtomicUsize::new(0));
 
-    let result = drain_terminal_input(&mut input_rx, &mut writer).unwrap();
+    let first_limiter = limiter.clone();
+    let first_active = Arc::clone(&active_same_endpoint);
+    let first_max = Arc::clone(&max_same_endpoint);
+    let first = tokio::spawn(async move {
+        let _permit = first_limiter.acquire("10.0.0.1", 22).await;
+        let current = first_active.fetch_add(1, Ordering::SeqCst) + 1;
+        first_max.fetch_max(current, Ordering::SeqCst);
+        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+        first_active.fetch_sub(1, Ordering::SeqCst);
+    });
 
-    assert_eq!(result, InputDrain::Wrote);
-    assert_eq!(writer.written, b"j");
+    let second_limiter = limiter.clone();
+    let second_active = Arc::clone(&active_same_endpoint);
+    let second_max = Arc::clone(&max_same_endpoint);
+    let second = tokio::spawn(async move {
+        let _permit = second_limiter.acquire("10.0.0.1", 22).await;
+        let current = second_active.fetch_add(1, Ordering::SeqCst) + 1;
+        second_max.fetch_max(current, Ordering::SeqCst);
+        second_active.fetch_sub(1, Ordering::SeqCst);
+    });
+
+    let (first_result, second_result) = tokio::join!(first, second);
+    first_result.unwrap();
+    second_result.unwrap();
+
+    assert_eq!(max_same_endpoint.load(Ordering::SeqCst), 1);
 }

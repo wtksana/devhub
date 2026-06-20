@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SettingsPanel } from "./SettingsPanel";
@@ -22,6 +22,15 @@ const settings: DevHubSettings = {
   },
   sftp: {
     file_size_unit: "bytes",
+  },
+  terminal: {
+    log_highlight: {
+      auto_detect_tail: true,
+      case_sensitive: false,
+      rules: [
+        { pattern: "\\bERROR\\b", color: "#e06c75" },
+      ],
+    },
   },
   connection_groups: [],
   connections: [],
@@ -205,6 +214,81 @@ describe("SettingsPanel", () => {
       ...settings,
       sftp: {
         file_size_unit: "auto",
+      },
+    });
+  });
+
+  it("saves terminal log highlight settings", async () => {
+    renderSettingsPanel();
+
+    await userEvent.click(screen.getByLabelText("自动检测 tail 日志高亮"));
+    expect(saveSettings).toHaveBeenLastCalledWith({
+      ...settings,
+      terminal: {
+        log_highlight: {
+          ...settings.terminal.log_highlight,
+          auto_detect_tail: false,
+        },
+      },
+    });
+
+    await userEvent.click(screen.getByLabelText("日志高亮区分大小写"));
+    expect(saveSettings).toHaveBeenLastCalledWith({
+      ...settings,
+      terminal: {
+        log_highlight: {
+          auto_detect_tail: false,
+          case_sensitive: true,
+          rules: settings.terminal.log_highlight.rules,
+        },
+      },
+    });
+
+    fireEvent.change(screen.getByLabelText("日志高亮规则 1"), { target: { value: "WARN" } });
+    fireEvent.blur(screen.getByLabelText("日志高亮规则 1"));
+    fireEvent.change(screen.getByLabelText("日志高亮颜色 1"), { target: { value: "#e5c07b" } });
+
+    expect(saveSettings).toHaveBeenLastCalledWith({
+      ...settings,
+      terminal: {
+        log_highlight: {
+          auto_detect_tail: false,
+          case_sensitive: true,
+          rules: [{ pattern: "WARN", color: "#e5c07b" }],
+        },
+      },
+    });
+  });
+
+  it("adds and removes terminal log highlight rules", async () => {
+    renderSettingsPanel();
+
+    await userEvent.click(screen.getByRole("button", { name: "添加日志高亮规则" }));
+
+    expect(saveSettings).toHaveBeenLastCalledWith({
+      ...settings,
+      terminal: {
+        log_highlight: {
+          ...settings.terminal.log_highlight,
+          rules: [
+            ...settings.terminal.log_highlight.rules,
+            { pattern: "", color: "#56b6c2" },
+          ],
+        },
+      },
+    });
+
+    expect(screen.getByLabelText("日志高亮规则 2")).toHaveValue("");
+
+    await userEvent.click(screen.getByRole("button", { name: "删除日志高亮规则 2" }));
+
+    expect(saveSettings).toHaveBeenLastCalledWith({
+      ...settings,
+      terminal: {
+        log_highlight: {
+          ...settings.terminal.log_highlight,
+          rules: settings.terminal.log_highlight.rules,
+        },
       },
     });
   });

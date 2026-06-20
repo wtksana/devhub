@@ -6,6 +6,7 @@ import { TerminalTab } from "./TerminalTab";
 import { callBackend, listenBackend } from "../../lib/tauri";
 import { readClipboardText, writeClipboardText } from "../../lib/clipboard";
 import { I18nProvider } from "../../i18n/I18nProvider";
+import type { TerminalSettings } from "../settings/settingsTypes";
 
 vi.mock("../../lib/tauri", () => ({
   callBackend: vi.fn(),
@@ -36,6 +37,7 @@ interface MockTerminal {
   buffer?: {
     active: {
       type: "normal" | "alternate";
+      baseY?: number;
       cursorX: number;
       cursorY: number;
       length: number;
@@ -43,6 +45,17 @@ interface MockTerminal {
     };
   };
 }
+
+const terminalSettings: TerminalSettings = {
+  log_highlight: {
+    auto_detect_tail: true,
+    case_sensitive: false,
+    rules: [
+      { pattern: "\\bERROR\\b", color: "#e06c75" },
+      { pattern: "\\bWARN\\b", color: "#e5c07b" },
+    ],
+  },
+};
 
 interface MockFitAddon {
   fit: ReturnType<typeof vi.fn>;
@@ -75,12 +88,24 @@ describe("TerminalTab", () => {
     vi.unstubAllGlobals();
   });
 
-  function renderTerminalTab(props: React.ComponentProps<typeof TerminalTab>) {
+  function renderTerminalTab(props: Partial<React.ComponentProps<typeof TerminalTab>> = {}) {
     return render(
       <I18nProvider language="zh-CN">
-        <TerminalTab {...props} />
+        <TerminalTab {...terminalProps(props)} />
       </I18nProvider>,
     );
+  }
+
+  function terminalProps(overrides: Partial<React.ComponentProps<typeof TerminalTab>> = {}): React.ComponentProps<typeof TerminalTab> {
+    return {
+      connectionId: "prod-web-01",
+      fontFamily: "Maple Mono",
+      fontSize: 16,
+      theme: "dark",
+      isActive: true,
+      terminalSettings,
+      ...overrides,
+    };
   }
 
   it("opens backend session, streams matching output, sends input, and closes session", async () => {
@@ -92,13 +117,7 @@ describe("TerminalTab", () => {
       return unlisten;
     });
 
-    const { unmount } = renderTerminalTab({
-      connectionId: "prod-web-01",
-      fontFamily: "Maple Mono",
-      fontSize: 16,
-      theme: "dark",
-      isActive: true,
-    });
+    const { unmount } = renderTerminalTab(terminalProps());
 
     await waitFor(() => {
       expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
@@ -157,7 +176,7 @@ describe("TerminalTab", () => {
       return () => {};
     });
 
-    renderTerminalTab({ connectionId: "prod-web-01", fontFamily: "Maple Mono", fontSize: 16, theme: "dark", isActive: true });
+    renderTerminalTab(terminalProps());
 
     await waitFor(() => {
       expect(outputHandler).not.toBeNull();
@@ -172,6 +191,306 @@ describe("TerminalTab", () => {
     });
   });
 
+  it("highlights plain log output after an active terminal runs tail", async () => {
+    let outputHandler: ((payload: { session_id: string; data: string }) => void) | null = null;
+    callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
+    listenBackendMock.mockImplementationOnce(async (_event, handler) => {
+      outputHandler = handler as (payload: { session_id: string; data: string }) => void;
+      return vi.fn<() => void>();
+    });
+
+    renderTerminalTab();
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+        request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
+      });
+    });
+    const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
+    terminal.buffer = {
+      active: {
+        type: "normal",
+        cursorX: 0,
+        cursorY: 0,
+        length: 24,
+        getLine: () => ({ translateToString: () => "" }),
+      },
+    };
+
+    const onData = terminal.onData.mock.calls[0]?.[0] as ((data: string) => void) | undefined;
+    onData?.("tail -f /var/log/app.log\r");
+    const emitOutput = outputHandler as unknown as (payload: { session_id: string; data: string }) => void;
+    emitOutput({ session_id: "session-1", data: "2026 ERROR failed\n" });
+
+    expect(terminal.write).toHaveBeenCalledWith("2026 \x1b[38;2;224;108;117mERROR\x1b[39m failed\n");
+  });
+
+  it("detects tail commands typed one character at a time", async () => {
+    let outputHandler: ((payload: { session_id: string; data: string }) => void) | null = null;
+    callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
+    listenBackendMock.mockImplementationOnce(async (_event, handler) => {
+      outputHandler = handler as (payload: { session_id: string; data: string }) => void;
+      return vi.fn<() => void>();
+    });
+
+    renderTerminalTab();
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+        request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
+      });
+    });
+    const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
+    terminal.buffer = {
+      active: {
+        type: "normal",
+        cursorX: 0,
+        cursorY: 0,
+        length: 24,
+        getLine: () => ({ translateToString: () => "" }),
+      },
+    };
+
+    const onData = terminal.onData.mock.calls[0]?.[0] as ((data: string) => void) | undefined;
+    for (const chunk of "tail -f /var/log/app.log\r") {
+      onData?.(chunk);
+    }
+    const emitOutput = outputHandler as unknown as (payload: { session_id: string; data: string }) => void;
+    emitOutput({ session_id: "session-1", data: "ERROR raw\n" });
+
+    expect(terminal.write).toHaveBeenCalledWith("\x1b[38;2;224;108;117mERROR\x1b[39m raw\n");
+  });
+
+  it("detects tail commands submitted from the visible shell line", async () => {
+    let outputHandler: ((payload: { session_id: string; data: string }) => void) | null = null;
+    callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
+    listenBackendMock.mockImplementationOnce(async (_event, handler) => {
+      outputHandler = handler as (payload: { session_id: string; data: string }) => void;
+      return vi.fn<() => void>();
+    });
+
+    renderTerminalTab();
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+        request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
+      });
+    });
+    const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
+    terminal.buffer = {
+      active: {
+        type: "normal",
+        baseY: 20,
+        cursorX: 0,
+        cursorY: 3,
+        length: 24,
+        getLine: (index) => ({
+          translateToString: () => (index === 23 ? "root@prod:~# tail -f /var/log/app.log" : ""),
+        }),
+      },
+    };
+
+    const onData = terminal.onData.mock.calls[0]?.[0] as ((data: string) => void) | undefined;
+    onData?.("\r");
+    const emitOutput = outputHandler as unknown as (payload: { session_id: string; data: string }) => void;
+    emitOutput({ session_id: "session-1", data: "WARN from history\n" });
+
+    expect(terminal.write).toHaveBeenCalledWith("\x1b[38;2;229;192;123mWARN\x1b[39m from history\n");
+  });
+
+  it("detects tail commands pasted from the terminal context menu", async () => {
+    let outputHandler: ((payload: { session_id: string; data: string }) => void) | null = null;
+    readClipboardTextMock.mockResolvedValue("tail -f /var/log/app.log\r");
+    callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
+    listenBackendMock.mockImplementationOnce(async (_event, handler) => {
+      outputHandler = handler as (payload: { session_id: string; data: string }) => void;
+      return vi.fn<() => void>();
+    });
+
+    renderTerminalTab();
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+        request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
+      });
+    });
+    const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
+    terminal.buffer = {
+      active: {
+        type: "normal",
+        cursorX: 0,
+        cursorY: 0,
+        length: 24,
+        getLine: () => ({ translateToString: () => "" }),
+      },
+    };
+    fireEvent.contextMenu(screen.getByLabelText("SSH 终端"), { clientX: 12, clientY: 24 });
+    fireEvent.click(screen.getByRole("menuitem", { name: "粘贴" }));
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("write_terminal", {
+        request: { session_id: "session-1", data: "tail -f /var/log/app.log\r" },
+      });
+    });
+    const emitOutput = outputHandler as unknown as (payload: { session_id: string; data: string }) => void;
+    emitOutput({ session_id: "session-1", data: "ERROR pasted\n" });
+
+    expect(terminal.write).toHaveBeenCalledWith("\x1b[38;2;224;108;117mERROR\x1b[39m pasted\n");
+  });
+
+  it("writes raw output for inactive terminal tabs without running log highlighting", async () => {
+    let outputHandler: ((payload: { session_id: string; data: string }) => void) | null = null;
+    callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
+    listenBackendMock.mockImplementationOnce(async (_event, handler) => {
+      outputHandler = handler as (payload: { session_id: string; data: string }) => void;
+      return vi.fn<() => void>();
+    });
+
+    renderTerminalTab({ isActive: false });
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+        request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
+      });
+    });
+    const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
+    terminal.buffer = {
+      active: {
+        type: "normal",
+        cursorX: 0,
+        cursorY: 0,
+        length: 24,
+        getLine: () => ({ translateToString: () => "" }),
+      },
+    };
+
+    const onData = terminal.onData.mock.calls[0]?.[0] as ((data: string) => void) | undefined;
+    onData?.("tail -f /var/log/app.log\r");
+    const emitOutput = outputHandler as unknown as (payload: { session_id: string; data: string }) => void;
+    emitOutput({ session_id: "session-1", data: "ERROR raw\n" });
+
+    expect(terminal.write).toHaveBeenCalledWith("ERROR raw\n");
+    expect(terminal.write).not.toHaveBeenCalledWith("\x1b[38;2;224;108;117mERROR\x1b[39m raw\n");
+  });
+
+  it("keeps inactive terminal output live so tab switching does not need to flush buffered output", async () => {
+    let outputHandler: ((payload: { session_id: string; data: string }) => void) | null = null;
+    callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
+    listenBackendMock.mockImplementationOnce(async (_event, handler) => {
+      outputHandler = handler as (payload: { session_id: string; data: string }) => void;
+      return vi.fn<() => void>();
+    });
+
+    const { rerender } = renderTerminalTab({ isActive: false });
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+        request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
+      });
+    });
+    const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
+    terminal.write.mockClear();
+
+    const emitOutput = outputHandler as unknown as (payload: { session_id: string; data: string }) => void;
+    emitOutput({ session_id: "session-1", data: "line 1\n" });
+    emitOutput({ session_id: "session-1", data: "line 2\n" });
+
+    expect(terminal.write).toHaveBeenCalledWith("line 1\n");
+    expect(terminal.write).toHaveBeenCalledWith("line 2\n");
+    terminal.write.mockClear();
+
+    rerender(
+      <I18nProvider language="zh-CN">
+        <TerminalTab {...terminalProps({ isActive: true })} />
+      </I18nProvider>,
+    );
+
+    await Promise.resolve();
+    expect(terminal.write).not.toHaveBeenCalled();
+  });
+
+  it("keeps inactive log output raw and highlights only new active output", async () => {
+    let outputHandler: ((payload: { session_id: string; data: string }) => void) | null = null;
+    callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
+    listenBackendMock.mockImplementationOnce(async (_event, handler) => {
+      outputHandler = handler as (payload: { session_id: string; data: string }) => void;
+      return vi.fn<() => void>();
+    });
+
+    const { rerender } = renderTerminalTab({ isActive: false });
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+        request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
+      });
+    });
+    const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
+    terminal.buffer = {
+      active: {
+        type: "normal",
+        cursorX: 0,
+        cursorY: 0,
+        length: 24,
+        getLine: () => ({ translateToString: () => "" }),
+      },
+    };
+    const onData = terminal.onData.mock.calls[0]?.[0] as ((data: string) => void) | undefined;
+    onData?.("tail -f /var/log/app.log\r");
+    terminal.write.mockClear();
+
+    const emitOutput = outputHandler as unknown as (payload: { session_id: string; data: string }) => void;
+    emitOutput({ session_id: "session-1", data: "ERROR historical\n" });
+    expect(terminal.write).toHaveBeenCalledWith("ERROR historical\n");
+    terminal.write.mockClear();
+
+    rerender(
+      <I18nProvider language="zh-CN">
+        <TerminalTab {...terminalProps({ isActive: true })} />
+      </I18nProvider>,
+    );
+
+    await Promise.resolve();
+    expect(terminal.write).not.toHaveBeenCalled();
+
+    emitOutput({ session_id: "session-1", data: "ERROR live\n" });
+
+    expect(terminal.write).toHaveBeenCalledWith("\x1b[38;2;224;108;117mERROR\x1b[39m live\n");
+  });
+
+  it("keeps server-colored log lines unchanged in tail highlight mode", async () => {
+    let outputHandler: ((payload: { session_id: string; data: string }) => void) | null = null;
+    callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
+    listenBackendMock.mockImplementationOnce(async (_event, handler) => {
+      outputHandler = handler as (payload: { session_id: string; data: string }) => void;
+      return vi.fn<() => void>();
+    });
+
+    renderTerminalTab();
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+        request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
+      });
+    });
+    const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
+    terminal.buffer = {
+      active: {
+        type: "normal",
+        cursorX: 0,
+        cursorY: 0,
+        length: 24,
+        getLine: () => ({ translateToString: () => "" }),
+      },
+    };
+
+    const onData = terminal.onData.mock.calls[0]?.[0] as ((data: string) => void) | undefined;
+    onData?.("tail -f /var/log/app.log\r");
+    const emitOutput = outputHandler as unknown as (payload: { session_id: string; data: string }) => void;
+    emitOutput({ session_id: "session-1", data: "\x1b[31mERROR\x1b[39m raw\n" });
+
+    expect(terminal.write).toHaveBeenCalledWith("\x1b[31mERROR\x1b[39m raw\n");
+  });
+
   it("requests a redraw when alternate buffer content is sparse after opening a full-screen program", async () => {
     let outputHandler: ((payload: { session_id: string; data: string }) => void) | null = null;
     callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
@@ -180,13 +499,7 @@ describe("TerminalTab", () => {
       return vi.fn<() => void>();
     });
 
-    renderTerminalTab({
-      connectionId: "prod-web-01",
-      fontFamily: "Maple Mono",
-      fontSize: 16,
-      theme: "light",
-      isActive: true,
-    });
+    renderTerminalTab(terminalProps({ theme: "light" }));
 
     await waitFor(() => {
       expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
@@ -229,13 +542,7 @@ describe("TerminalTab", () => {
       return vi.fn<() => void>();
     });
 
-    renderTerminalTab({
-      connectionId: "prod-web-01",
-      fontFamily: "Maple Mono",
-      fontSize: 16,
-      theme: "light",
-      isActive: true,
-    });
+    renderTerminalTab(terminalProps({ theme: "light" }));
 
     await waitFor(() => {
       expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
@@ -392,6 +699,19 @@ describe("TerminalTab", () => {
     );
   });
 
+  it("keeps 1000 lines of terminal scrollback while inactive tabs keep receiving output", () => {
+    callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
+    listenBackendMock.mockResolvedValueOnce(vi.fn());
+
+    renderTerminalTab({ connectionId: "prod-web-01", fontFamily: "Maple Mono", fontSize: 16, theme: "dark", isActive: true });
+
+    expect(vi.mocked(Terminal)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scrollback: 1000,
+      }),
+    );
+  });
+
   it("updates xterm theme without reconnecting the terminal session", async () => {
     const unlisten = vi.fn();
     callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
@@ -414,7 +734,7 @@ describe("TerminalTab", () => {
 
     rerender(
       <I18nProvider language="zh-CN">
-        <TerminalTab connectionId="prod-web-01" fontFamily="Maple Mono" fontSize={16} theme="light" isActive={true} />
+        <TerminalTab {...terminalProps({ theme: "light", isActive: true })} />
       </I18nProvider>,
     );
 
@@ -426,7 +746,7 @@ describe("TerminalTab", () => {
       foreground: "#383a42",
     });
     expect(fitAddon.fit).toHaveBeenCalled();
-    expect(terminal.refresh).toHaveBeenCalledWith(0, 23);
+    expect(terminal.refresh).not.toHaveBeenCalled();
     expect(callBackendMock).not.toHaveBeenCalledWith("close_terminal", { sessionId: "session-1" });
     expect(callBackendMock).not.toHaveBeenCalledWith("open_terminal", expect.anything());
     expect(callBackendMock).not.toHaveBeenCalledWith("resize_terminal", expect.anything());
@@ -458,7 +778,7 @@ describe("TerminalTab", () => {
 
     rerender(
       <I18nProvider language="zh-CN">
-        <TerminalTab connectionId="prod-web-01" fontFamily="Maple Mono" fontSize={16} theme="light" isActive={false} />
+        <TerminalTab {...terminalProps({ theme: "light", isActive: false })} />
       </I18nProvider>,
     );
 
@@ -482,6 +802,41 @@ describe("TerminalTab", () => {
     expect(screen.getByRole("menuitem", { name: "复制" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "粘贴" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "清屏" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "开启日志高亮" })).toBeInTheDocument();
+  });
+
+  it("toggles log highlighting from the terminal context menu", async () => {
+    let outputHandler: ((payload: { session_id: string; data: string }) => void) | null = null;
+    callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
+    listenBackendMock.mockImplementationOnce(async (_event, handler) => {
+      outputHandler = handler as (payload: { session_id: string; data: string }) => void;
+      return vi.fn<() => void>();
+    });
+
+    renderTerminalTab();
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+        request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
+      });
+    });
+    const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
+    terminal.buffer = {
+      active: {
+        type: "normal",
+        cursorX: 0,
+        cursorY: 0,
+        length: 24,
+        getLine: () => ({ translateToString: () => "" }),
+      },
+    };
+    fireEvent.contextMenu(screen.getByLabelText("SSH 终端"), { clientX: 12, clientY: 24 });
+    fireEvent.click(screen.getByRole("menuitem", { name: "开启日志高亮" }));
+
+    const emitOutput = outputHandler as unknown as (payload: { session_id: string; data: string }) => void;
+    emitOutput({ session_id: "session-1", data: "ERROR manual\n" });
+
+    expect(terminal.write).toHaveBeenCalledWith("\x1b[38;2;224;108;117mERROR\x1b[39m manual\n");
   });
 
   it("copies the current terminal selection from the context menu", async () => {

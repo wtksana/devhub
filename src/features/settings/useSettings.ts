@@ -18,6 +18,18 @@ const defaultSettings: DevHubSettings = {
   sftp: {
     file_size_unit: "bytes",
   },
+  terminal: {
+    log_highlight: {
+      auto_detect_tail: true,
+      case_sensitive: false,
+      rules: [
+        { pattern: "\\bERROR\\b|Exception|Traceback", color: "#e06c75" },
+        { pattern: "\\bWARN\\b", color: "#e5c07b" },
+        { pattern: "\\bINFO\\b", color: "#56b6c2" },
+        { pattern: "\\b\\d{4}-\\d{2}-\\d{2}[ T]\\d{2}:\\d{2}:\\d{2}\\b", color: "#7f848e" },
+      ],
+    },
+  },
   connection_groups: [],
   connections: [],
 };

@@ -9,10 +9,27 @@ vi.mock("../../lib/tauri", () => ({
 }));
 
 describe("TerminalWorkspace", () => {
+  const terminalSettings = {
+    log_highlight: {
+      auto_detect_tail: true,
+      case_sensitive: false,
+      rules: [
+        { pattern: "\\bERROR\\b", color: "#e06c75" },
+      ],
+    },
+  };
+
   function renderTerminalWorkspace(connectionId: string | null) {
     return render(
       <I18nProvider language="zh-CN">
-        <TerminalWorkspace connectionId={connectionId} fontFamily="JetBrains Mono" fontSize={14} theme="dark" isActive={true} />
+        <TerminalWorkspace
+          connectionId={connectionId}
+          fontFamily="JetBrains Mono"
+          fontSize={14}
+          theme="dark"
+          isActive={true}
+          terminalSettings={terminalSettings}
+        />
       </I18nProvider>,
     );
   }

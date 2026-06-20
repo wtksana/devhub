@@ -9,7 +9,7 @@ use tauri::{AppHandle, Emitter};
 use thiserror::Error;
 use tokio::sync::{
     mpsc::{self, error::TryRecvError},
-    Mutex,
+    Mutex, OwnedMutexGuard,
 };
 use uuid::Uuid;
 
@@ -26,8 +26,7 @@ const INPUT_CHANNEL_SIZE: usize = 256;
 const OUTPUT_BUFFER_SIZE: usize = 8192;
 pub const LOCAL_CONNECTION_ID: &str = "local";
 const SSH_IDLE_SLEEP: Duration = Duration::from_millis(10);
-const SSH_TRANSIENT_WRITE_RETRIES: usize = 8;
-const SSH_TRANSIENT_WRITE_RETRY_DELAY: Duration = Duration::from_millis(5);
+const SSH_SESSION_TIMEOUT_MS: u32 = 100;
 
 #[derive(Debug, Error)]
 pub enum TerminalSessionError {
@@ -65,6 +64,40 @@ pub enum TerminalWorkerMessage {
 #[derive(Clone, Default)]
 pub struct SessionManager {
     sessions: Arc<Mutex<HashMap<String, ManagedSession>>>,
+    ssh_connect_limiter: SshConnectLimiter,
+}
+
+#[derive(Clone, Default)]
+pub struct SshConnectLimiter {
+    endpoints: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
+}
+
+impl SshConnectLimiter {
+    pub async fn acquire(&self, host: &str, port: u16) -> OwnedMutexGuard<()> {
+        let key = format!("{host}:{port}");
+        let endpoint_lock = {
+            let mut endpoints = self.endpoints.lock().await;
+            Arc::clone(
+                endpoints
+                    .entry(key)
+                    .or_insert_with(|| Arc::new(Mutex::new(()))),
+            )
+        };
+        endpoint_lock.lock_owned().await
+    }
+
+    fn blocking_acquire(&self, host: &str, port: u16) -> OwnedMutexGuard<()> {
+        let key = format!("{host}:{port}");
+        let endpoint_lock = {
+            let mut endpoints = self.endpoints.blocking_lock();
+            Arc::clone(
+                endpoints
+                    .entry(key)
+                    .or_insert_with(|| Arc::new(Mutex::new(()))),
+            )
+        };
+        endpoint_lock.blocking_lock_owned()
+    }
 }
 
 #[derive(Debug)]
@@ -124,6 +157,7 @@ impl SessionManager {
         spawn_ssh_worker(
             app,
             session_id.clone(),
+            self.ssh_connect_limiter.clone(),
             connection,
             auth,
             input_rx,
@@ -335,6 +369,7 @@ fn run_local_worker(
 fn spawn_ssh_worker(
     app: AppHandle,
     session_id: String,
+    connect_limiter: SshConnectLimiter,
     connection: SshConnectionSettings,
     auth: crate::ssh::client::ResolvedAuth,
     mut input_rx: mpsc::Receiver<TerminalWorkerMessage>,
@@ -345,6 +380,7 @@ fn spawn_ssh_worker(
         if let Err(error) = run_ssh_worker(
             &app,
             &session_id,
+            connect_limiter,
             connection,
             auth,
             &mut input_rx,
@@ -359,18 +395,22 @@ fn spawn_ssh_worker(
 fn run_ssh_worker(
     app: &AppHandle,
     session_id: &str,
+    connect_limiter: SshConnectLimiter,
     connection: SshConnectionSettings,
     auth: ResolvedAuth,
     input_rx: &mut mpsc::Receiver<TerminalWorkerMessage>,
     cols: u16,
     rows: u16,
 ) -> Result<()> {
-    let ssh = connect_authenticated(
-        &connection,
-        auth,
-        Duration::from_millis(100),
-        Duration::from_secs(10),
-    )?;
+    let ssh = {
+        let _connect_permit = connect_limiter.blocking_acquire(&connection.host, connection.port);
+        connect_authenticated(
+            &connection,
+            auth,
+            Duration::from_millis(100),
+            Duration::from_secs(10),
+        )?
+    };
 
     let mut channel = ssh
         .channel_session()
@@ -385,7 +425,8 @@ fn run_ssh_worker(
     channel
         .shell()
         .map_err(|error| TerminalSessionError::Ssh(error.to_string()))?;
-    ssh.set_blocking(false);
+    ssh.set_blocking(true);
+    ssh.set_timeout(SSH_SESSION_TIMEOUT_MS);
 
     let mut buffer = [0_u8; OUTPUT_BUFFER_SIZE];
     loop {
@@ -466,13 +507,9 @@ fn drain_ssh_worker_messages(
     loop {
         match input_rx.try_recv() {
             Ok(TerminalWorkerMessage::Input(input)) => {
-                write_all_retrying_transient(
-                    channel,
-                    input.as_bytes(),
-                    SSH_TRANSIENT_WRITE_RETRIES,
-                    SSH_TRANSIENT_WRITE_RETRY_DELAY,
-                )
-                .map_err(|error| TerminalSessionError::Io(error.to_string()))?;
+                channel
+                    .write_all(input.as_bytes())
+                    .map_err(|error| TerminalSessionError::Io(error.to_string()))?;
                 wrote = true;
             }
             Ok(TerminalWorkerMessage::Resize { cols, rows }) => {
@@ -488,78 +525,11 @@ fn drain_ssh_worker_messages(
     flush_terminal_input(channel, wrote)
 }
 
-pub fn write_all_retrying_transient<W: Write>(
-    writer: &mut W,
-    mut buffer: &[u8],
-    max_retries: usize,
-    retry_delay: Duration,
-) -> std::io::Result<()> {
-    let mut transient_retries = 0;
-    while !buffer.is_empty() {
-        match writer.write(buffer) {
-            Ok(0) => {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::WriteZero,
-                    "failed to write terminal input",
-                ));
-            }
-            Ok(size) => {
-                buffer = &buffer[size..];
-                transient_retries = 0;
-            }
-            Err(error)
-                if is_ignorable_terminal_write_error(&error) && transient_retries < max_retries =>
-            {
-                transient_retries += 1;
-                if !retry_delay.is_zero() {
-                    std::thread::sleep(retry_delay);
-                }
-            }
-            Err(error) => return Err(error),
-        }
-    }
-    Ok(())
-}
-
-fn is_ignorable_terminal_write_error(error: &std::io::Error) -> bool {
-    matches!(
-        error.kind(),
-        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-    ) || error
-        .to_string()
-        .contains("Failure while draining incoming flow")
-}
-
-fn flush_retrying_transient<W: Write>(
-    writer: &mut W,
-    max_retries: usize,
-    retry_delay: Duration,
-) -> std::io::Result<()> {
-    let mut transient_retries = 0;
-    loop {
-        match writer.flush() {
-            Ok(()) => return Ok(()),
-            Err(error)
-                if is_ignorable_terminal_write_error(&error) && transient_retries < max_retries =>
-            {
-                transient_retries += 1;
-                if !retry_delay.is_zero() {
-                    std::thread::sleep(retry_delay);
-                }
-            }
-            Err(error) => return Err(error),
-        }
-    }
-}
-
 fn flush_terminal_input<W: Write>(writer: &mut W, wrote: bool) -> Result<InputDrain> {
     if wrote {
-        flush_retrying_transient(
-            writer,
-            SSH_TRANSIENT_WRITE_RETRIES,
-            SSH_TRANSIENT_WRITE_RETRY_DELAY,
-        )
-        .map_err(|error| TerminalSessionError::Io(error.to_string()))?;
+        writer
+            .flush()
+            .map_err(|error| TerminalSessionError::Io(error.to_string()))?;
         Ok(InputDrain::Wrote)
     } else {
         Ok(InputDrain::Idle)

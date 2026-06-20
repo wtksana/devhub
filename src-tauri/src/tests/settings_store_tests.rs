@@ -3,7 +3,7 @@ use tempfile::tempdir;
 use crate::core::settings_store::SettingsStore;
 use crate::models::settings::{
     ConnectionAuthSettings, ConnectionSettings, DevHubSettings, RedisConnectionSettings,
-    SshConnectionSettings,
+    SshConnectionSettings, TerminalLogHighlightRule,
 };
 
 #[test]
@@ -21,8 +21,43 @@ fn creates_default_settings_when_missing() {
     assert_eq!(value["appearance"]["terminal_font_family"], "Consolas");
     assert_eq!(value["layout"]["connection_sidebar_width"], 280);
     assert_eq!(value["sftp"]["file_size_unit"], "bytes");
+    assert_eq!(value["terminal"]["log_highlight"]["auto_detect_tail"], true);
+    assert_eq!(value["terminal"]["log_highlight"]["case_sensitive"], false);
+    assert!(
+        value["terminal"]["log_highlight"]["rules"]
+            .as_array()
+            .unwrap()
+            .len()
+            > 0
+    );
     assert!(value.get("ai").is_none());
     assert!(store.settings_path().exists());
+}
+
+#[test]
+fn saves_terminal_log_highlight_settings() {
+    let dir = tempdir().unwrap();
+    let store = SettingsStore::new_for_dir(dir.path().to_path_buf());
+    let mut settings = DevHubSettings::default();
+    settings.terminal.log_highlight.auto_detect_tail = false;
+    settings.terminal.log_highlight.case_sensitive = true;
+    settings.terminal.log_highlight.rules = vec![TerminalLogHighlightRule {
+        pattern: "\\bWARN\\b".to_string(),
+        color: "#e5c07b".to_string(),
+    }];
+
+    store.save(&settings).unwrap();
+    let loaded = store.load_or_create().unwrap();
+
+    assert_eq!(loaded.terminal.log_highlight.auto_detect_tail, false);
+    assert_eq!(loaded.terminal.log_highlight.case_sensitive, true);
+    assert_eq!(
+        loaded.terminal.log_highlight.rules,
+        vec![TerminalLogHighlightRule {
+            pattern: "\\bWARN\\b".to_string(),
+            color: "#e5c07b".to_string(),
+        }]
+    );
 }
 
 #[test]

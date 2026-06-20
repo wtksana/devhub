@@ -19,6 +19,21 @@ export interface SftpSettings {
   file_size_unit: SftpFileSizeUnit;
 }
 
+export interface TerminalLogHighlightRule {
+  pattern: string;
+  color: string;
+}
+
+export interface TerminalLogHighlightSettings {
+  auto_detect_tail: boolean;
+  case_sensitive: boolean;
+  rules: TerminalLogHighlightRule[];
+}
+
+export interface TerminalSettings {
+  log_highlight: TerminalLogHighlightSettings;
+}
+
 export interface PasswordAuthSettings {
   type: "password";
   password: string;
@@ -60,6 +75,7 @@ export interface DevHubSettings {
   appearance: AppearanceSettings;
   layout: LayoutSettings;
   sftp: SftpSettings;
+  terminal: TerminalSettings;
   connection_groups: string[];
   connections: ConnectionSettings[];
 }

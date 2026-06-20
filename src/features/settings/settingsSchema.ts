@@ -79,6 +79,17 @@ const redisConnectionSchema = z.object({
 
 const connectionSchema = z.union([redisConnectionSchema, sshConnectionSchema]);
 
+const defaultTerminalLogHighlight = {
+  auto_detect_tail: true,
+  case_sensitive: false,
+  rules: [
+    { pattern: "\\bERROR\\b|Exception|Traceback", color: "#e06c75" },
+    { pattern: "\\bWARN\\b", color: "#e5c07b" },
+    { pattern: "\\bINFO\\b", color: "#56b6c2" },
+    { pattern: "\\b\\d{4}-\\d{2}-\\d{2}[ T]\\d{2}:\\d{2}:\\d{2}\\b", color: "#7f848e" },
+  ],
+};
+
 export const devHubSettingsSchema = z.object({
   appearance: z.object({
     theme: z.enum(["dark", "light", "system"]),
@@ -93,6 +104,16 @@ export const devHubSettingsSchema = z.object({
   }),
   sftp: z.object({
     file_size_unit: z.enum(["bytes", "auto"]),
+  }),
+  terminal: z.object({
+    log_highlight: z.object({
+      auto_detect_tail: z.boolean(),
+      case_sensitive: z.boolean(),
+      rules: z.array(z.object({
+        pattern: z.string().min(1),
+        color: z.string().regex(/^#[0-9a-fA-F]{6}$/),
+      })),
+    }),
   }),
   connection_groups: z.array(z.string().min(1)),
   connections: z.array(connectionSchema),
@@ -113,6 +134,19 @@ export function parseSettings(value: unknown): DevHubSettings {
       file_size_unit: "bytes",
       ...(settings.sftp && typeof settings.sftp === "object" && !Array.isArray(settings.sftp) ? settings.sftp : {}),
     };
+    settings.terminal = {
+      log_highlight: defaultTerminalLogHighlight,
+      ...(settings.terminal && typeof settings.terminal === "object" && !Array.isArray(settings.terminal) ? settings.terminal : {}),
+    };
+    if (settings.terminal && typeof settings.terminal === "object" && !Array.isArray(settings.terminal)) {
+      const terminal = settings.terminal as Record<string, unknown>;
+      terminal.log_highlight = {
+        ...defaultTerminalLogHighlight,
+        ...(terminal.log_highlight && typeof terminal.log_highlight === "object" && !Array.isArray(terminal.log_highlight)
+          ? terminal.log_highlight
+          : {}),
+      };
+    }
     settings.connection_groups = Array.isArray(settings.connection_groups) ? settings.connection_groups : [];
   }
   return devHubSettingsSchema.parse(value);

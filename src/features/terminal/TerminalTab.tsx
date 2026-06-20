@@ -6,6 +6,8 @@ import { ContextMenu, type ContextMenuState } from "../../app/ContextMenu";
 import { readClipboardText, writeClipboardText } from "../../lib/clipboard";
 import { callBackend, listenBackend } from "../../lib/tauri";
 import { useI18n } from "../../i18n/useI18n";
+import type { TerminalSettings } from "../settings/settingsTypes";
+import { createLogHighlighter, createTerminalCommandTracker, isTailCommandVisibleLine, processLogOutput } from "./logHighlight";
 
 interface TerminalTabProps {
   connectionId: string;
@@ -13,6 +15,7 @@ interface TerminalTabProps {
   fontSize: number;
   theme: "dark" | "light";
   isActive: boolean;
+  terminalSettings: TerminalSettings;
 }
 
 interface TerminalSessionResponse {
@@ -128,18 +131,38 @@ function containsAlternateScreenSequence(data: string) {
   return data.includes("\x1b[?1049h") || data.includes("\x1b[?1047h") || data.includes("\x1b[?47h");
 }
 
-export function TerminalTab({ connectionId, fontFamily, fontSize, theme, isActive }: TerminalTabProps) {
+function currentVisibleLine(terminal: Terminal) {
+  const buffer = terminal.buffer?.active;
+  if (!buffer) return "";
+  const lineIndex = buffer.baseY + buffer.cursorY;
+  return buffer.getLine(lineIndex)?.translateToString(true) ?? "";
+}
+
+const TERMINAL_SCROLLBACK = 1000;
+
+export function TerminalTab({ connectionId, fontFamily, fontSize, theme, isActive, terminalSettings }: TerminalTabProps) {
   const { t } = useI18n();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const sessionIdRef = useRef<string | null>(null);
   const isActiveRef = useRef(isActive);
+  const terminalSettingsRef = useRef(terminalSettings);
+  const logHighlighterRef = useRef(createLogHighlighter(terminalSettings.log_highlight));
+  const isManualLogHighlightModeRef = useRef(false);
+  const setLogHighlightModeRef = useRef<((enabled: boolean) => void) | null>(null);
+  const sendTerminalInputRef = useRef<((data: string) => void) | null>(null);
+  const [isManualLogHighlightMode, setIsManualLogHighlightMode] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
 
   useEffect(() => {
     isActiveRef.current = isActive;
   }, [isActive]);
+
+  useEffect(() => {
+    terminalSettingsRef.current = terminalSettings;
+    logHighlighterRef.current = createLogHighlighter(terminalSettings.log_highlight);
+  }, [terminalSettings]);
 
   function copySelection() {
     const selection = terminalRef.current?.getSelection();
@@ -154,9 +177,7 @@ export function TerminalTab({ connectionId, fontFamily, fontSize, theme, isActiv
       if (!sessionId) return;
       const text = await readClipboardText();
       if (!text) return;
-      void callBackend<void>("write_terminal", {
-        request: { session_id: sessionId, data: text },
-      });
+      sendTerminalInputRef.current?.(text);
     } finally {
       refocusTerminal();
     }
@@ -164,6 +185,14 @@ export function TerminalTab({ connectionId, fontFamily, fontSize, theme, isActiv
 
   function clearTerminal() {
     terminalRef.current?.clear();
+    refocusTerminal();
+  }
+
+  function toggleLogHighlightMode() {
+    const nextMode = !isManualLogHighlightModeRef.current;
+    isManualLogHighlightModeRef.current = nextMode;
+    setIsManualLogHighlightMode(nextMode);
+    setLogHighlightModeRef.current?.(nextMode);
     refocusTerminal();
   }
 
@@ -183,6 +212,11 @@ export function TerminalTab({ connectionId, fontFamily, fontSize, theme, isActiv
         { label: t("terminal.copy"), onSelect: copySelection },
         { label: t("terminal.paste"), onSelect: () => void pasteClipboard() },
         { label: t("terminal.clear"), onSelect: clearTerminal },
+        { type: "separator" },
+        {
+          label: isManualLogHighlightMode ? t("terminal.disable_log_highlight") : t("terminal.enable_log_highlight"),
+          onSelect: toggleLogHighlightMode,
+        },
       ],
     });
   }
@@ -200,7 +234,6 @@ export function TerminalTab({ connectionId, fontFamily, fontSize, theme, isActiv
       terminalRef.current.options.theme = terminalTheme;
       if (isActiveRef.current) {
         fitAddonRef.current?.fit();
-        terminalRef.current.refresh(0, Math.max(0, terminalRef.current.rows - 1));
       }
     }
     updateContainerTheme(theme);
@@ -217,6 +250,9 @@ export function TerminalTab({ connectionId, fontFamily, fontSize, theme, isActiv
     let redrawProbeTimer: number | null = null;
     let recentOutputTail = "";
     let hasRequestedAlternateScreenRedraw = false;
+    let isLogHighlightMode = false;
+    let pendingLogLine = "";
+    const commandTracker = createTerminalCommandTracker();
     let pendingOutput: TerminalOutputEvent[] = [];
 
     const terminal = new Terminal({
@@ -226,6 +262,7 @@ export function TerminalTab({ connectionId, fontFamily, fontSize, theme, isActiv
       theme: terminalThemes[theme],
       convertEol: false,
       minimumContrastRatio: 4.5,
+      scrollback: TERMINAL_SCROLLBACK,
     });
     terminalRef.current = terminal;
     updateContainerTheme(theme);
@@ -294,14 +331,61 @@ export function TerminalTab({ connectionId, fontFamily, fontSize, theme, isActiv
     }
 
     function writeTerminalOutput(data: string) {
+      if (!isActiveRef.current) {
+        pendingLogLine = "";
+        terminal.write(data);
+        return;
+      }
       const outputWindow = `${recentOutputTail}${data}`;
       recentOutputTail = outputWindow.slice(-32);
-      terminal.write(data);
+      if (isActiveRef.current && isLogHighlightMode && terminal.buffer.active.type === "normal") {
+        const result = processLogOutput(data, logHighlighterRef.current, pendingLogLine);
+        pendingLogLine = result.pendingLine;
+        if (result.data) {
+          terminal.write(result.data);
+        }
+      } else {
+        pendingLogLine = "";
+        terminal.write(data);
+      }
       if (containsAlternateScreenSequence(outputWindow)) {
         hasRequestedAlternateScreenRedraw = false;
         scheduleAlternateScreenRedrawProbe();
       }
     }
+
+    setLogHighlightModeRef.current = (enabled: boolean) => {
+      isLogHighlightMode = enabled;
+      pendingLogLine = "";
+    };
+
+    function detectTailCommand(data: string) {
+      const commandResult = commandTracker.push(data);
+      if (!terminalSettingsRef.current.log_highlight.auto_detect_tail) return;
+      if (commandResult.isTailCommand || ((data.includes("\r") || data.includes("\n")) && isTailCommandVisibleLine(currentVisibleLine(terminal)))) {
+        isLogHighlightMode = true;
+        pendingLogLine = "";
+      }
+    }
+
+    function sendTerminalInput(data: string) {
+      const sessionId = sessionIdRef.current;
+      if (!sessionId) return;
+      detectTailCommand(data);
+      if (data.includes("\x03")) {
+        isLogHighlightMode = false;
+        pendingLogLine = "";
+        commandTracker.clear();
+        if (isManualLogHighlightModeRef.current) {
+          isManualLogHighlightModeRef.current = false;
+          setIsManualLogHighlightMode(false);
+        }
+      }
+      void callBackend<void>("write_terminal", {
+        request: { session_id: sessionId, data },
+      });
+    }
+    sendTerminalInputRef.current = sendTerminalInput;
 
     if (typeof ResizeObserver !== "undefined") {
       resizeObserver = new ResizeObserver(scheduleFit);
@@ -309,11 +393,7 @@ export function TerminalTab({ connectionId, fontFamily, fontSize, theme, isActiv
     }
 
     disposeInput = terminal.onData((data) => {
-      const sessionId = sessionIdRef.current;
-      if (!sessionId) return;
-      void callBackend<void>("write_terminal", {
-        request: { session_id: sessionId, data },
-      });
+      sendTerminalInput(data);
     });
 
     function handleTerminalOutput(event: TerminalOutputEvent) {
@@ -380,6 +460,8 @@ export function TerminalTab({ connectionId, fontFamily, fontSize, theme, isActiv
       terminal.dispose();
       terminalRef.current = null;
       fitAddonRef.current = null;
+      setLogHighlightModeRef.current = null;
+      sendTerminalInputRef.current = null;
     };
   }, [connectionId, fontFamily, fontSize]);
 
@@ -387,7 +469,6 @@ export function TerminalTab({ connectionId, fontFamily, fontSize, theme, isActiv
     if (!isActive || !terminalRef.current) return;
     terminalRef.current.focus();
     fitAddonRef.current?.fit();
-    terminalRef.current.refresh(0, Math.max(0, terminalRef.current.rows - 1));
     const sessionId = sessionIdRef.current;
     if (!sessionId) return;
     void callBackend<void>("resize_terminal", {

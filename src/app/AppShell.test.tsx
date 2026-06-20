@@ -26,6 +26,15 @@ function createSettings(): DevHubSettings {
     sftp: {
       file_size_unit: "bytes",
     },
+    terminal: {
+      log_highlight: {
+        auto_detect_tail: true,
+        case_sensitive: false,
+        rules: [
+          { pattern: "\\bERROR\\b", color: "#e06c75" },
+        ],
+      },
+    },
     connection_groups: [],
     connections: [],
   };
@@ -357,6 +366,37 @@ describe("AppShell", () => {
     });
   });
 
+  it("adds a new connection group to portable settings when saving a grouped connection", async () => {
+    render(<AppShell />);
+
+    await userEvent.click(screen.getByRole("button", { name: "添加连接" }));
+    await userEvent.type(screen.getByLabelText("连接名称"), "测试服务器");
+    await userEvent.type(screen.getByLabelText("分组"), "生产环境");
+    await userEvent.type(screen.getByLabelText("主机"), "192.168.1.10");
+    await userEvent.type(screen.getByLabelText("用户名"), "root");
+    await userEvent.type(screen.getByLabelText("密码"), "root-password");
+    await userEvent.click(screen.getByRole("button", { name: "保存连接" }));
+
+    expect(saveSettings).toHaveBeenCalledWith({
+      ...settings,
+      connection_groups: ["生产环境"],
+      connections: [
+        {
+          id: expect.stringMatching(/^ssh-/),
+          name: "测试服务器",
+          group: "生产环境",
+          host: "192.168.1.10",
+          port: 22,
+          username: "root",
+          auth: {
+            type: "password",
+            password: "root-password",
+          },
+        },
+      ],
+    });
+  });
+
   it("shows connection context actions for opening, duplicating, editing, and SFTP", async () => {
     settings = {
       ...createSettings(),
@@ -408,6 +448,35 @@ describe("AppShell", () => {
       "true",
     );
     expect(screen.queryByRole("button", { name: "生产 Web 1" })).not.toBeInTheDocument();
+  });
+
+  it("keeps the newest rapid new-terminal tab active without showing the empty workspace", async () => {
+    settings = {
+      ...createSettings(),
+      connections: [remoteConnection],
+    };
+    const dateSpy = vi.spyOn(Date, "now").mockReturnValue(1782000000000);
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    try {
+      render(<AppShell />);
+
+      await userEvent.dblClick(screen.getByText("生产 Web").closest("li") as HTMLElement);
+      await userEvent.pointer({ keys: "[MouseRight]", target: getConnectionItem("生产 Web") });
+      await userEvent.click(screen.getByRole("menuitem", { name: "新标签连接" }));
+      await userEvent.pointer({ keys: "[MouseRight]", target: getConnectionItem("生产 Web") });
+      await userEvent.click(screen.getByRole("menuitem", { name: "新标签连接" }));
+
+      expect(screen.queryByText("未打开标签")).not.toBeInTheDocument();
+      expect(consoleErrorSpy).not.toHaveBeenCalledWith(expect.stringContaining("Encountered two children with the same key"), expect.anything());
+      expect(within(screen.getByLabelText("工作区标签")).getByRole("button", { name: "生产 Web 3" })).toHaveAttribute(
+        "aria-pressed",
+        "true",
+      );
+    } finally {
+      dateSpy.mockRestore();
+      consoleErrorSpy.mockRestore();
+    }
   });
 
   it("edits and copies an existing connection from the connection context menu", async () => {

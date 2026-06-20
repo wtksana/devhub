@@ -17,6 +17,13 @@ describe("settings schema", () => {
       sftp: {
         file_size_unit: "auto",
       },
+      terminal: {
+        log_highlight: {
+          auto_detect_tail: true,
+          case_sensitive: false,
+          rules: [{ pattern: "\\bERROR\\b", color: "#e06c75" }],
+        },
+      },
       connection_groups: ["production"],
       connections: [
         {
@@ -39,6 +46,7 @@ describe("settings schema", () => {
     if (settings.connections[0].kind === "redis") throw new Error("expected SSH connection");
     expect(settings.connections[0].auth.type).toBe("private_key");
     expect(settings.sftp.file_size_unit).toBe("auto");
+    expect(settings.terminal.log_highlight.rules).toEqual([{ pattern: "\\bERROR\\b", color: "#e06c75" }]);
     expect(settings.connection_groups).toEqual(["production"]);
   });
 
@@ -177,6 +185,42 @@ describe("settings schema", () => {
     expect(settings.appearance.ui_font_size).toBe(16);
     expect(settings.appearance.language).toBe("system");
     expect(settings.sftp.file_size_unit).toBe("bytes");
+    expect(settings.terminal.log_highlight.auto_detect_tail).toBe(true);
+    expect(settings.terminal.log_highlight.case_sensitive).toBe(false);
+    expect(settings.terminal.log_highlight.rules.length).toBeGreaterThan(0);
     expect(settings.connection_groups).toEqual([]);
+  });
+
+  it("accepts terminal log highlight settings", () => {
+    const settings = parseSettings({
+      appearance: {
+        theme: "dark",
+        ui_font_family: "Consolas",
+        ui_font_size: 16,
+        terminal_font_family: "Consolas",
+        terminal_font_size: 14,
+      },
+      layout: {
+        connection_sidebar_width: 280,
+      },
+      terminal: {
+        log_highlight: {
+          auto_detect_tail: false,
+          case_sensitive: true,
+          rules: [
+            { pattern: "\\bERROR\\b", color: "#ff0000" },
+          ],
+        },
+      },
+      connections: [],
+    });
+
+    expect(settings.terminal.log_highlight).toEqual({
+      auto_detect_tail: false,
+      case_sensitive: true,
+      rules: [
+        { pattern: "\\bERROR\\b", color: "#ff0000" },
+      ],
+    });
   });
 });
