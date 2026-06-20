@@ -46,8 +46,8 @@
 
 - Modify: `src/features/settings/settingsTypes.ts`
   - 新增数据库连接类型。
-- Modify: `src/features/connections/ConnectionDialog.tsx`
-  - 添加 MySQL / PostgreSQL 表单和测试连接。
+- Modify: `src/features/connections/ConnectionList.tsx`
+  - 当前添加连接弹窗内联在连接列表组件中；在这里添加 MySQL / PostgreSQL 表单和测试连接。
 - Modify: `src/features/connections/ConnectionList.tsx`
   - 数据库连接展示、双击打开、右键菜单。
 - Modify: `src/app/AppShell.tsx`
@@ -64,7 +64,7 @@
   - 查询结果表格。
 - Create: `src/features/database/QueryHistoryPanel.tsx`
   - 查询历史面板。
-- Test: `src/features/connections/ConnectionDialog.test.tsx`
+- Test: `src/features/connections/ConnectionList.test.tsx`
 - Test: `src/features/connections/ConnectionList.test.tsx`
 - Test: `src/features/database/DatabaseWorkspace.test.tsx`
 - Test: `src/app/AppShell.test.tsx`
@@ -193,29 +193,31 @@ git commit -m "feat(database): 添加数据库连接配置模型"
 
 **Files:**
 - Modify: `src/features/settings/settingsTypes.ts`
-- Modify: `src/features/connections/ConnectionDialog.tsx`
-- Test: `src/features/connections/ConnectionDialog.test.tsx`
+- Modify: `src/features/connections/ConnectionList.tsx`
+- Test: `src/features/connections/ConnectionList.test.tsx`
 - Modify: `src/i18n/locales/zh-CN.ts`
 - Modify: `src/i18n/locales/en-US.ts`
 
 - [ ] **Step 1: 写失败测试**
 
-在 `ConnectionDialog.test.tsx` 增加：
+在 `ConnectionList.test.tsx` 增加：
 
 ```tsx
 it("saves a mysql connection with username and password", async () => {
   const onSave = vi.fn();
-  render(<ConnectionDialog open connectionGroups={[]} onClose={vi.fn()} onSave={onSave} />);
+  renderConnectionList({ connections: [], onSave });
 
-  await userEvent.selectOptions(screen.getByLabelText("连接类型"), "mysql");
-  await userEvent.type(screen.getByLabelText("名称"), "开发 MySQL");
-  await userEvent.type(screen.getByLabelText("主机"), "127.0.0.1");
-  await userEvent.clear(screen.getByLabelText("端口"));
-  await userEvent.type(screen.getByLabelText("端口"), "3306");
-  await userEvent.type(screen.getByLabelText("用户名"), "root");
-  await userEvent.type(screen.getByLabelText("密码"), "secret");
-  await userEvent.type(screen.getByLabelText("默认数据库"), "app");
-  await userEvent.click(screen.getByRole("button", { name: "保存" }));
+  await userEvent.click(screen.getByRole("button", { name: "添加连接" }));
+  const dialog = screen.getByRole("dialog");
+  await userEvent.selectOptions(within(dialog).getByLabelText("连接类型"), "mysql");
+  await userEvent.type(within(dialog).getByLabelText("名称"), "开发 MySQL");
+  await userEvent.type(within(dialog).getByLabelText("主机"), "127.0.0.1");
+  await userEvent.clear(within(dialog).getByLabelText("端口"));
+  await userEvent.type(within(dialog).getByLabelText("端口"), "3306");
+  await userEvent.type(within(dialog).getByLabelText("用户名"), "root");
+  await userEvent.type(within(dialog).getByLabelText("密码"), "secret");
+  await userEvent.type(within(dialog).getByLabelText("默认数据库"), "app");
+  await userEvent.click(within(dialog).getByRole("button", { name: "保存" }));
 
   expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
     kind: "mysql",
@@ -234,7 +236,7 @@ it("saves a mysql connection with username and password", async () => {
 Run:
 
 ```powershell
-.\node_modules\.bin\vitest.cmd run --config C:\Dev\devhub\vite.config.ts --environment jsdom src\features\connections\ConnectionDialog.test.tsx
+.\node_modules\.bin\vitest.cmd run --config C:\Dev\devhub\vite.config.ts --environment jsdom src\features\connections\ConnectionList.test.tsx
 ```
 
 Expected: 连接类型没有 `mysql` 导致失败。
@@ -261,7 +263,7 @@ export type ConnectionSettings = SshConnectionSettings | RedisConnectionSettings
 
 - [ ] **Step 4: 实现表单**
 
-在 `ConnectionDialog.tsx` 中：
+在 `ConnectionList.tsx` 的连接弹窗逻辑中：
 
 - 连接类型选择项增加 MySQL / PostgreSQL。
 - MySQL 默认端口 3306。
@@ -274,7 +276,7 @@ export type ConnectionSettings = SshConnectionSettings | RedisConnectionSettings
 Run:
 
 ```powershell
-.\node_modules\.bin\vitest.cmd run --config C:\Dev\devhub\vite.config.ts --environment jsdom src\features\connections\ConnectionDialog.test.tsx
+.\node_modules\.bin\vitest.cmd run --config C:\Dev\devhub\vite.config.ts --environment jsdom src\features\connections\ConnectionList.test.tsx
 ```
 
 Expected: tests pass.
@@ -282,7 +284,7 @@ Expected: tests pass.
 - [ ] **Step 6: 提交**
 
 ```powershell
-git add src/features/settings/settingsTypes.ts src/features/connections/ConnectionDialog.tsx src/features/connections/ConnectionDialog.test.tsx src/i18n/locales/zh-CN.ts src/i18n/locales/en-US.ts
+git add src/features/settings/settingsTypes.ts src/features/connections/ConnectionList.tsx src/features/connections/ConnectionList.test.tsx src/i18n/locales/zh-CN.ts src/i18n/locales/en-US.ts
 git commit -m "feat(database): 支持编辑数据库连接"
 ```
 
