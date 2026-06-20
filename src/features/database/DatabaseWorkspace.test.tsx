@@ -125,15 +125,20 @@ describe("DatabaseWorkspace", () => {
   });
 
   it("shows affected rows and query errors", async () => {
-    callBackendMock.mockResolvedValueOnce([]);
-    callBackendMock.mockResolvedValueOnce({
-      columns: [],
-      rows: [],
-      affected_rows: 3,
-      duration_ms: 8,
-      limited: false,
+    callBackendMock.mockImplementation((command, payload) => {
+      if (command !== "execute_database_query") return Promise.resolve([]);
+      const request = (payload as { request: { sql: string } }).request;
+      if (request.sql === "update users set active = 1") {
+        return Promise.resolve({
+          columns: [],
+          rows: [],
+          affected_rows: 3,
+          duration_ms: 8,
+          limited: false,
+        });
+      }
+      return Promise.reject(new Error("syntax error near from"));
     });
-    callBackendMock.mockRejectedValueOnce(new Error("syntax error near from"));
 
     renderDatabaseWorkspace();
 
@@ -145,6 +150,7 @@ describe("DatabaseWorkspace", () => {
     await userEvent.clear(screen.getByLabelText("SQL 编辑器"));
     await userEvent.type(screen.getByLabelText("SQL 编辑器"), "update users set active = 1");
     await userEvent.click(screen.getByRole("button", { name: "执行 SQL" }));
+    await userEvent.click(screen.getByRole("button", { name: "确认执行" }));
 
     expect(await screen.findByText("影响 3 行，耗时 8 ms")).toBeInTheDocument();
 
@@ -153,5 +159,42 @@ describe("DatabaseWorkspace", () => {
     await userEvent.click(screen.getByRole("button", { name: "执行 SQL" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("syntax error near from");
+  });
+
+  it("asks for confirmation before running dangerous SQL", async () => {
+    callBackendMock.mockImplementation((command) => {
+      if (command === "execute_database_query") {
+        return Promise.resolve({
+          columns: [],
+          rows: [],
+          affected_rows: 1,
+          duration_ms: 2,
+          limited: false,
+        });
+      }
+      return Promise.resolve([]);
+    });
+
+    renderDatabaseWorkspace();
+
+    await userEvent.type(screen.getByLabelText("SQL 编辑器"), "delete from users");
+    await userEvent.click(screen.getByRole("button", { name: "执行 SQL" }));
+
+    expect(screen.getByRole("dialog", { name: "确认执行危险 SQL" })).toBeInTheDocument();
+    expect(callBackendMock).not.toHaveBeenCalledWith("execute_database_query", expect.anything());
+
+    await userEvent.click(screen.getByRole("button", { name: "确认执行" }));
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("execute_database_query", {
+        request: {
+          connection_id: "mysql-dev",
+          database: null,
+          sql: "delete from users",
+          limit: 200,
+        },
+      });
+    });
+    expect(await screen.findByText("影响 1 行，耗时 2 ms")).toBeInTheDocument();
   });
 });

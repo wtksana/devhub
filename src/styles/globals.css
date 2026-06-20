@@ -979,6 +979,18 @@ p {
   color: var(--danger);
 }
 
+.database-dangerous-sql__preview {
+  max-height: 160px;
+  padding: 10px;
+  overflow: auto;
+  font-family: var(--terminal-font-family);
+  font-size: var(--terminal-font-size);
+  color: var(--text);
+  white-space: pre-wrap;
+  background: var(--panel);
+  border: 1px solid var(--border-subtle);
+}
+
 .database-result {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
