@@ -9,6 +9,8 @@ import { useI18n } from "../../i18n/useI18n";
 import type { TerminalSettings } from "../settings/settingsTypes";
 import { createLogHighlighter, createTerminalCommandTracker, isTailCommandVisibleLine, processLogOutput } from "./logHighlight";
 
+export type TerminalConnectionStatus = "connecting" | "connected" | "failed" | "closed";
+
 interface TerminalTabProps {
   connectionId: string;
   fontFamily: string;
@@ -16,6 +18,7 @@ interface TerminalTabProps {
   theme: "dark" | "light";
   isActive: boolean;
   terminalSettings: TerminalSettings;
+  onStatusChange?: (status: TerminalConnectionStatus) => void;
 }
 
 interface TerminalSessionResponse {
@@ -25,6 +28,7 @@ interface TerminalSessionResponse {
 interface TerminalOutputEvent {
   session_id: string;
   data: string;
+  status?: TerminalConnectionStatus;
 }
 
 function hexToRgb(hex: string) {
@@ -138,16 +142,24 @@ function currentVisibleLine(terminal: Terminal) {
   return buffer.getLine(lineIndex)?.translateToString(true) ?? "";
 }
 
+function isTerminalSessionErrorOutput(data: string) {
+  return data.includes("[devhub] ssh error:") || data.includes("[devhub] io error:");
+}
+
 const TERMINAL_SCROLLBACK = 1000;
 
-export function TerminalTab({ connectionId, fontFamily, fontSize, theme, isActive, terminalSettings }: TerminalTabProps) {
+export function TerminalTab({ connectionId, fontFamily, fontSize, theme, isActive, terminalSettings, onStatusChange }: TerminalTabProps) {
   const { t } = useI18n();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const sessionIdRef = useRef<string | null>(null);
+  const lastSessionIdRef = useRef<string | null>(null);
   const isActiveRef = useRef(isActive);
   const terminalSettingsRef = useRef(terminalSettings);
+  const onStatusChangeRef = useRef(onStatusChange);
+  const connectionStatusRef = useRef<TerminalConnectionStatus>("connecting");
+  const retryHintShownRef = useRef(false);
   const logHighlighterRef = useRef(createLogHighlighter(terminalSettings.log_highlight));
   const isManualLogHighlightModeRef = useRef(false);
   const setLogHighlightModeRef = useRef<((enabled: boolean) => void) | null>(null);
@@ -163,6 +175,10 @@ export function TerminalTab({ connectionId, fontFamily, fontSize, theme, isActiv
     terminalSettingsRef.current = terminalSettings;
     logHighlighterRef.current = createLogHighlighter(terminalSettings.log_highlight);
   }, [terminalSettings]);
+
+  useEffect(() => {
+    onStatusChangeRef.current = onStatusChange;
+  }, [onStatusChange]);
 
   function copySelection() {
     const selection = terminalRef.current?.getSelection();
@@ -255,6 +271,21 @@ export function TerminalTab({ connectionId, fontFamily, fontSize, theme, isActiv
     const commandTracker = createTerminalCommandTracker();
     let pendingOutput: TerminalOutputEvent[] = [];
 
+    function setConnectionStatus(status: TerminalConnectionStatus) {
+      connectionStatusRef.current = status;
+      onStatusChangeRef.current?.(status);
+    }
+
+    function showRetryHint(message = "[devhub] 连接失败或超时，按 Enter 重连。") {
+      if (retryHintShownRef.current) return;
+      retryHintShownRef.current = true;
+      terminal.writeln(message);
+    }
+
+    function closeBackendSession(sessionId: string) {
+      void callBackend<void>("close_terminal", { sessionId });
+    }
+
     const terminal = new Terminal({
       cursorBlink: true,
       fontFamily: `${fontFamily}, Consolas, monospace`,
@@ -272,7 +303,7 @@ export function TerminalTab({ connectionId, fontFamily, fontSize, theme, isActiv
     terminal.open(containerRef.current);
     fitAddon.fit();
     terminal.focus();
-    terminal.writeln(`Connecting to ${connectionId}...`);
+    setConnectionStatus("connecting");
 
     function fitAndResizeBackend() {
       if (!isActiveRef.current) return;
@@ -369,6 +400,11 @@ export function TerminalTab({ connectionId, fontFamily, fontSize, theme, isActiv
     }
 
     function sendTerminalInput(data: string) {
+      const canReconnect = connectionStatusRef.current === "failed" || connectionStatusRef.current === "closed";
+      if (canReconnect && (data === "\r" || data === "\n")) {
+        void openBackendSession();
+        return;
+      }
       const sessionId = sessionIdRef.current;
       if (!sessionId) return;
       detectTailCommand(data);
@@ -397,13 +433,70 @@ export function TerminalTab({ connectionId, fontFamily, fontSize, theme, isActiv
     });
 
     function handleTerminalOutput(event: TerminalOutputEvent) {
-      const sessionId = sessionIdRef.current;
+      const sessionId = sessionIdRef.current ?? lastSessionIdRef.current;
       if (!sessionId) {
         pendingOutput.push(event);
         return;
       }
       if (event.session_id === sessionId) {
-        writeTerminalOutput(event.data);
+        if (event.status) {
+          setConnectionStatus(event.status);
+          if (event.status === "closed") {
+            showRetryHint("[devhub] 连接已断开，按 Enter 重连。");
+          }
+          if (event.status === "failed" || event.status === "closed") {
+            closeBackendSession(sessionId);
+            sessionIdRef.current = null;
+          }
+        }
+        const isSessionError = isTerminalSessionErrorOutput(event.data);
+        if (isSessionError) {
+          setConnectionStatus("failed");
+          closeBackendSession(sessionId);
+          sessionIdRef.current = null;
+        }
+        if (event.data) {
+          writeTerminalOutput(event.data);
+        }
+        if (event.status === "failed" || isSessionError) {
+          showRetryHint();
+        }
+      }
+    }
+
+    async function openBackendSession() {
+      setConnectionStatus("connecting");
+      sessionIdRef.current = null;
+      lastSessionIdRef.current = null;
+      pendingOutput = [];
+      retryHintShownRef.current = false;
+      terminal.writeln(`Connecting to ${connectionId}...`);
+      try {
+        const response = await callBackend<TerminalSessionResponse>("open_terminal", {
+          request: {
+            connection_id: connectionId,
+            cols: terminal.cols || 80,
+            rows: terminal.rows || 24,
+          },
+        });
+        sessionIdRef.current = response.session_id;
+        lastSessionIdRef.current = response.session_id;
+        if (disposed) {
+          void callBackend<void>("close_terminal", { sessionId: response.session_id });
+          return;
+        }
+        for (const event of pendingOutput) {
+          if (event.session_id === response.session_id) {
+            handleTerminalOutput(event);
+          }
+        }
+        pendingOutput = [];
+        scheduleFit();
+      } catch (caught: unknown) {
+        sessionIdRef.current = null;
+        setConnectionStatus("failed");
+        terminal.writeln(`[devhub] ${caught instanceof Error ? caught.message : String(caught)}`);
+        showRetryHint();
       }
     }
 
@@ -415,29 +508,11 @@ export function TerminalTab({ connectionId, fontFamily, fontSize, theme, isActiv
           return;
         }
         unlistenOutput = unlisten;
-
-        const response = await callBackend<TerminalSessionResponse>("open_terminal", {
-          request: {
-            connection_id: connectionId,
-            cols: terminal.cols || 80,
-            rows: terminal.rows || 24,
-          },
-        });
-        sessionIdRef.current = response.session_id;
-        if (disposed) {
-          void callBackend<void>("close_terminal", { sessionId: response.session_id });
-          return;
-        }
-        terminal.writeln("Connected.");
-        for (const event of pendingOutput) {
-          if (event.session_id === response.session_id) {
-            writeTerminalOutput(event.data);
-          }
-        }
-        pendingOutput = [];
-        scheduleFit();
+        await openBackendSession();
       } catch (caught: unknown) {
+        setConnectionStatus("failed");
         terminal.writeln(`[devhub] ${caught instanceof Error ? caught.message : String(caught)}`);
+        showRetryHint();
       }
     })();
 
@@ -454,8 +529,10 @@ export function TerminalTab({ connectionId, fontFamily, fontSize, theme, isActiv
       unlistenOutput?.();
       const sessionId = sessionIdRef.current;
       sessionIdRef.current = null;
+      lastSessionIdRef.current = null;
+      setConnectionStatus("closed");
       if (sessionId) {
-        void callBackend<void>("close_terminal", { sessionId });
+        closeBackendSession(sessionId);
       }
       terminal.dispose();
       terminalRef.current = null;

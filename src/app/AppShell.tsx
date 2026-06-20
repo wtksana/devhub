@@ -11,6 +11,7 @@ import type { RedisConnectionSettings } from "../features/settings/settingsTypes
 import { SftpWorkspace } from "../features/sftp/SftpWorkspace";
 import { useSettings } from "../features/settings/useSettings";
 import { TerminalWorkspace } from "../features/terminal/TerminalWorkspace";
+import type { TerminalConnectionStatus } from "../features/terminal/TerminalTab";
 import { I18nProvider } from "../i18n/I18nProvider";
 import { useI18n } from "../i18n/useI18n";
 
@@ -21,6 +22,7 @@ interface SettingsWorkspaceTab extends WorkspaceTabItem {
 interface TerminalWorkspaceTab extends WorkspaceTabItem {
   kind: "terminal";
   connectionId: string;
+  status?: TerminalConnectionStatus;
 }
 
 interface SftpWorkspaceTab extends WorkspaceTabItem {
@@ -93,6 +95,7 @@ function AppShellContent({ settingsState }: { settingsState: ReturnType<typeof u
           kind: "terminal",
           connectionId,
           title: connectionTitle(connectionId, settings, t("connections.local_terminal")),
+          status: "connecting",
         },
       ];
     });
@@ -112,6 +115,7 @@ function AppShellContent({ settingsState }: { settingsState: ReturnType<typeof u
             kind: "terminal",
             connectionId,
             title: connectionTitle(connectionId, settings, t("connections.local_terminal")),
+            status: "connecting",
           },
         ];
       }
@@ -127,9 +131,16 @@ function AppShellContent({ settingsState }: { settingsState: ReturnType<typeof u
           kind: "terminal",
           connectionId,
           title,
+          status: "connecting",
         },
       ];
     });
+  }
+
+  function updateTerminalStatus(tabId: string, status: TerminalConnectionStatus) {
+    setWorkspaceTabs((tabs) =>
+      tabs.map((tab) => (tab.id === tabId && tab.kind === "terminal" ? { ...tab, status } : tab)),
+    );
   }
 
   function openSftpTab(connectionId: string) {
@@ -331,6 +342,7 @@ function AppShellContent({ settingsState }: { settingsState: ReturnType<typeof u
                   theme={theme}
                   isActive={effectiveActiveTabId === tab.id}
                   terminalSettings={settings.terminal}
+                  onStatusChange={(status) => updateTerminalStatus(tab.id, status)}
                 />
               ) : null}
               {tab.kind === "sftp" ? (

@@ -277,7 +277,12 @@ fn spawn_local_worker(
 ) {
     tokio::task::spawn_blocking(move || {
         if let Err(error) = run_local_worker(&app, &session_id, input_rx, cols, rows) {
-            emit_output(&app, &session_id, format!("\r\n[devhub] {error}\r\n"));
+            emit_status_with_output(
+                &app,
+                &session_id,
+                "failed",
+                format!("\r\n[devhub] {error}\r\n"),
+            );
         }
     });
 }
@@ -345,6 +350,8 @@ fn run_local_worker(
         }
     });
 
+    emit_status(app, session_id, "connected");
+
     loop {
         match reader.read(&mut buffer) {
             Ok(0) => break,
@@ -363,6 +370,7 @@ fn run_local_worker(
     }
 
     let _ = child.kill();
+    emit_status(app, session_id, "closed");
     Ok(())
 }
 
@@ -387,7 +395,12 @@ fn spawn_ssh_worker(
             cols,
             rows,
         ) {
-            emit_output(&app, &session_id, format!("\r\n[devhub] {error}\r\n"));
+            emit_status_with_output(
+                &app,
+                &session_id,
+                "failed",
+                format!("\r\n[devhub] {error}\r\n"),
+            );
         }
     });
 }
@@ -427,6 +440,7 @@ fn run_ssh_worker(
         .map_err(|error| TerminalSessionError::Ssh(error.to_string()))?;
     ssh.set_blocking(true);
     ssh.set_timeout(SSH_SESSION_TIMEOUT_MS);
+    emit_status(app, session_id, "connected");
 
     let mut buffer = [0_u8; OUTPUT_BUFFER_SIZE];
     loop {
@@ -465,6 +479,7 @@ fn run_ssh_worker(
     }
 
     let _ = channel.close();
+    emit_status(app, session_id, "closed");
     Ok(())
 }
 
@@ -542,6 +557,22 @@ fn emit_output(app: &AppHandle, session_id: &str, data: String) {
         TerminalOutputEvent {
             session_id: session_id.to_string(),
             data,
+            status: None,
+        },
+    );
+}
+
+fn emit_status(app: &AppHandle, session_id: &str, status: &str) {
+    emit_status_with_output(app, session_id, status, String::new());
+}
+
+fn emit_status_with_output(app: &AppHandle, session_id: &str, status: &str, data: String) {
+    let _ = app.emit(
+        TERMINAL_OUTPUT_EVENT,
+        TerminalOutputEvent {
+            session_id: session_id.to_string(),
+            data,
+            status: Some(status.to_string()),
         },
     );
 }

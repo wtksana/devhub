@@ -28,6 +28,7 @@ interface MockTerminal {
   rows: number;
   options: Record<string, unknown>;
   write: ReturnType<typeof vi.fn>;
+  writeln: ReturnType<typeof vi.fn>;
   onData: ReturnType<typeof vi.fn>;
   dispose: ReturnType<typeof vi.fn>;
   focus: ReturnType<typeof vi.fn>;
@@ -104,6 +105,7 @@ describe("TerminalTab", () => {
       theme: "dark",
       isActive: true,
       terminalSettings,
+      onStatusChange: vi.fn(),
       ...overrides,
     };
   }
@@ -158,6 +160,199 @@ describe("TerminalTab", () => {
     });
     expect(unlisten).toHaveBeenCalledTimes(1);
     expect(terminal.dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports connected only after the backend marks the terminal interactive", async () => {
+    let outputHandler: ((payload: { session_id: string; data: string; status?: string }) => void) | null = null;
+    const onStatusChange = vi.fn();
+    listenBackendMock.mockImplementationOnce(async (_event, handler) => {
+      outputHandler = handler as (payload: { session_id: string; data: string; status?: string }) => void;
+      return () => {};
+    });
+    callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
+
+    renderTerminalTab({ onStatusChange });
+
+    expect(onStatusChange).toHaveBeenCalledWith("connecting");
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+        request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
+      });
+    });
+    expect(onStatusChange).not.toHaveBeenCalledWith("connected");
+
+    const emitOutput = outputHandler as unknown as (payload: { session_id: string; data: string; status?: string }) => void;
+    emitOutput({ session_id: "session-1", data: "", status: "connected" });
+
+    expect(onStatusChange).toHaveBeenCalledWith("connected");
+
+    cleanup();
+    vi.clearAllMocks();
+    listenBackendMock.mockResolvedValueOnce(vi.fn());
+    callBackendMock.mockRejectedValueOnce(new Error("ssh timeout"));
+
+    renderTerminalTab({ onStatusChange });
+
+    await waitFor(() => {
+      expect(onStatusChange).toHaveBeenCalledWith("failed");
+    });
+  });
+
+  it("reports closed when the backend marks the terminal session closed", async () => {
+    let outputHandler: ((payload: { session_id: string; data: string; status?: string }) => void) | null = null;
+    const onStatusChange = vi.fn();
+    listenBackendMock.mockImplementationOnce(async (_event, handler) => {
+      outputHandler = handler as (payload: { session_id: string; data: string; status?: string }) => void;
+      return () => {};
+    });
+    callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
+
+    renderTerminalTab({ onStatusChange });
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", expect.anything());
+    });
+
+    const emitOutput = outputHandler as unknown as (payload: { session_id: string; data: string; status?: string }) => void;
+    emitOutput({ session_id: "session-1", data: "", status: "connected" });
+    emitOutput({ session_id: "session-1", data: "", status: "closed" });
+
+    expect(onStatusChange).toHaveBeenCalledWith("closed");
+    const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
+    expect(terminal.writeln).toHaveBeenCalledWith("[devhub] 连接已断开，按 Enter 重连。");
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("close_terminal", { sessionId: "session-1" });
+    });
+  });
+
+  it("reconnects when pressing Enter after the terminal session is closed", async () => {
+    let outputHandler: ((payload: { session_id: string; data: string; status?: string }) => void) | null = null;
+    listenBackendMock.mockImplementationOnce(async (_event, handler) => {
+      outputHandler = handler as (payload: { session_id: string; data: string; status?: string }) => void;
+      return () => {};
+    });
+    callBackendMock
+      .mockResolvedValueOnce({ session_id: "session-1" })
+      .mockResolvedValueOnce({ session_id: "session-2" });
+
+    renderTerminalTab();
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", expect.anything());
+    });
+
+    const emitOutput = outputHandler as unknown as (payload: { session_id: string; data: string; status?: string }) => void;
+    emitOutput({ session_id: "session-1", data: "", status: "closed" });
+
+    const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
+    const onData = terminal.onData.mock.calls[0]?.[0] as ((data: string) => void) | undefined;
+    onData?.("\r");
+
+    await waitFor(() => {
+      const openTerminalCalls = callBackendMock.mock.calls.filter(([command]) => command === "open_terminal");
+      expect(openTerminalCalls).toHaveLength(2);
+      expect(openTerminalCalls[1]).toEqual([
+        "open_terminal",
+        { request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) } },
+      ]);
+    });
+  });
+
+  it("marks the session as failed when backend emits an ssh error after opening", async () => {
+    let outputHandler: ((payload: { session_id: string; data: string; status?: string }) => void) | null = null;
+    const onStatusChange = vi.fn();
+    listenBackendMock.mockImplementationOnce(async (_event, handler) => {
+      outputHandler = handler as (payload: { session_id: string; data: string; status?: string }) => void;
+      return () => {};
+    });
+    callBackendMock
+      .mockResolvedValueOnce({ session_id: "session-1" })
+      .mockResolvedValueOnce({ session_id: "session-2" });
+
+    renderTerminalTab({ onStatusChange });
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", expect.anything());
+    });
+
+    const emitOutput = outputHandler as unknown as (payload: { session_id: string; data: string; status?: string }) => void;
+    emitOutput({ session_id: "session-1", data: "[devhub] ssh error: [Session(-13)] Failed getting banner\r\n" });
+
+    expect(onStatusChange).toHaveBeenCalledWith("failed");
+
+    const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
+    const onData = terminal.onData.mock.calls[0]?.[0] as ((data: string) => void) | undefined;
+    onData?.("\r");
+
+    await waitFor(() => {
+      const openTerminalCalls = callBackendMock.mock.calls.filter(([command]) => command === "open_terminal");
+      expect(openTerminalCalls).toHaveLength(2);
+      expect(openTerminalCalls[openTerminalCalls.length - 1]).toEqual([
+        "open_terminal",
+        { request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) } },
+      ]);
+    });
+  });
+
+  it("shows retry hint when backend marks the session failed before sending more output", async () => {
+    let outputHandler: ((payload: { session_id: string; data: string; status?: string }) => void) | null = null;
+    const onStatusChange = vi.fn();
+    listenBackendMock.mockImplementationOnce(async (_event, handler) => {
+      outputHandler = handler as (payload: { session_id: string; data: string; status?: string }) => void;
+      return () => {};
+    });
+    callBackendMock
+      .mockResolvedValueOnce({ session_id: "session-1" })
+      .mockResolvedValueOnce({ session_id: "session-2" });
+
+    renderTerminalTab({ onStatusChange });
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", expect.anything());
+    });
+
+    const emitOutput = outputHandler as unknown as (payload: { session_id: string; data: string; status?: string }) => void;
+    emitOutput({ session_id: "session-1", data: "", status: "failed" });
+    emitOutput({ session_id: "session-1", data: "\r\n[devhub] ssh error: [Session(-13)] Failed getting banner\r\n" });
+
+    const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
+    expect(onStatusChange).toHaveBeenCalledWith("failed");
+    expect(terminal.writeln).toHaveBeenCalledWith("[devhub] 连接失败或超时，按 Enter 重连。");
+    expect(terminal.write).toHaveBeenCalledWith("\r\n[devhub] ssh error: [Session(-13)] Failed getting banner\r\n");
+
+    const onData = terminal.onData.mock.calls[0]?.[0] as ((data: string) => void) | undefined;
+    onData?.("\r");
+
+    await waitFor(() => {
+      const openTerminalCalls = callBackendMock.mock.calls.filter(([command]) => command === "open_terminal");
+      expect(openTerminalCalls).toHaveLength(2);
+    });
+  });
+
+  it("shows connection errors and retries when pressing Enter after failure", async () => {
+    const onStatusChange = vi.fn();
+    listenBackendMock.mockResolvedValue(vi.fn());
+    callBackendMock
+      .mockRejectedValueOnce(new Error("ssh timeout"))
+      .mockResolvedValueOnce({ session_id: "session-2" });
+
+    renderTerminalTab({ onStatusChange });
+
+    const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
+    await waitFor(() => {
+      expect(terminal.writeln).toHaveBeenCalledWith(expect.stringContaining("按 Enter 重连"));
+    });
+
+    const onData = terminal.onData.mock.calls[0]?.[0] as ((data: string) => void) | undefined;
+    onData?.("\r");
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledTimes(2);
+      expect(callBackendMock).toHaveBeenLastCalledWith("open_terminal", {
+        request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
+      });
+    });
+    expect(onStatusChange).not.toHaveBeenCalledWith("connected");
   });
 
   it("keeps output that arrives before the open terminal response resolves", async () => {

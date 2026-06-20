@@ -1,4 +1,5 @@
 import { TerminalTab } from "./TerminalTab";
+import type { TerminalConnectionStatus } from "./TerminalTab";
 import { useI18n } from "../../i18n/useI18n";
 import type { TerminalSettings } from "../settings/settingsTypes";
 
@@ -9,9 +10,10 @@ interface TerminalWorkspaceProps {
   theme: "dark" | "light";
   isActive: boolean;
   terminalSettings: TerminalSettings;
+  onStatusChange?: (status: TerminalConnectionStatus) => void;
 }
 
-export function TerminalWorkspace({ connectionId, fontFamily, fontSize, theme, isActive, terminalSettings }: TerminalWorkspaceProps) {
+export function TerminalWorkspace({ connectionId, fontFamily, fontSize, theme, isActive, terminalSettings, onStatusChange }: TerminalWorkspaceProps) {
   const { t } = useI18n();
 
   if (!connectionId) {
@@ -32,6 +34,7 @@ export function TerminalWorkspace({ connectionId, fontFamily, fontSize, theme, i
         theme={theme}
         isActive={isActive}
         terminalSettings={terminalSettings}
+        onStatusChange={onStatusChange}
       />
     </section>
   );

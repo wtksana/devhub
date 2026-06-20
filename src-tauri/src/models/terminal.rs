@@ -29,4 +29,6 @@ pub struct TerminalSessionResponse {
 pub struct TerminalOutputEvent {
     pub session_id: String,
     pub data: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
 }

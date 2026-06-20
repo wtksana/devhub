@@ -1,14 +1,17 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AppShell } from "./AppShell";
 import type { DevHubSettings } from "../features/settings/settingsTypes";
-import { callBackend } from "../lib/tauri";
+import { callBackend, listenBackend } from "../lib/tauri";
 
 let settings: DevHubSettings;
 const saveSettings = vi.fn();
 const callBackendMock = vi.mocked(callBackend);
+const listenBackendMock = vi.mocked(listenBackend);
+type TerminalOutputPayload = { session_id: string; data: string; status?: string };
+let terminalOutputHandler: ((payload: TerminalOutputPayload) => void) | null = null;
 
 function createSettings(): DevHubSettings {
   return {
@@ -75,7 +78,10 @@ vi.mock("../features/settings/useSettings", () => ({
 
 vi.mock("../lib/tauri", () => ({
   callBackend: vi.fn().mockResolvedValue({ session_id: "session-1" }),
-  listenBackend: vi.fn().mockResolvedValue(vi.fn()),
+  listenBackend: vi.fn().mockImplementation(async (_event, handler) => {
+    terminalOutputHandler = handler as (payload: TerminalOutputPayload) => void;
+    return vi.fn();
+  }),
 }));
 
 vi.mock("@tauri-apps/api/window", () => ({
@@ -93,6 +99,8 @@ describe("AppShell", () => {
     saveSettings.mockClear();
     callBackendMock.mockClear();
     callBackendMock.mockResolvedValue({ session_id: "session-1" });
+    listenBackendMock.mockClear();
+    terminalOutputHandler = null;
   });
 
   function getConnectionItem(name: string) {
@@ -262,6 +270,46 @@ describe("AppShell", () => {
 
     expect(screen.queryByRole("button", { name: "生产 Web" })).not.toBeInTheDocument();
     expect(callBackendMock).toHaveBeenCalledWith("close_terminal", { sessionId: "session-1" });
+  });
+
+  it("shows terminal connection status dots on workspace tabs", async () => {
+    settings = {
+      ...createSettings(),
+      connections: [remoteConnection],
+    };
+
+    let openTerminalCalls = 0;
+    callBackendMock.mockImplementation((command) => {
+      if (command === "open_terminal") {
+        openTerminalCalls += 1;
+        if (openTerminalCalls === 2) {
+          return Promise.reject(new Error("ssh timeout"));
+        }
+        return Promise.resolve({ session_id: `session-${openTerminalCalls}` });
+      }
+      return Promise.resolve({ session_id: "session-1" });
+    });
+
+    const { rerender } = render(<AppShell />);
+
+    await userEvent.dblClick(screen.getByText("生产 Web").closest("li") as HTMLElement);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("生产 Web 状态：连接中")).toBeInTheDocument();
+    });
+    terminalOutputHandler?.({ session_id: "session-1", data: "", status: "connected" });
+    await waitFor(() => {
+      expect(screen.getByLabelText("生产 Web 状态：已连接")).toBeInTheDocument();
+    });
+
+    await userEvent.pointer({ keys: "[MouseRight]", target: getConnectionItem("生产 Web") });
+    await userEvent.click(screen.getByRole("menuitem", { name: "新标签连接" }));
+
+    rerender(<AppShell />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("生产 Web 2 状态：连接失败")).toBeInTheDocument();
+    });
   });
 
   it("opens a Redis workspace tab from a Redis connection", async () => {

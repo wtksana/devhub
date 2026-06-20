@@ -1,8 +1,11 @@
 import { useI18n } from "../i18n/useI18n";
 
+type WorkspaceTabStatus = "connecting" | "connected" | "failed" | "closed";
+
 export interface WorkspaceTabItem {
   id: string;
   title: string;
+  status?: WorkspaceTabStatus;
 }
 
 interface WorkspaceTabsProps {
@@ -15,6 +18,12 @@ interface WorkspaceTabsProps {
 
 export function WorkspaceTabs({ tabs, activeTabId, onSelect, onClose, onContextMenu }: WorkspaceTabsProps) {
   const { t } = useI18n();
+  const statusLabels: Record<WorkspaceTabStatus, string> = {
+    connecting: t("app.tab_status_connecting"),
+    connected: t("app.tab_status_connected"),
+    failed: t("app.tab_status_failed"),
+    closed: t("app.tab_status_closed"),
+  };
   const handleWheel = (event: React.WheelEvent<HTMLElement>) => {
     const distance = event.deltaX + event.deltaY;
     if (distance === 0) {
@@ -35,6 +44,13 @@ export function WorkspaceTabs({ tabs, activeTabId, onSelect, onClose, onContextM
           data-active={activeTabId === tab.id}
           onContextMenu={(event) => onContextMenu?.(event, tab.id)}
         >
+          {tab.status ? (
+            <span
+              className="workspace-tab__status"
+              data-status={tab.status}
+              aria-label={`${tab.title} ${statusLabels[tab.status]}`}
+            />
+          ) : null}
           <button type="button" className="workspace-tab__select" aria-pressed={activeTabId === tab.id} onClick={() => onSelect(tab.id)}>
             {tab.title}
           </button>
