@@ -1273,7 +1273,9 @@ fn load_redis_connection(
 
     match connection {
         ConnectionSettings::Redis(connection) => Ok(connection),
-        ConnectionSettings::Ssh(_) => Err(format!(
+        ConnectionSettings::Ssh(_)
+        | ConnectionSettings::Mysql(_)
+        | ConnectionSettings::Postgresql(_) => Err(format!(
             "connection is not a redis connection: {connection_id}"
         )),
     }

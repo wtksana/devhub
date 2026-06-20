@@ -1,4 +1,5 @@
 mod capability_tests;
+mod database_settings_tests;
 mod sensitive_config_tests;
 mod settings_store_tests;
 mod sftp_command_tests;

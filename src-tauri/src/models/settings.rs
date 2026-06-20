@@ -177,17 +177,177 @@ impl<'de> Deserialize<'de> for RedisConnectionSettings {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(untagged)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DatabaseConnectionSettings {
+    pub kind: String,
+    pub id: String,
+    pub name: String,
+    pub group: Option<String>,
+    pub host: String,
+    pub port: u16,
+    pub username: String,
+    pub password: String,
+    pub database: Option<String>,
+}
+
+impl Serialize for DatabaseConnectionSettings {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut state = serializer.serialize_struct("DatabaseConnectionSettings", 9)?;
+        state.serialize_field("kind", &self.kind)?;
+        state.serialize_field("id", &self.id)?;
+        state.serialize_field("name", &self.name)?;
+        if let Some(group) = &self.group {
+            state.serialize_field("group", group)?;
+        }
+        state.serialize_field("host", &self.host)?;
+        state.serialize_field("port", &self.port)?;
+        state.serialize_field("username", &self.username)?;
+        state.serialize_field("password", &self.password)?;
+        if let Some(database) = &self.database {
+            state.serialize_field("database", database)?;
+        }
+        state.end()
+    }
+}
+
+impl DatabaseConnectionSettings {
+    fn deserialize_with_kind<'de, D>(deserializer: D, expected_kind: &str) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct DatabaseConnectionSettingsValue {
+            kind: String,
+            id: String,
+            name: String,
+            group: Option<String>,
+            host: String,
+            port: u16,
+            username: String,
+            password: String,
+            database: Option<String>,
+        }
+
+        let value = DatabaseConnectionSettingsValue::deserialize(deserializer)?;
+        if value.kind != expected_kind {
+            return Err(D::Error::custom(format!(
+                "expected {expected_kind} connection kind"
+            )));
+        }
+        Ok(Self {
+            kind: value.kind,
+            id: value.id,
+            name: value.name,
+            group: value.group,
+            host: value.host,
+            port: value.port,
+            username: value.username,
+            password: value.password,
+            database: value.database,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MysqlConnectionSettings(DatabaseConnectionSettings);
+
+impl Serialize for MysqlConnectionSettings {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        self.0.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for MysqlConnectionSettings {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        DatabaseConnectionSettings::deserialize_with_kind(deserializer, "mysql").map(Self)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PostgresqlConnectionSettings(DatabaseConnectionSettings);
+
+impl Serialize for PostgresqlConnectionSettings {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        self.0.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for PostgresqlConnectionSettings {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        DatabaseConnectionSettings::deserialize_with_kind(deserializer, "postgresql").map(Self)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConnectionSettings {
     Redis(RedisConnectionSettings),
+    Mysql(DatabaseConnectionSettings),
+    Postgresql(DatabaseConnectionSettings),
     Ssh(SshConnectionSettings),
+}
+
+impl Serialize for ConnectionSettings {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            ConnectionSettings::Redis(connection) => connection.serialize(serializer),
+            ConnectionSettings::Mysql(connection) => connection.serialize(serializer),
+            ConnectionSettings::Postgresql(connection) => connection.serialize(serializer),
+            ConnectionSettings::Ssh(connection) => connection.serialize(serializer),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for ConnectionSettings {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum ConnectionSettingsValue {
+            Redis(RedisConnectionSettings),
+            Mysql(MysqlConnectionSettings),
+            Postgresql(PostgresqlConnectionSettings),
+            Ssh(SshConnectionSettings),
+        }
+
+        match ConnectionSettingsValue::deserialize(deserializer)? {
+            ConnectionSettingsValue::Redis(connection) => Ok(ConnectionSettings::Redis(connection)),
+            ConnectionSettingsValue::Mysql(connection) => {
+                Ok(ConnectionSettings::Mysql(connection.0))
+            }
+            ConnectionSettingsValue::Postgresql(connection) => {
+                Ok(ConnectionSettings::Postgresql(connection.0))
+            }
+            ConnectionSettingsValue::Ssh(connection) => Ok(ConnectionSettings::Ssh(connection)),
+        }
+    }
 }
 
 impl ConnectionSettings {
     pub fn id(&self) -> &str {
         match self {
             ConnectionSettings::Redis(connection) => &connection.id,
+            ConnectionSettings::Mysql(connection) => &connection.id,
+            ConnectionSettings::Postgresql(connection) => &connection.id,
             ConnectionSettings::Ssh(connection) => &connection.id,
         }
     }

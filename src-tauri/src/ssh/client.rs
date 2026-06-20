@@ -58,7 +58,9 @@ pub fn load_ssh_connection(
 ) -> Result<SshConnectionSettings> {
     match load_connection(settings_store, connection_id)? {
         ConnectionSettings::Ssh(connection) => Ok(connection),
-        ConnectionSettings::Redis(_) => {
+        ConnectionSettings::Redis(_)
+        | ConnectionSettings::Mysql(_)
+        | ConnectionSettings::Postgresql(_) => {
             Err(SshClientError::NotSshConnection(connection_id.to_string()))
         }
     }
