@@ -71,4 +71,87 @@ describe("DatabaseWorkspace", () => {
       expect(screen.getByRole("alert")).toHaveTextContent("metadata failed");
     });
   });
+
+  it("executes SQL and renders query result rows", async () => {
+    callBackendMock.mockImplementation((command) => {
+      if (command === "execute_database_query") {
+        return Promise.resolve({
+          columns: [
+            { name: "id", data_type: "INT" },
+            { name: "name", data_type: "VARCHAR" },
+            { name: "active", data_type: "BOOL" },
+          ],
+          rows: [
+            [
+              { kind: "number", value: "1" },
+              { kind: "text", value: "Alice" },
+              { kind: "bool", value: true },
+            ],
+            [
+              { kind: "number", value: "2" },
+              { kind: "null" },
+              { kind: "bool", value: false },
+            ],
+          ],
+          affected_rows: 0,
+          duration_ms: 12,
+          limited: true,
+        });
+      }
+      return Promise.resolve([]);
+    });
+
+    renderDatabaseWorkspace();
+
+    await userEvent.type(screen.getByLabelText("SQL 编辑器"), "select * from users");
+    await userEvent.click(screen.getByRole("button", { name: "执行 SQL" }));
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("execute_database_query", {
+        request: {
+          connection_id: "mysql-dev",
+          database: null,
+          sql: "select * from users",
+          limit: 200,
+        },
+      });
+    });
+    expect(screen.getByText("2 行，耗时 12 ms，已自动追加 LIMIT")).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "id INT" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "name VARCHAR" })).toBeInTheDocument();
+    expect(screen.getByText("Alice")).toBeInTheDocument();
+    expect(screen.getByText("NULL")).toBeInTheDocument();
+    expect(screen.getByText("true")).toBeInTheDocument();
+  });
+
+  it("shows affected rows and query errors", async () => {
+    callBackendMock.mockResolvedValueOnce([]);
+    callBackendMock.mockResolvedValueOnce({
+      columns: [],
+      rows: [],
+      affected_rows: 3,
+      duration_ms: 8,
+      limited: false,
+    });
+    callBackendMock.mockRejectedValueOnce(new Error("syntax error near from"));
+
+    renderDatabaseWorkspace();
+
+    await waitFor(() => expect(callBackendMock).toHaveBeenCalledWith("list_database_objects", {
+      request: {
+        connection_id: "mysql-dev",
+      },
+    }));
+    await userEvent.clear(screen.getByLabelText("SQL 编辑器"));
+    await userEvent.type(screen.getByLabelText("SQL 编辑器"), "update users set active = 1");
+    await userEvent.click(screen.getByRole("button", { name: "执行 SQL" }));
+
+    expect(await screen.findByText("影响 3 行，耗时 8 ms")).toBeInTheDocument();
+
+    await userEvent.clear(screen.getByLabelText("SQL 编辑器"));
+    await userEvent.type(screen.getByLabelText("SQL 编辑器"), "select from");
+    await userEvent.click(screen.getByRole("button", { name: "执行 SQL" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("syntax error near from");
+  });
 });

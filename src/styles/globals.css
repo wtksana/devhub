@@ -929,10 +929,109 @@ p {
 }
 
 .database-workspace__main {
+  display: grid;
+  grid-template-rows: minmax(150px, 28%) minmax(0, 1fr);
+  gap: 12px;
   min-width: 0;
   min-height: 0;
-  overflow: auto;
+  overflow: hidden;
   padding: 18px;
+}
+
+.database-query-panel {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto auto;
+  gap: 8px;
+  min-height: 0;
+}
+
+.database-query-panel__editor {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 6px;
+  min-height: 0;
+  color: var(--muted);
+}
+
+.database-query-panel__editor textarea {
+  width: 100%;
+  min-height: 0;
+  padding: 10px 12px;
+  resize: none;
+  font-family: var(--terminal-font-family);
+  font-size: var(--terminal-font-size);
+  line-height: 1.5;
+}
+
+.database-query-panel__actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  color: var(--muted);
+}
+
+.database-query-panel__actions button {
+  min-width: 88px;
+}
+
+.database-query-panel__error {
+  margin: 0;
+  color: var(--danger);
+}
+
+.database-result {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  background: var(--panel);
+}
+
+.database-result header {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--muted);
+}
+
+.database-result__table-wrap {
+  min-height: 0;
+  overflow: auto;
+}
+
+.database-result table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: auto;
+}
+
+.database-result th,
+.database-result td {
+  max-width: 420px;
+  padding: 7px 10px;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.database-result th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--panel-raised);
+}
+
+.database-result th small {
+  margin-left: 6px;
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.database-result tbody tr:hover {
+  background: var(--hover);
 }
 
 .settings-sidebar {
