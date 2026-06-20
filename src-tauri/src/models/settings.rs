@@ -214,6 +214,27 @@ impl Serialize for DatabaseConnectionSettings {
 }
 
 impl DatabaseConnectionSettings {
+    fn serialize_with_kind<S>(&self, serializer: S, kind: &str) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut state = serializer.serialize_struct("DatabaseConnectionSettings", 9)?;
+        state.serialize_field("kind", kind)?;
+        state.serialize_field("id", &self.id)?;
+        state.serialize_field("name", &self.name)?;
+        if let Some(group) = &self.group {
+            state.serialize_field("group", group)?;
+        }
+        state.serialize_field("host", &self.host)?;
+        state.serialize_field("port", &self.port)?;
+        state.serialize_field("username", &self.username)?;
+        state.serialize_field("password", &self.password)?;
+        if let Some(database) = &self.database {
+            state.serialize_field("database", database)?;
+        }
+        state.end()
+    }
+
     fn deserialize_with_kind<'de, D>(deserializer: D, expected_kind: &str) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
@@ -308,8 +329,12 @@ impl Serialize for ConnectionSettings {
     {
         match self {
             ConnectionSettings::Redis(connection) => connection.serialize(serializer),
-            ConnectionSettings::Mysql(connection) => connection.serialize(serializer),
-            ConnectionSettings::Postgresql(connection) => connection.serialize(serializer),
+            ConnectionSettings::Mysql(connection) => {
+                connection.serialize_with_kind(serializer, "mysql")
+            }
+            ConnectionSettings::Postgresql(connection) => {
+                connection.serialize_with_kind(serializer, "postgresql")
+            }
             ConnectionSettings::Ssh(connection) => connection.serialize(serializer),
         }
     }

@@ -122,5 +122,5 @@ fn is_allowed_connection_secret_path(
             && parent
                 .get("kind")
                 .and_then(Value::as_str)
-                .is_some_and(|kind| kind == "redis"))
+                .is_some_and(|kind| matches!(kind, "redis" | "mysql" | "postgresql")))
 }

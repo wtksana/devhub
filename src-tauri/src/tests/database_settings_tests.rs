@@ -82,3 +82,35 @@ fn serializes_postgresql_connection_settings_without_empty_fields() {
     assert!(value.get("group").is_none());
     assert!(value.get("database").is_none());
 }
+
+#[test]
+fn serializes_database_connection_kind_from_variant() {
+    let mysql_connection = ConnectionSettings::Mysql(DatabaseConnectionSettings {
+        kind: "postgresql".to_string(),
+        id: "mysql-dev".to_string(),
+        name: "开发 MySQL".to_string(),
+        group: None,
+        host: "127.0.0.1".to_string(),
+        port: 3306,
+        username: "root".to_string(),
+        password: "secret".to_string(),
+        database: None,
+    });
+    let postgresql_connection = ConnectionSettings::Postgresql(DatabaseConnectionSettings {
+        kind: "mysql".to_string(),
+        id: "pg-dev".to_string(),
+        name: "开发 PostgreSQL".to_string(),
+        group: None,
+        host: "127.0.0.1".to_string(),
+        port: 5432,
+        username: "postgres".to_string(),
+        password: "secret".to_string(),
+        database: None,
+    });
+
+    let mysql_value = serde_json::to_value(mysql_connection).unwrap();
+    let postgresql_value = serde_json::to_value(postgresql_connection).unwrap();
+
+    assert_eq!(mysql_value["kind"], "mysql");
+    assert_eq!(postgresql_value["kind"], "postgresql");
+}

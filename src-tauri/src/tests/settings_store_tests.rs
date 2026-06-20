@@ -2,8 +2,8 @@ use tempfile::tempdir;
 
 use crate::core::settings_store::SettingsStore;
 use crate::models::settings::{
-    ConnectionAuthSettings, ConnectionSettings, DevHubSettings, RedisConnectionSettings,
-    SshConnectionSettings, TerminalLogHighlightRule,
+    ConnectionAuthSettings, ConnectionSettings, DatabaseConnectionSettings, DevHubSettings,
+    RedisConnectionSettings, SshConnectionSettings, TerminalLogHighlightRule,
 };
 
 #[test]
@@ -240,6 +240,82 @@ fn allows_redis_password_in_settings() {
             port: 6379,
             database: 0,
             password: Some("redis-password".to_string()),
+        })
+    );
+}
+
+#[test]
+fn allows_mysql_password_in_settings() {
+    let dir = tempdir().unwrap();
+    let store = SettingsStore::new_for_dir(dir.path().to_path_buf());
+    let mut settings = DevHubSettings::default();
+    settings
+        .connections
+        .push(ConnectionSettings::Mysql(DatabaseConnectionSettings {
+            kind: "mysql".to_string(),
+            id: "mysql-local".to_string(),
+            name: "Local MySQL".to_string(),
+            group: None,
+            host: "127.0.0.1".to_string(),
+            port: 3306,
+            username: "root".to_string(),
+            password: "mysql-password".to_string(),
+            database: Some("app".to_string()),
+        }));
+
+    store.save(&settings).unwrap();
+    let loaded = store.load_or_create().unwrap();
+
+    assert_eq!(
+        loaded.connections[0],
+        ConnectionSettings::Mysql(DatabaseConnectionSettings {
+            kind: "mysql".to_string(),
+            id: "mysql-local".to_string(),
+            name: "Local MySQL".to_string(),
+            group: None,
+            host: "127.0.0.1".to_string(),
+            port: 3306,
+            username: "root".to_string(),
+            password: "mysql-password".to_string(),
+            database: Some("app".to_string()),
+        })
+    );
+}
+
+#[test]
+fn allows_postgresql_password_in_settings() {
+    let dir = tempdir().unwrap();
+    let store = SettingsStore::new_for_dir(dir.path().to_path_buf());
+    let mut settings = DevHubSettings::default();
+    settings
+        .connections
+        .push(ConnectionSettings::Postgresql(DatabaseConnectionSettings {
+            kind: "postgresql".to_string(),
+            id: "pg-local".to_string(),
+            name: "Local PostgreSQL".to_string(),
+            group: None,
+            host: "127.0.0.1".to_string(),
+            port: 5432,
+            username: "postgres".to_string(),
+            password: "postgresql-password".to_string(),
+            database: Some("app".to_string()),
+        }));
+
+    store.save(&settings).unwrap();
+    let loaded = store.load_or_create().unwrap();
+
+    assert_eq!(
+        loaded.connections[0],
+        ConnectionSettings::Postgresql(DatabaseConnectionSettings {
+            kind: "postgresql".to_string(),
+            id: "pg-local".to_string(),
+            name: "Local PostgreSQL".to_string(),
+            group: None,
+            host: "127.0.0.1".to_string(),
+            port: 5432,
+            username: "postgres".to_string(),
+            password: "postgresql-password".to_string(),
+            database: Some("app".to_string()),
         })
     );
 }
