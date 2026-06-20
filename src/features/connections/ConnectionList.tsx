@@ -1,10 +1,17 @@
 import { useMemo, useState, type FormEvent } from "react";
-import type { ConnectionAuthSettings, ConnectionSettings, SshConnectionSettings } from "../settings/settingsTypes";
+import type {
+  ConnectionAuthSettings,
+  ConnectionSettings,
+  DatabaseConnectionSettings,
+  SshConnectionSettings,
+} from "../settings/settingsTypes";
 import { ContextMenu, type ContextMenuState } from "../../app/ContextMenu";
 import { pickPrivateKeyFile } from "../../lib/fileDialog";
 import { callBackend } from "../../lib/tauri";
 import sshConnectionIcon from "../../assets/icons/devicon--powershell.png";
 import redisConnectionIcon from "../../assets/icons/devicon--redis.png";
+import mysqlConnectionIcon from "../../assets/icons/devicon--mysql.png";
+import postgresqlConnectionIcon from "../../assets/icons/devicon--postgresql.png";
 import { useI18n } from "../../i18n/useI18n";
 
 interface ConnectionListProps {
@@ -22,18 +29,30 @@ interface ConnectionListProps {
 const localConnectionId = "local";
 const ungroupedName = "未分组";
 type ConnectionSortMode = "name" | "last_connected_at" | "connection_count";
-type ConnectionKind = "ssh" | "redis";
+type ConnectionKind = "ssh" | "redis" | "mysql" | "postgresql";
 
 function connectionKind(connection: ConnectionSettings): ConnectionKind {
-  return connection.kind === "redis" ? "redis" : "ssh";
+  if (connection.kind === "redis" || connection.kind === "mysql" || connection.kind === "postgresql") return connection.kind;
+  return "ssh";
 }
 
 function isSshConnection(connection: ConnectionSettings): connection is SshConnectionSettings {
-  return connection.kind !== "redis";
+  return connection.kind === undefined || connection.kind === "ssh";
+}
+
+function isDatabaseConnection(connection: ConnectionSettings | undefined): connection is DatabaseConnectionSettings {
+  return connection?.kind === "mysql" || connection?.kind === "postgresql";
 }
 
 function createConnectionId(kind: ConnectionKind, host: string) {
   return `${kind}-${host.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "connection"}-${Date.now()}`;
+}
+
+function defaultPortForKind(kind: ConnectionKind) {
+  if (kind === "redis") return 6379;
+  if (kind === "mysql") return 3306;
+  if (kind === "postgresql") return 5432;
+  return 22;
 }
 
 type ConnectionDialogMode = "add" | "edit" | "copy";
@@ -112,7 +131,7 @@ export function ConnectionList({
   const [group, setGroup] = useState("");
   const [host, setHost] = useState("");
   const [port, setPort] = useState(22);
-  const [database, setDatabase] = useState(0);
+  const [database, setDatabase] = useState<number | string>(0);
   const [username, setUsername] = useState("");
   const [authType, setAuthType] = useState<ConnectionAuthSettings["type"]>("password");
   const [password, setPassword] = useState("");
@@ -156,6 +175,16 @@ export function ConnectionList({
   }, [connectionSortMode, connections, groupNames, groupSortMode]);
 
   function dialogTitle(mode: ConnectionDialogMode) {
+    if (kind === "mysql") {
+      if (mode === "edit") return t("connections.edit_mysql");
+      if (mode === "copy") return t("connections.copy_mysql");
+      return t("connections.add_mysql");
+    }
+    if (kind === "postgresql") {
+      if (mode === "edit") return t("connections.edit_postgresql");
+      if (mode === "copy") return t("connections.copy_postgresql");
+      return t("connections.add_postgresql");
+    }
     if (kind === "redis") {
       if (mode === "edit") return t("connections.edit_redis");
       if (mode === "copy") return t("connections.copy_redis");
@@ -178,8 +207,22 @@ export function ConnectionList({
       name: name.trim(),
       host: host.trim(),
       port,
-      database,
+      database: Number(database),
       ...(password ? { password } : {}),
+    };
+  }
+
+  function databaseConnectionFromForm(id: string): ConnectionSettings {
+    return {
+      kind: kind === "postgresql" ? "postgresql" : "mysql",
+      ...(group.trim() ? { group: group.trim() } : {}),
+      id,
+      name: name.trim(),
+      host: host.trim(),
+      port,
+      username: username.trim(),
+      password,
+      ...(String(database).trim() ? { database: String(database).trim() } : {}),
     };
   }
 
@@ -188,6 +231,21 @@ export function ConnectionList({
     if (kind === "redis") {
       const nextConnection = redisConnectionFromForm(
         dialogMode === "edit" && sourceConnection ? sourceConnection.id : createConnectionId("redis", host),
+      );
+
+      if (dialogMode === "edit") {
+        onUpdateConnection(nextConnection);
+      } else {
+        onAddConnection(nextConnection);
+      }
+
+      closeConnectionDialog();
+      return;
+    }
+
+    if (kind === "mysql" || kind === "postgresql") {
+      const nextConnection = databaseConnectionFromForm(
+        dialogMode === "edit" && sourceConnection ? sourceConnection.id : createConnectionId(kind, host),
       );
 
       if (dialogMode === "edit") {
@@ -238,12 +296,21 @@ export function ConnectionList({
     setName(connection?.name ?? "");
     setGroup(connection?.group ?? "");
     setHost(connection?.host ?? "");
-    setPort(connection?.port ?? (nextKind === "redis" ? 6379 : 22));
+    setPort(connection?.port ?? defaultPortForKind(nextKind));
     if (connection?.kind === "redis") {
       setDatabase(connection.database);
       setUsername("");
       setAuthType("password");
       setPassword(connection.password ?? "");
+      setPrivateKeyPath("");
+      setPrivateKeyPassphrase("");
+      return;
+    }
+    if (isDatabaseConnection(connection)) {
+      setDatabase(connection.database ?? "");
+      setUsername(connection.username);
+      setAuthType("password");
+      setPassword(connection.password);
       setPrivateKeyPath("");
       setPrivateKeyPassphrase("");
       return;
@@ -311,9 +378,34 @@ export function ConnectionList({
     return "";
   }
 
+  function connectionIcon(connection: ConnectionSettings) {
+    const kind = connectionKind(connection);
+    if (kind === "redis") return redisConnectionIcon;
+    if (kind === "mysql") return mysqlConnectionIcon;
+    if (kind === "postgresql") return postgresqlConnectionIcon;
+    return sshConnectionIcon;
+  }
+
+  function connectionIconAlt(connection: ConnectionSettings) {
+    const kind = connectionKind(connection);
+    if (kind === "redis") return t("connections.redis_icon");
+    if (kind === "mysql") return t("connections.mysql_icon");
+    if (kind === "postgresql") return t("connections.postgresql_icon");
+    return t("connections.ssh_icon");
+  }
+
+  function connectionSubtitle(connection: ConnectionSettings) {
+    if (isSshConnection(connection)) return `${connection.username}@${connection.host}:${connection.port}`;
+    if (connection.kind === "redis") return `redis://${connection.host}:${connection.port}/${connection.database}`;
+    return `${connection.kind}://${connection.username}@${connection.host}:${connection.port}${connection.database ? `/${connection.database}` : ""}`;
+  }
+
   function activateConnection(connection: ConnectionSettings) {
     if (connectionKind(connection) === "redis") {
       onOpenRedis(connection.id);
+      return;
+    }
+    if (isDatabaseConnection(connection)) {
       return;
     }
     onOpenTerminal(connection.id);
@@ -358,7 +450,9 @@ export function ConnectionList({
       items: [
         ...(connectionKind(connection) === "redis"
           ? [{ label: t("connections.test_connection"), onSelect: () => void testRedisConnection(connection.id) }]
-          : [
+          : isDatabaseConnection(connection)
+            ? []
+            : [
               { label: t("connections.open"), onSelect: () => onOpenTerminal(connection.id) },
               { label: t("connections.open_new_tab"), onSelect: () => onOpenNewTerminal(connection.id) },
               { label: "SFTP", onSelect: () => onOpenSftp(connection.id) },
@@ -437,12 +531,19 @@ export function ConnectionList({
                   onChange={(event) => {
                     const nextKind = event.target.value as ConnectionKind;
                     setKind(nextKind);
-                    setPort(nextKind === "redis" ? 6379 : 22);
+                    setPort(defaultPortForKind(nextKind));
+                    setDatabase(nextKind === "redis" ? 0 : "");
+                    setAuthType("password");
+                    setPassword("");
+                    setPrivateKeyPath("");
+                    setPrivateKeyPassphrase("");
                   }}
                   disabled={dialogMode === "edit"}
                 >
                   <option value="ssh">{t("connections.type_ssh")}</option>
                   <option value="redis">{t("connections.type_redis")}</option>
+                  <option value="mysql">{t("connections.type_mysql")}</option>
+                  <option value="postgresql">{t("connections.type_postgresql")}</option>
                 </select>
               </label>
               <label>
@@ -499,6 +600,31 @@ export function ConnectionList({
                       type="password"
                       value={password}
                       onChange={(event) => setPassword(event.target.value)}
+                    />
+                  </label>
+                </>
+              ) : kind === "mysql" || kind === "postgresql" ? (
+                <>
+                  <label>
+                    <span>{t("connections.username")}</span>
+                    <input aria-label={t("connections.username")} value={username} onChange={(event) => setUsername(event.target.value)} required />
+                  </label>
+                  <label>
+                    <span>{t("connections.password")}</span>
+                    <input
+                      aria-label={t("connections.password")}
+                      type="password"
+                      value={password}
+                      onChange={(event) => setPassword(event.target.value)}
+                      required
+                    />
+                  </label>
+                  <label>
+                    <span>{t("connections.default_database")}</span>
+                    <input
+                      aria-label={t("connections.default_database")}
+                      value={database}
+                      onChange={(event) => setDatabase(event.target.value)}
                     />
                   </label>
                 </>
@@ -636,17 +762,10 @@ export function ConnectionList({
                   onContextMenu={(event) => openConnectionContextMenu(event, connection)}
                 >
                   <strong>
-                    <img
-                      src={connectionKind(connection) === "redis" ? redisConnectionIcon : sshConnectionIcon}
-                      alt={connectionKind(connection) === "redis" ? t("connections.redis_icon") : t("connections.ssh_icon")}
-                    />
+                    <img src={connectionIcon(connection)} alt={connectionIconAlt(connection)} />
                     {connection.name}
                   </strong>
-                  <span>
-                    {isSshConnection(connection)
-                      ? `${connection.username}@${connection.host}:${connection.port}`
-                      : `redis://${connection.host}:${connection.port}/${connection.database}`}
-                  </span>
+                  <span>{connectionSubtitle(connection)}</span>
                 </li>
               ))}
             </ul>

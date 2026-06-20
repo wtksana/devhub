@@ -25,6 +25,8 @@ function assertNoSensitiveKeys(value: unknown, path: string[] = []): void {
 }
 
 function isAllowedSensitivePath(path: string[], parent: unknown): boolean {
+  const parentKind =
+    parent && typeof parent === "object" && !Array.isArray(parent) && "kind" in parent ? parent.kind : undefined;
   return (
     (path.length === 4 &&
       path[0] === "connections" &&
@@ -33,7 +35,7 @@ function isAllowedSensitivePath(path: string[], parent: unknown): boolean {
     (path.length === 3 &&
       path[0] === "connections" &&
       path[2] === "password" &&
-      Boolean(parent && typeof parent === "object" && !Array.isArray(parent) && "kind" in parent && parent.kind === "redis"))
+      (parentKind === "redis" || parentKind === "mysql" || parentKind === "postgresql"))
   );
 }
 
@@ -77,7 +79,19 @@ const redisConnectionSchema = z.object({
   password: z.string().optional(),
 });
 
-const connectionSchema = z.union([redisConnectionSchema, sshConnectionSchema]);
+const databaseConnectionSchema = z.object({
+  kind: z.union([z.literal("mysql"), z.literal("postgresql")]),
+  id: z.string().min(1),
+  name: z.string().min(1),
+  group: groupSchema,
+  host: z.string().min(1),
+  port: z.number().int().min(1).max(65535),
+  username: z.string().min(1),
+  password: z.string(),
+  database: z.string().optional(),
+});
+
+const connectionSchema = z.union([redisConnectionSchema, databaseConnectionSchema, sshConnectionSchema]);
 
 const defaultTerminalLogHighlight = {
   auto_detect_tail: true,

@@ -231,6 +231,159 @@ describe("ConnectionList", () => {
     });
   });
 
+  it("submits a MySQL connection with username and password", async () => {
+    const onAddConnection = vi.fn();
+
+    renderConnectionList({ onAddConnection });
+
+    await userEvent.click(screen.getByRole("button", { name: "添加连接" }));
+    const dialog = screen.getByRole("dialog", { name: "添加 SSH 连接" });
+    await userEvent.selectOptions(within(dialog).getByLabelText("连接类型"), "mysql");
+    expect(screen.getByRole("dialog", { name: "添加 MySQL 连接" })).toBeInTheDocument();
+    await userEvent.type(within(dialog).getByLabelText("连接名称"), "开发 MySQL");
+    await userEvent.type(within(dialog).getByLabelText("分组"), "database");
+    await userEvent.type(within(dialog).getByLabelText("主机"), "127.0.0.1");
+    expect(within(dialog).getByLabelText("端口")).toHaveValue(3306);
+    await userEvent.type(within(dialog).getByLabelText("用户名"), "root");
+    await userEvent.type(within(dialog).getByLabelText("密码"), "mysql-password");
+    await userEvent.type(within(dialog).getByLabelText("默认数据库"), "app");
+    await userEvent.click(within(dialog).getByRole("button", { name: "保存连接" }));
+
+    expect(onAddConnection).toHaveBeenCalledWith({
+      kind: "mysql",
+      id: expect.stringMatching(/^mysql-/),
+      name: "开发 MySQL",
+      group: "database",
+      host: "127.0.0.1",
+      port: 3306,
+      username: "root",
+      password: "mysql-password",
+      database: "app",
+    });
+  });
+
+  it("submits a PostgreSQL connection with default port and optional database", async () => {
+    const onAddConnection = vi.fn();
+
+    renderConnectionList({ onAddConnection });
+
+    await userEvent.click(screen.getByRole("button", { name: "添加连接" }));
+    const dialog = screen.getByRole("dialog", { name: "添加 SSH 连接" });
+    await userEvent.selectOptions(within(dialog).getByLabelText("连接类型"), "postgresql");
+    expect(screen.getByRole("dialog", { name: "添加 PostgreSQL 连接" })).toBeInTheDocument();
+    await userEvent.type(within(dialog).getByLabelText("连接名称"), "开发 PostgreSQL");
+    await userEvent.type(within(dialog).getByLabelText("主机"), "127.0.0.1");
+    expect(within(dialog).getByLabelText("端口")).toHaveValue(5432);
+    await userEvent.type(within(dialog).getByLabelText("用户名"), "postgres");
+    await userEvent.type(within(dialog).getByLabelText("密码"), "postgres-password");
+    await userEvent.click(within(dialog).getByRole("button", { name: "保存连接" }));
+
+    expect(onAddConnection).toHaveBeenCalledWith({
+      kind: "postgresql",
+      id: expect.stringMatching(/^postgresql-/),
+      name: "开发 PostgreSQL",
+      host: "127.0.0.1",
+      port: 5432,
+      username: "postgres",
+      password: "postgres-password",
+    });
+  });
+
+  it("clears password when switching connection types before saving", async () => {
+    const onAddConnection = vi.fn();
+
+    renderConnectionList({ onAddConnection });
+
+    await userEvent.click(screen.getByRole("button", { name: "添加连接" }));
+    const dialog = screen.getByRole("dialog", { name: "添加 SSH 连接" });
+    await userEvent.type(within(dialog).getByLabelText("连接名称"), "切换 MySQL");
+    await userEvent.type(within(dialog).getByLabelText("主机"), "127.0.0.1");
+    await userEvent.type(within(dialog).getByLabelText("用户名"), "root");
+    await userEvent.type(within(dialog).getByLabelText("密码"), "ssh-password");
+
+    await userEvent.selectOptions(within(dialog).getByLabelText("连接类型"), "mysql");
+    expect(within(dialog).getByLabelText("密码")).toHaveValue("");
+    await userEvent.type(within(dialog).getByLabelText("密码"), "mysql-password");
+
+    await userEvent.selectOptions(within(dialog).getByLabelText("连接类型"), "redis");
+    expect(within(dialog).getByLabelText("Redis 密码")).toHaveValue("");
+    await userEvent.selectOptions(within(dialog).getByLabelText("连接类型"), "mysql");
+    expect(within(dialog).getByLabelText("密码")).toHaveValue("");
+  });
+
+  it("prefills fields when copying a database connection", async () => {
+    const onAddConnection = vi.fn();
+
+    renderConnectionList({
+      connections: [
+        {
+          kind: "mysql",
+          id: "mysql-local",
+          name: "本地 MySQL",
+          group: "database",
+          host: "127.0.0.1",
+          port: 3306,
+          username: "root",
+          password: "mysql-password",
+          database: "app",
+        },
+      ],
+      onAddConnection,
+    });
+
+    await userEvent.pointer({ keys: "[MouseRight]", target: screen.getByText("本地 MySQL") });
+    await userEvent.click(screen.getByRole("menuitem", { name: "复制" }));
+    const dialog = screen.getByRole("dialog", { name: "复制 MySQL 连接" });
+
+    expect(within(dialog).getByLabelText("连接类型")).toHaveValue("mysql");
+    expect(within(dialog).getByLabelText("连接名称")).toHaveValue("本地 MySQL");
+    expect(within(dialog).getByLabelText("分组")).toHaveValue("database");
+    expect(within(dialog).getByLabelText("主机")).toHaveValue("127.0.0.1");
+    expect(within(dialog).getByLabelText("端口")).toHaveValue(3306);
+    expect(within(dialog).getByLabelText("用户名")).toHaveValue("root");
+    expect(within(dialog).getByLabelText("密码")).toHaveValue("mysql-password");
+    expect(within(dialog).getByLabelText("默认数据库")).toHaveValue("app");
+  });
+
+  it("shows database connections without SSH or Redis actions before workspace support is added", async () => {
+    const onOpenTerminal = vi.fn();
+    const onOpenRedis = vi.fn();
+    const onOpenSftp = vi.fn();
+
+    renderConnectionList({
+      connections: [
+        {
+          kind: "postgresql",
+          id: "postgres-local",
+          name: "本地 PostgreSQL",
+          host: "127.0.0.1",
+          port: 5432,
+          username: "postgres",
+          password: "postgres-password",
+        },
+      ],
+      onOpenTerminal,
+      onOpenRedis,
+      onOpenSftp,
+    });
+
+    const connectionItem = screen.getByText("本地 PostgreSQL").closest("li");
+    expect(connectionItem).not.toBeNull();
+    expect(within(connectionItem as HTMLElement).getByText("postgresql://postgres@127.0.0.1:5432")).toBeInTheDocument();
+    expect(within(connectionItem as HTMLElement).getByRole("img", { name: "PostgreSQL 连接" })).toBeInTheDocument();
+
+    await userEvent.dblClick(connectionItem as HTMLElement);
+    expect(onOpenTerminal).not.toHaveBeenCalled();
+    expect(onOpenRedis).not.toHaveBeenCalled();
+
+    await userEvent.pointer({ keys: "[MouseRight]", target: screen.getByText("本地 PostgreSQL") });
+    expect(screen.queryByRole("menuitem", { name: "连接" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "新标签连接" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "SFTP" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "测试连接" })).not.toBeInTheDocument();
+    expect(onOpenSftp).not.toHaveBeenCalled();
+  });
+
   it("validates Redis connection fields before testing from the dialog", async () => {
     renderConnectionList();
 

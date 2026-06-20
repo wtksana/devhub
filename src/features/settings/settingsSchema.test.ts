@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { parseSettings } from "./settingsSchema";
+import type { ConnectionSettings, SshConnectionSettings } from "./settingsTypes";
+
+function expectSshConnection(connection: ConnectionSettings): SshConnectionSettings {
+  if (!("auth" in connection)) {
+    throw new Error("expected SSH connection");
+  }
+  return connection;
+}
 
 describe("settings schema", () => {
   it("accepts a valid portable settings file", () => {
@@ -42,9 +50,7 @@ describe("settings schema", () => {
       ],
     });
 
-    expect(settings.connections[0].kind).not.toBe("redis");
-    if (settings.connections[0].kind === "redis") throw new Error("expected SSH connection");
-    expect(settings.connections[0].auth.type).toBe("private_key");
+    expect(expectSshConnection(settings.connections[0]).auth.type).toBe("private_key");
     expect(settings.sftp.file_size_unit).toBe("auto");
     expect(settings.terminal.log_highlight.rules).toEqual([{ pattern: "\\bERROR\\b", color: "#e06c75" }]);
     expect(settings.connection_groups).toEqual(["production"]);
@@ -94,11 +100,68 @@ describe("settings schema", () => {
       ],
     });
 
-    if (settings.connections[0].kind === "redis") throw new Error("expected SSH connection");
-    expect(settings.connections[0].auth).toEqual({
+    expect(expectSshConnection(settings.connections[0]).auth).toEqual({
       type: "password",
       password: "plain-password",
     });
+  });
+
+  it("accepts database connections with the real password in settings json", () => {
+    const settings = parseSettings({
+      appearance: {
+        theme: "dark",
+        ui_font_family: "Consolas",
+        ui_font_size: 16,
+        terminal_font_family: "Consolas",
+        terminal_font_size: 14,
+      },
+      layout: {
+        connection_sidebar_width: 280,
+      },
+      connections: [
+        {
+          kind: "mysql",
+          id: "mysql-local",
+          name: "Local MySQL",
+          host: "127.0.0.1",
+          port: 3306,
+          username: "root",
+          password: "mysql-password",
+          database: "app",
+        },
+        {
+          kind: "postgresql",
+          id: "postgres-local",
+          name: "Local PostgreSQL",
+          host: "127.0.0.1",
+          port: 5432,
+          username: "postgres",
+          password: "postgres-password",
+        },
+      ],
+    });
+
+    expect(settings.connections).toEqual([
+      {
+        kind: "mysql",
+        id: "mysql-local",
+        name: "Local MySQL",
+        host: "127.0.0.1",
+        port: 3306,
+        username: "root",
+        password: "mysql-password",
+        database: "app",
+      },
+      {
+        kind: "postgresql",
+        id: "postgres-local",
+        name: "Local PostgreSQL",
+        host: "127.0.0.1",
+        port: 5432,
+        username: "postgres",
+        password: "postgres-password",
+      },
+    ]);
   });
 
   it("accepts Redis connections with the real password in settings json", () => {

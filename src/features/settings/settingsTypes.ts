@@ -69,7 +69,19 @@ export interface RedisConnectionSettings {
   password?: string;
 }
 
-export type ConnectionSettings = SshConnectionSettings | RedisConnectionSettings;
+export interface DatabaseConnectionSettings {
+  kind: "mysql" | "postgresql";
+  id: string;
+  name: string;
+  group?: string;
+  host: string;
+  port: number;
+  username: string;
+  password: string;
+  database?: string;
+}
+
+export type ConnectionSettings = SshConnectionSettings | RedisConnectionSettings | DatabaseConnectionSettings;
 
 export interface DevHubSettings {
   appearance: AppearanceSettings;
