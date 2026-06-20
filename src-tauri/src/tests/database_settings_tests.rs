@@ -40,6 +40,26 @@ fn parses_postgresql_connection_settings() {
 }
 
 #[test]
+fn parses_database_connection_settings_for_command_arguments() {
+    let json = r#"{
+      "kind": "mysql",
+      "id": "mysql-dev",
+      "name": "开发 MySQL",
+      "host": "127.0.0.1",
+      "port": 3306,
+      "username": "root",
+      "password": "secret",
+      "database": "app"
+    }"#;
+
+    let connection: DatabaseConnectionSettings = serde_json::from_str(json).unwrap();
+
+    assert_eq!(connection.kind, "mysql");
+    assert_eq!(connection.id, "mysql-dev");
+    assert_eq!(connection.database.as_deref(), Some("app"));
+}
+
+#[test]
 fn serializes_mysql_connection_settings() {
     let connection = ConnectionSettings::Mysql(DatabaseConnectionSettings {
         kind: "mysql".to_string(),

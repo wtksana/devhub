@@ -1,6 +1,7 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 pub mod commands;
 pub mod core;
+pub mod db;
 pub mod models;
 pub mod ssh;
 
@@ -11,6 +12,7 @@ use crate::commands::redis::RedisConnectionManager;
 use crate::core::credential_store::CredentialStore;
 use crate::core::settings_store::SettingsStore;
 use crate::core::window_state::{WindowState, WindowStateStore};
+use crate::db::connection::DatabaseConnectionManager;
 use crate::ssh::session_manager::SessionManager;
 use crate::ssh::sftp_manager::SftpSessionManager;
 use tauri::image::Image;
@@ -57,6 +59,7 @@ pub fn run() {
 
             app.manage(SettingsStore::new_for_dir(app_dir));
             app.manage(CredentialStore::new("devhub"));
+            app.manage(DatabaseConnectionManager);
             app.manage(RedisConnectionManager::default());
             app.manage(SessionManager::default());
             app.manage(SftpSessionManager::default());
@@ -69,6 +72,8 @@ pub fn run() {
             commands::settings::load_settings,
             commands::settings::save_settings,
             commands::settings::list_system_fonts,
+            commands::database::test_database_connection,
+            commands::database::test_database_connection_config,
             commands::redis::test_redis_connection,
             commands::redis::test_redis_connection_config,
             commands::redis::list_redis_keys,

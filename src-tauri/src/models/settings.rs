@@ -213,6 +213,42 @@ impl Serialize for DatabaseConnectionSettings {
     }
 }
 
+impl<'de> Deserialize<'de> for DatabaseConnectionSettings {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct DatabaseConnectionSettingsValue {
+            kind: String,
+            id: String,
+            name: String,
+            group: Option<String>,
+            host: String,
+            port: u16,
+            username: String,
+            password: String,
+            database: Option<String>,
+        }
+
+        let value = DatabaseConnectionSettingsValue::deserialize(deserializer)?;
+        if value.kind != "mysql" && value.kind != "postgresql" {
+            return Err(D::Error::custom("expected database connection kind"));
+        }
+        Ok(Self {
+            kind: value.kind,
+            id: value.id,
+            name: value.name,
+            group: value.group,
+            host: value.host,
+            port: value.port,
+            username: value.username,
+            password: value.password,
+            database: value.database,
+        })
+    }
+}
+
 impl DatabaseConnectionSettings {
     fn serialize_with_kind<S>(&self, serializer: S, kind: &str) -> Result<S::Ok, S::Error>
     where
