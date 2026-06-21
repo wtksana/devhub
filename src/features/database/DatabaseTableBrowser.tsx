@@ -18,7 +18,9 @@ interface DatabaseTableBrowserProps {
 export function DatabaseTableBrowser({ connectionId, target }: DatabaseTableBrowserProps) {
   const { t } = useI18n();
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(String(DEFAULT_PAGE_SIZE));
+  const [pageInput, setPageInput] = useState("1");
+  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
+  const [pageSizeInput, setPageSizeInput] = useState(String(DEFAULT_PAGE_SIZE));
   const [sortColumn, setSortColumn] = useState<string | null>(null);
   const [sortDirection, setSortDirection] = useState<DatabaseSortDirection | null>(null);
   const [filterInput, setFilterInput] = useState("");
@@ -29,6 +31,9 @@ export function DatabaseTableBrowser({ connectionId, target }: DatabaseTableBrow
 
   useEffect(() => {
     setPage(1);
+    setPageInput("1");
+    setPageSize(DEFAULT_PAGE_SIZE);
+    setPageSizeInput(String(DEFAULT_PAGE_SIZE));
     setSortColumn(null);
     setSortDirection(null);
     setFilterInput("");
@@ -49,7 +54,7 @@ export function DatabaseTableBrowser({ connectionId, target }: DatabaseTableBrow
           database: target.database,
           table: target.table,
           page,
-          page_size: normalizePageSize(pageSize),
+          page_size: pageSize,
           sort_column: sortColumn,
           sort_direction: sortDirection,
           filter: filter || null,
@@ -65,7 +70,22 @@ export function DatabaseTableBrowser({ connectionId, target }: DatabaseTableBrow
 
   function applyFilter() {
     setPage(1);
+    setPageInput("1");
     setFilter(filterInput.trim());
+  }
+
+  function applyPageInput() {
+    const nextPage = normalizePage(pageInput);
+    setPage(nextPage);
+    setPageInput(String(nextPage));
+  }
+
+  function applyPageSizeInput() {
+    const nextPageSize = normalizePageSize(pageSizeInput);
+    setPage(1);
+    setPageInput("1");
+    setPageSize(nextPageSize);
+    setPageSizeInput(String(nextPageSize));
   }
 
   function toggleSort(columnName: string) {
@@ -73,58 +93,35 @@ export function DatabaseTableBrowser({ connectionId, target }: DatabaseTableBrow
       setSortColumn(columnName);
       setSortDirection("asc");
       setPage(1);
+      setPageInput("1");
       return;
     }
     if (sortDirection === "asc") {
       setSortDirection("desc");
       setPage(1);
+      setPageInput("1");
       return;
     }
     setSortColumn(null);
     setSortDirection(null);
     setPage(1);
+    setPageInput("1");
   }
 
   const totalPages = result ? Math.max(1, Math.ceil(result.total_rows / result.page_size)) : 1;
   const canGoPrevious = page > 1 && !isLoading;
   const canGoNext = Boolean(result && page < totalPages && !isLoading);
 
+  function goToPage(nextPage: number) {
+    const normalizedPage = normalizePage(String(nextPage));
+    setPage(normalizedPage);
+    setPageInput(String(normalizedPage));
+  }
+
   return (
     <section className="database-table-browser" aria-label={t("database.table_browser")}>
       <header className="database-table-browser__toolbar">
         <span>{t("database.table_label", { table: target.table })}</span>
-        <button type="button" disabled={!canGoPrevious} onClick={() => setPage((current) => Math.max(1, current - 1))}>
-          {t("database.previous_page")}
-        </button>
-        <label>
-          <span>{t("database.page")}</span>
-          <input
-            aria-label={t("database.page")}
-            type="number"
-            min="1"
-            value={page}
-            onChange={(event) => setPage(normalizePage(event.target.value))}
-          />
-        </label>
-        <button type="button" disabled={!canGoNext} onClick={() => setPage((current) => current + 1)}>
-          {t("database.next_page")}
-        </button>
-        <label>
-          <span>{t("database.page_size")}</span>
-          <input
-            aria-label={t("database.page_size")}
-            type="number"
-            min="1"
-            max="10000"
-            value={pageSize}
-            onBlur={() => setPageSize(String(normalizePageSize(pageSize)))}
-            onChange={(event) => {
-              setPage(1);
-              setPageSize(event.target.value);
-            }}
-          />
-        </label>
-        <span>{result ? t("database.total_rows", { total: result.total_rows }) : t("database.total_rows", { total: 0 })}</span>
         <label className="database-table-browser__filter">
           <span>{t("database.filter")}</span>
           <input
@@ -138,13 +135,49 @@ export function DatabaseTableBrowser({ connectionId, target }: DatabaseTableBrow
             }}
           />
         </label>
+        <span>{result ? t("database.total_rows", { total: result.total_rows }) : t("database.total_rows", { total: 0 })}</span>
+        <button type="button" disabled={!canGoPrevious} onClick={() => goToPage(Math.max(1, page - 1))}>
+          {t("database.previous_page")}
+        </button>
+        <label>
+          <span>{t("database.page")}</span>
+          <input
+            aria-label={t("database.page")}
+            type="number"
+            min="1"
+            value={pageInput}
+            onBlur={applyPageInput}
+            onChange={(event) => setPageInput(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") applyPageInput();
+            }}
+          />
+        </label>
+        <button type="button" disabled={!canGoNext} onClick={() => goToPage(page + 1)}>
+          {t("database.next_page")}
+        </button>
+        <label>
+          <span>{t("database.page_size")}</span>
+          <input
+            aria-label={t("database.page_size")}
+            type="number"
+            min="1"
+            max="10000"
+            value={pageSizeInput}
+            onBlur={applyPageSizeInput}
+            onChange={(event) => setPageSizeInput(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") applyPageSizeInput();
+            }}
+          />
+        </label>
         <button type="button" disabled={isLoading} onClick={() => void loadPage()}>
           {isLoading ? t("database.loading") : t("database.refresh")}
         </button>
       </header>
       {error ? <p className="database-table-browser__error" role="alert">{error}</p> : null}
       {result ? (
-        <div className="database-result__table-wrap">
+        <div className="database-result__table-wrap database-table-browser__table-wrap">
           <table>
             <thead>
               <tr>

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import Editor from "@monaco-editor/react";
 import type { OnMount } from "@monaco-editor/react";
 import { callBackend } from "../../lib/tauri";
@@ -18,6 +18,9 @@ import type { ContextMenuState } from "../../app/ContextMenu";
 import { readClipboardText } from "../../lib/clipboard";
 
 const DEFAULT_SQL_LIMIT = 200;
+const DEFAULT_OBJECT_TREE_WIDTH = 220;
+const MIN_OBJECT_TREE_WIDTH = 180;
+const MAX_OBJECT_TREE_WIDTH = 420;
 const CREATE_SQL_FILE_VALUE = "__create_sql_file__";
 const DANGEROUS_SQL_KEYWORDS = new Set([
   "insert",
@@ -48,7 +51,10 @@ export function DatabaseWorkspace({ connectionId, initialDatabase, theme, fontFa
   const [defaultLimit, setDefaultLimit] = useState(String(DEFAULT_SQL_LIMIT));
   const [newSqlFileName, setNewSqlFileName] = useState("");
   const [isCreateSqlFileDialogOpen, setIsCreateSqlFileDialogOpen] = useState(false);
+  const [objectTreeWidth, setObjectTreeWidth] = useState(DEFAULT_OBJECT_TREE_WIDTH);
+  const [isResizingObjectTree, setIsResizingObjectTree] = useState(false);
   const [editorContextMenu, setEditorContextMenu] = useState<ContextMenuState | null>(null);
+  const objectTreeResizeRef = useRef({ startX: 0, startWidth: DEFAULT_OBJECT_TREE_WIDTH });
   const latestSqlFileKeyRef = useRef("");
   const monacoEditorRef = useRef<Parameters<OnMount>[0] | null>(null);
 
@@ -114,6 +120,35 @@ export function DatabaseWorkspace({ connectionId, initialDatabase, theme, fontFa
     }, 500);
     return () => window.clearTimeout(timer);
   }, [connectionId, currentDatabase, isSqlFileLoaded, selectedSqlFileName, sql]);
+
+  useEffect(() => {
+    if (!isResizingObjectTree) return;
+
+    function handleMouseMove(event: MouseEvent) {
+      const nextWidth = objectTreeResizeRef.current.startWidth + event.clientX - objectTreeResizeRef.current.startX;
+      setObjectTreeWidth(clamp(nextWidth, MIN_OBJECT_TREE_WIDTH, MAX_OBJECT_TREE_WIDTH));
+    }
+
+    function handleMouseUp() {
+      setIsResizingObjectTree(false);
+    }
+
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [isResizingObjectTree]);
+
+  function startObjectTreeResize(event: React.MouseEvent) {
+    event.preventDefault();
+    objectTreeResizeRef.current = {
+      startX: event.clientX,
+      startWidth: objectTreeWidth,
+    };
+    setIsResizingObjectTree(true);
+  }
 
   async function requestExecuteSql(sqlToExecute: string) {
     const trimmedSql = sqlToExecute.trim();
@@ -257,12 +292,23 @@ export function DatabaseWorkspace({ connectionId, initialDatabase, theme, fontFa
   }
 
   return (
-    <section className="database-workspace" aria-label={t("database.workspace")}>
+    <section
+      className="database-workspace"
+      aria-label={t("database.workspace")}
+      style={{ "--database-object-tree-width": `${objectTreeWidth}px` } as CSSProperties}
+    >
       <DatabaseObjectTree
         connectionId={connectionId}
         selectedDatabase={currentDatabase}
         onDatabaseChange={setCurrentDatabase}
         onOpenTable={openTable}
+      />
+      <div
+        role="separator"
+        aria-label="调整数据库表列表宽度"
+        aria-orientation="vertical"
+        className="panel-resize-handle panel-resize-handle--database-tree"
+        onMouseDown={startObjectTreeResize}
       />
       <div className="database-workspace__main" data-editor-open={isEditorOpen}>
         <div className="database-query-panel">
@@ -500,4 +546,8 @@ function normalizeLimit(value: string) {
   const parsed = Number.parseInt(value, 10);
   if (!Number.isFinite(parsed) || parsed < 1) return DEFAULT_SQL_LIMIT;
   return parsed;
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
 }

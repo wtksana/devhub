@@ -1,4 +1,4 @@
-import { useRef, useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { CommandPalette } from "./CommandPalette";
 import { ContextMenu, type ContextMenuState } from "./ContextMenu";
 import { DockPanel } from "./DockPanel";
@@ -43,6 +43,9 @@ interface DatabaseWorkspaceTab extends WorkspaceTabItem {
 
 type AppWorkspaceTab = SettingsWorkspaceTab | TerminalWorkspaceTab | SftpWorkspaceTab | RedisWorkspaceTab | DatabaseWorkspaceTab;
 
+const MIN_CONNECTION_SIDEBAR_WIDTH = 220;
+const MAX_CONNECTION_SIDEBAR_WIDTH = 520;
+
 function mergeConnectionGroups(groups: string[], group?: string) {
   const nextGroup = group?.trim();
   if (!nextGroup || groups.includes(nextGroup)) return groups;
@@ -81,8 +84,11 @@ function AppShellContent({ settingsState }: { settingsState: ReturnType<typeof u
   const [workspaceTabs, setWorkspaceTabs] = useState<AppWorkspaceTab[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
   const [isConnectionPanelVisible, setIsConnectionPanelVisible] = useState(true);
+  const [connectionSidebarWidth, setConnectionSidebarWidth] = useState(settings.layout.connection_sidebar_width);
+  const [isResizingConnectionPanel, setIsResizingConnectionPanel] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const nextWorkspaceTabSerialRef = useRef(1);
+  const connectionResizeRef = useRef({ startX: 0, startWidth: settings.layout.connection_sidebar_width });
   const theme = settings.appearance.theme === "system" ? "dark" : settings.appearance.theme;
   const uiFontSize = settings.appearance.ui_font_size;
   const activeTab = workspaceTabs.find((tab) => tab.id === activeTabId) ?? workspaceTabs[workspaceTabs.length - 1] ?? null;
@@ -94,6 +100,39 @@ function AppShellContent({ settingsState }: { settingsState: ReturnType<typeof u
   ]
     .filter(Boolean)
     .join(" ");
+
+  useEffect(() => {
+    setConnectionSidebarWidth(settings.layout.connection_sidebar_width);
+  }, [settings.layout.connection_sidebar_width]);
+
+  useEffect(() => {
+    if (!isResizingConnectionPanel) return;
+
+    function handleMouseMove(event: MouseEvent) {
+      const nextWidth = connectionResizeRef.current.startWidth + event.clientX - connectionResizeRef.current.startX;
+      setConnectionSidebarWidth(clamp(nextWidth, MIN_CONNECTION_SIDEBAR_WIDTH, MAX_CONNECTION_SIDEBAR_WIDTH));
+    }
+
+    function handleMouseUp() {
+      setIsResizingConnectionPanel(false);
+    }
+
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [isResizingConnectionPanel]);
+
+  function startConnectionPanelResize(event: React.MouseEvent) {
+    event.preventDefault();
+    connectionResizeRef.current = {
+      startX: event.clientX,
+      startWidth: connectionSidebarWidth,
+    };
+    setIsResizingConnectionPanel(true);
+  }
 
   function openTerminalTab(connectionId: string) {
     const tabId = `terminal:${connectionId}`;
@@ -300,7 +339,7 @@ function AppShellContent({ settingsState }: { settingsState: ReturnType<typeof u
         "--ui-font-size": `${uiFontSize}px`,
         "--ui-font-size-small": `${Math.max(10, uiFontSize - 1)}px`,
         "--ui-font-size-large": `${uiFontSize + 2}px`,
-        "--connection-sidebar-width": `${settings.layout.connection_sidebar_width}px`,
+        "--connection-sidebar-width": `${connectionSidebarWidth}px`,
         "--terminal-font-family": settings.appearance.terminal_font_family,
         "--terminal-font-size": `${settings.appearance.terminal_font_size}px`,
       } as CSSProperties}
@@ -349,6 +388,15 @@ function AppShellContent({ settingsState }: { settingsState: ReturnType<typeof u
               }}
             />
           </DockPanel>
+        ) : null}
+        {isConnectionPanelVisible ? (
+          <div
+            role="separator"
+            aria-label="调整连接面板宽度"
+            aria-orientation="vertical"
+            className="panel-resize-handle panel-resize-handle--connection"
+            onMouseDown={startConnectionPanelResize}
+          />
         ) : null}
         <section className="workspace" aria-label={t("app.workspace")}>
           <WorkspaceTabs
@@ -412,4 +460,8 @@ function AppShellContent({ settingsState }: { settingsState: ReturnType<typeof u
       <ContextMenu menu={contextMenu} onClose={() => setContextMenu(null)} />
     </main>
   );
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
 }

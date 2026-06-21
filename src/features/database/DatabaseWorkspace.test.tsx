@@ -480,6 +480,79 @@ describe("DatabaseWorkspace", () => {
     });
   });
 
+  it("resizes the database table list and applies table browser paging after commit", async () => {
+    callBackendMock.mockImplementation((command, payload) => {
+      if (command === "list_database_objects") {
+        const request = (payload as { request: { parent_kind?: string } }).request;
+        if (!request.parent_kind) {
+          return Promise.resolve([{ id: "database:app", name: "app", kind: "database", has_children: true }]);
+        }
+        return Promise.resolve([{ id: "table:app.users", name: "users", kind: "table", has_children: true }]);
+      }
+      if (command === "load_database_table_page") {
+        const request = (payload as { request: { page: number; page_size: number } }).request;
+        return Promise.resolve({
+          columns: [{ name: "id", data_type: "INT" }],
+          rows: [[{ kind: "number", value: String(request.page) }]],
+          total_rows: 1000,
+          page: request.page,
+          page_size: request.page_size,
+          duration_ms: 9,
+        });
+      }
+      return Promise.resolve([]);
+    });
+
+    renderDatabaseWorkspace("app");
+
+    expect(screen.getByLabelText("数据库工作区")).toHaveStyle({
+      "--database-object-tree-width": "220px",
+    });
+
+    const resizeHandle = await screen.findByRole("separator", { name: "调整数据库表列表宽度" });
+    fireEvent.mouseDown(resizeHandle, { clientX: 220 });
+    fireEvent.mouseMove(window, { clientX: 300 });
+    fireEvent.mouseUp(window);
+    expect(screen.getByLabelText("数据库工作区")).toHaveStyle({
+      "--database-object-tree-width": "300px",
+    });
+
+    await userEvent.dblClick(await screen.findByText("users"));
+    await screen.findByLabelText("表数据");
+    expect(screen.getByLabelText("表数据").querySelector(".database-table-browser__table-wrap")).not.toBeNull();
+    callBackendMock.mockClear();
+
+    const pageInput = screen.getByLabelText("页码");
+    await userEvent.clear(pageInput);
+    await userEvent.type(pageInput, "2");
+    expect(callBackendMock).not.toHaveBeenCalledWith("load_database_table_page", expect.anything());
+
+    await userEvent.keyboard("{Enter}");
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("load_database_table_page", {
+        request: expect.objectContaining({
+          page: 2,
+        }),
+      });
+    });
+
+    callBackendMock.mockClear();
+    const pageSizeInput = screen.getByLabelText("每页");
+    await userEvent.clear(pageSizeInput);
+    await userEvent.type(pageSizeInput, "500");
+    expect(callBackendMock).not.toHaveBeenCalledWith("load_database_table_page", expect.anything());
+
+    fireEvent.blur(pageSizeInput);
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("load_database_table_page", {
+        request: expect.objectContaining({
+          page: 1,
+          page_size: 500,
+        }),
+      });
+    });
+  });
+
   it("switches from table browser back to query result after running selected SQL", async () => {
     callBackendMock.mockImplementation((command, payload) => {
       if (command === "list_database_objects") {

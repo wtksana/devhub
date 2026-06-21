@@ -374,17 +374,40 @@ p {
 
 .app-shell__body {
   display: grid;
-  grid-template-columns: var(--connection-sidebar-width, 280px) minmax(0, 1fr);
+  grid-template-columns: var(--connection-sidebar-width, 280px) 1px minmax(0, 1fr);
   min-height: 0;
   overflow: hidden;
 }
 
 .app-shell__body--settings {
-  grid-template-columns: var(--connection-sidebar-width, 280px) minmax(0, 1fr);
+  grid-template-columns: var(--connection-sidebar-width, 280px) 1px minmax(0, 1fr);
 }
 
 .app-shell__body--no-connections {
   grid-template-columns: minmax(0, 1fr);
+}
+
+.panel-resize-handle {
+  position: relative;
+  z-index: 4;
+  min-width: 1px;
+  min-height: 0;
+  background: transparent;
+  cursor: col-resize;
+}
+
+.panel-resize-handle::before {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  width: 7px;
+  content: "";
+}
+
+.panel-resize-handle:hover,
+.panel-resize-handle:active {
+  background: var(--accent);
 }
 
 .dock-panel {
@@ -812,6 +835,7 @@ p {
   align-items: center;
   gap: 7px;
   min-width: 0;
+  overflow: hidden;
   font-size: var(--ui-font-size, 16px);
 }
 
@@ -834,6 +858,14 @@ p {
 .connection-list li > span {
   min-width: 0;
   overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.connection-list__name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -884,7 +916,7 @@ p {
 
 .database-workspace {
   display: grid;
-  grid-template-columns: 260px minmax(0, 1fr);
+  grid-template-columns: var(--database-object-tree-width, 220px) 1px minmax(0, 1fr);
   gap: 0;
   min-width: 0;
   min-height: 0;
@@ -900,7 +932,6 @@ p {
   min-height: 0;
   overflow: hidden;
   padding: 0;
-  border-right: 1px solid var(--border-subtle);
   background: var(--panel);
 }
 
@@ -1265,19 +1296,22 @@ p {
   width: 72px;
 }
 
-.database-table-browser__filter {
-  margin-left: auto;
-}
-
 .database-table-browser__filter input {
-  width: 260px;
+  width: min(260px, 28vw);
+  min-width: 180px;
 }
 
 .database-table-browser__error {
+  grid-row: 2;
   margin: 0;
   padding: 8px 10px;
   color: var(--danger);
   border-bottom: 1px solid var(--border-subtle);
+}
+
+.database-table-browser__table-wrap {
+  grid-row: 3;
+  height: 100%;
 }
 
 .database-table-browser th button {
@@ -1291,6 +1325,11 @@ p {
   background: transparent;
   font: inherit;
   text-align: left;
+}
+
+.database-table-browser th small {
+  color: var(--muted);
+  font-weight: 400;
 }
 
 .settings-sidebar {
@@ -2257,11 +2296,11 @@ p {
 
 @media (max-width: 1180px) {
   .app-shell__body {
-    grid-template-columns: var(--connection-sidebar-width, 240px) minmax(0, 1fr);
+    grid-template-columns: var(--connection-sidebar-width, 240px) 1px minmax(0, 1fr);
   }
 
   .app-shell__body--settings {
-    grid-template-columns: var(--connection-sidebar-width, 240px) minmax(0, 1fr);
+    grid-template-columns: var(--connection-sidebar-width, 240px) 1px minmax(0, 1fr);
   }
 
   .app-shell__body--no-connections {

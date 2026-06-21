@@ -121,6 +121,13 @@ describe("ConnectionList", () => {
     expect(onOpenTerminal).toHaveBeenCalledWith("local");
   });
 
+  it("wraps connection names in a truncatable text element", () => {
+    renderConnectionList({ connections });
+
+    expect(screen.getByText("生产 Web")).toHaveClass("connection-list__name");
+    expect(screen.getByText("本地终端")).toHaveClass("connection-list__name");
+  });
+
   it("opens a modal add SSH connection form and submits a password connection", async () => {
     const onAddConnection = vi.fn();
 

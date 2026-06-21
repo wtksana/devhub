@@ -772,7 +772,7 @@ export function ConnectionList({
         <li onDoubleClick={() => onOpenTerminal(localConnectionId)}>
           <strong>
             <img src={sshConnectionIcon} alt={t("connections.ssh_icon")} />
-            {t("connections.local_terminal")}
+            <span className="connection-list__name">{t("connections.local_terminal")}</span>
           </strong>
           <span>{t("connections.local_shell")}</span>
         </li>
@@ -794,7 +794,7 @@ export function ConnectionList({
                 >
                   <strong>
                     <img src={connectionIcon(connection)} alt={connectionIconAlt(connection)} />
-                    {connection.name}
+                    <span className="connection-list__name">{connection.name}</span>
                   </strong>
                   <span>{connectionSubtitle(connection)}</span>
                 </li>
