@@ -6,8 +6,8 @@ use crate::db::metadata;
 use crate::db::query;
 use crate::db::sql_files::DatabaseSqlFileStore;
 use crate::models::database::{
-    DatabaseQueryResult, DatabaseSqlFile, ExecuteDatabaseQueryRequest, ListDatabaseSqlFilesRequest,
-    SaveDatabaseSqlFileRequest,
+    DatabaseQueryResult, DatabaseSqlFile, DatabaseTablePageResult, ExecuteDatabaseQueryRequest,
+    ListDatabaseSqlFilesRequest, LoadDatabaseTablePageRequest, SaveDatabaseSqlFileRequest,
 };
 use crate::models::database::{DatabaseTreeNode, ListDatabaseObjectsRequest};
 use crate::models::settings::{ConnectionSettings, DatabaseConnectionSettings};
@@ -54,6 +54,16 @@ pub async fn execute_database_query(
 ) -> Result<DatabaseQueryResult, String> {
     let connection = load_database_connection(settings_store.inner(), &request.connection_id)?;
     query::execute_database_query(database_manager.inner(), &connection, &request).await
+}
+
+#[tauri::command]
+pub async fn load_database_table_page(
+    settings_store: State<'_, SettingsStore>,
+    database_manager: State<'_, DatabaseConnectionManager>,
+    request: LoadDatabaseTablePageRequest,
+) -> Result<DatabaseTablePageResult, String> {
+    let connection = load_database_connection(settings_store.inner(), &request.connection_id)?;
+    query::load_database_table_page(database_manager.inner(), &connection, &request).await
 }
 
 #[tauri::command]

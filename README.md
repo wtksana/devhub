@@ -150,7 +150,7 @@ Redis 当前实现第一批基础能力：
 - SQL 编辑器支持收起，便于把更多空间留给查询结果。
 - 查询结果表格显示列名、数据类型、NULL、布尔值、耗时和影响行数。
 - `INSERT`、`UPDATE`、`DELETE`、`DROP`、`TRUNCATE`、`ALTER`、`CREATE`、`REPLACE`、`GRANT`、`REVOKE` 等危险 SQL 执行前会弹出项目内确认框。
-- 双击表或视图会执行 `SELECT * FROM <table> LIMIT 200`，不会覆盖当前 SQL 文件内容。
+- 双击表或视图会打开只读表数据浏览模式，支持分页、单列排序和简单 SQL 条件筛选，不会覆盖当前 SQL 文件内容。
 - MySQL 查询结果会按列类型优先解析数值，避免 `count(1)` 等 `BIGINT` 结果显示为布尔值。
 
 当前不支持表数据编辑、建表改表、导入导出、执行计划、SSH tunnel 和 SSL 证书配置。

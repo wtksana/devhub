@@ -356,7 +356,7 @@ describe("DatabaseWorkspace", () => {
     expect(await screen.findByText("影响 1 行，耗时 2 ms")).toBeInTheDocument();
   });
 
-  it("loads table data when double clicking a table node without replacing the SQL editor content", async () => {
+  it("opens a table browser when double clicking a table without replacing SQL content", async () => {
     callBackendMock.mockImplementation((command, payload) => {
       if (command === "list_database_objects") {
         const request = (payload as { request: { parent_kind?: string; database?: string } }).request;
@@ -370,13 +370,14 @@ describe("DatabaseWorkspace", () => {
       if (command === "list_database_sql_files") {
         return Promise.resolve([{ name: "default", content: "select 1" }]);
       }
-      if (command === "execute_database_query") {
+      if (command === "load_database_table_page") {
         return Promise.resolve({
           columns: [{ name: "id", data_type: "INT" }],
           rows: [[{ kind: "number", value: "1" }]],
-          affected_rows: 0,
-          duration_ms: 6,
-          limited: false,
+          total_rows: 501,
+          page: 1,
+          page_size: 200,
+          duration_ms: 9,
         });
       }
       return Promise.resolve([]);
@@ -388,17 +389,138 @@ describe("DatabaseWorkspace", () => {
     await userEvent.dblClick(await screen.findByText("users"));
 
     expect(screen.getByLabelText("SQL 编辑器")).toHaveValue("select 1");
+    expect(await screen.findByLabelText("表数据")).toBeInTheDocument();
+    expect(screen.getByText("表 users")).toBeInTheDocument();
+    expect(screen.getByText("共 501 条")).toBeInTheDocument();
     await waitFor(() => {
-      expect(callBackendMock).toHaveBeenCalledWith("execute_database_query", {
+      expect(callBackendMock).toHaveBeenCalledWith("load_database_table_page", {
         request: {
           connection_id: "mysql-dev",
           database: "app",
-          sql: "SELECT * FROM `users` LIMIT 200",
-          limit: 200,
+          table: "users",
+          page: 1,
+          page_size: 200,
+          sort_column: null,
+          sort_direction: null,
+          filter: null,
         },
       });
     });
-    expect(await screen.findByText("1 行，耗时 6 ms")).toBeInTheDocument();
+    expect(screen.getByText("1")).toBeInTheDocument();
+  });
+
+  it("updates table browser paging, sorting and filtering", async () => {
+    callBackendMock.mockImplementation((command, payload) => {
+      if (command === "list_database_objects") {
+        const request = (payload as { request: { parent_kind?: string } }).request;
+        if (!request.parent_kind) {
+          return Promise.resolve([{ id: "database:app", name: "app", kind: "database", has_children: true }]);
+        }
+        return Promise.resolve([{ id: "table:app.users", name: "users", kind: "table", has_children: true }]);
+      }
+      if (command === "load_database_table_page") {
+        const request = (payload as { request: { page: number } }).request;
+        return Promise.resolve({
+          columns: [
+            { name: "id", data_type: "INT" },
+            { name: "name", data_type: "VARCHAR" },
+          ],
+          rows: [[{ kind: "number", value: String(request.page) }, { kind: "text", value: "Alice" }]],
+          total_rows: 501,
+          page: request.page,
+          page_size: 200,
+          duration_ms: 9,
+        });
+      }
+      return Promise.resolve([]);
+    });
+
+    renderDatabaseWorkspace("app");
+
+    await userEvent.dblClick(await screen.findByText("users"));
+    await screen.findByLabelText("表数据");
+
+    await userEvent.click(screen.getByRole("button", { name: "下一页" }));
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("load_database_table_page", {
+        request: expect.objectContaining({
+          page: 2,
+        }),
+      });
+    });
+
+    await userEvent.click(screen.getByRole("button", { name: "id INT" }));
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("load_database_table_page", {
+        request: expect.objectContaining({
+          page: 1,
+          sort_column: "id",
+          sort_direction: "asc",
+        }),
+      });
+    });
+
+    await userEvent.click(screen.getByRole("button", { name: "id INT ↑" }));
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("load_database_table_page", {
+        request: expect.objectContaining({
+          sort_column: "id",
+          sort_direction: "desc",
+        }),
+      });
+    });
+
+    await userEvent.type(screen.getByLabelText("筛选"), "name = 'Alice'{Enter}");
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("load_database_table_page", {
+        request: expect.objectContaining({
+          filter: "name = 'Alice'",
+        }),
+      });
+    });
+  });
+
+  it("switches from table browser back to query result after running selected SQL", async () => {
+    callBackendMock.mockImplementation((command, payload) => {
+      if (command === "list_database_objects") {
+        const request = (payload as { request: { parent_kind?: string } }).request;
+        if (!request.parent_kind) {
+          return Promise.resolve([{ id: "database:app", name: "app", kind: "database", has_children: true }]);
+        }
+        return Promise.resolve([{ id: "table:app.users", name: "users", kind: "table", has_children: true }]);
+      }
+      if (command === "load_database_table_page") {
+        return Promise.resolve({
+          columns: [{ name: "id", data_type: "INT" }],
+          rows: [[{ kind: "number", value: "1" }]],
+          total_rows: 1,
+          page: 1,
+          page_size: 200,
+          duration_ms: 9,
+        });
+      }
+      if (command === "execute_database_query") {
+        return Promise.resolve({
+          columns: [{ name: "count(1)", data_type: "BIGINT" }],
+          rows: [[{ kind: "number", value: "1" }]],
+          affected_rows: 0,
+          duration_ms: 4,
+          limited: false,
+        });
+      }
+      return Promise.resolve([]);
+    });
+
+    renderDatabaseWorkspace("app");
+
+    await userEvent.dblClick(await screen.findByText("users"));
+    expect(await screen.findByLabelText("表数据")).toBeInTheDocument();
+
+    setSelectedSqlText("select count(1) from users");
+    await executeSelectedSqlFromContextMenu(screen.getByLabelText("SQL 编辑器"));
+
+    expect(await screen.findByText("1 行，耗时 4 ms")).toBeInTheDocument();
+    expect(screen.queryByLabelText("表数据")).not.toBeInTheDocument();
   });
 
   it("loads SQL files for the selected database and switches editor content", async () => {

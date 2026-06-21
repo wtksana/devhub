@@ -35,3 +35,22 @@ export interface DatabaseSqlFile {
   name: string;
   content: string;
 }
+
+export type DatabaseSortDirection = "asc" | "desc";
+
+export interface DatabaseTablePageResult {
+  columns: Array<{
+    name: string;
+    data_type: string;
+  }>;
+  rows: DatabaseCellValue[][];
+  total_rows: number;
+  page: number;
+  page_size: number;
+  duration_ms: number;
+}
+
+export interface DatabaseTableBrowserTarget {
+  database: string;
+  table: string;
+}

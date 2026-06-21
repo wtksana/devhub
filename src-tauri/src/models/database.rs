@@ -40,6 +40,18 @@ pub struct SaveDatabaseSqlFileRequest {
     pub content: String,
 }
 
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct LoadDatabaseTablePageRequest {
+    pub connection_id: String,
+    pub database: String,
+    pub table: String,
+    pub page: Option<u32>,
+    pub page_size: Option<u32>,
+    pub sort_column: Option<String>,
+    pub sort_direction: Option<String>,
+    pub filter: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct DatabaseSqlFile {
     pub name: String,
@@ -68,4 +80,14 @@ pub struct DatabaseQueryResult {
     pub affected_rows: u64,
     pub duration_ms: u128,
     pub limited: bool,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct DatabaseTablePageResult {
+    pub columns: Vec<DatabaseResultColumn>,
+    pub rows: Vec<Vec<DatabaseCellValue>>,
+    pub total_rows: u64,
+    pub page: u32,
+    pub page_size: u32,
+    pub duration_ms: u128,
 }

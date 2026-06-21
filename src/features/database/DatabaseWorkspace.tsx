@@ -2,8 +2,16 @@ import { useEffect, useRef, useState } from "react";
 import Editor from "@monaco-editor/react";
 import type { OnMount } from "@monaco-editor/react";
 import { callBackend } from "../../lib/tauri";
-import type { DatabaseCellValue, DatabaseQueryResult, DatabaseSqlFile, DatabaseTreeNode, DatabaseWorkspaceProps } from "./databaseTypes";
+import type {
+  DatabaseCellValue,
+  DatabaseQueryResult,
+  DatabaseSqlFile,
+  DatabaseTableBrowserTarget,
+  DatabaseTreeNode,
+  DatabaseWorkspaceProps,
+} from "./databaseTypes";
 import { DatabaseObjectTree } from "./DatabaseObjectTree";
+import { DatabaseTableBrowser } from "./DatabaseTableBrowser";
 import { useI18n } from "../../i18n/useI18n";
 import { ContextMenu } from "../../app/ContextMenu";
 import type { ContextMenuState } from "../../app/ContextMenu";
@@ -32,6 +40,7 @@ export function DatabaseWorkspace({ connectionId, initialDatabase, theme, fontFa
   const [isExecuting, setIsExecuting] = useState(false);
   const [dangerousSqlToConfirm, setDangerousSqlToConfirm] = useState<string | null>(null);
   const [currentDatabase, setCurrentDatabase] = useState(initialDatabase?.trim() ?? "");
+  const [tableBrowserTarget, setTableBrowserTarget] = useState<DatabaseTableBrowserTarget | null>(null);
   const [isEditorOpen, setIsEditorOpen] = useState(true);
   const [sqlFiles, setSqlFiles] = useState<DatabaseSqlFile[]>([]);
   const [selectedSqlFileName, setSelectedSqlFileName] = useState("default");
@@ -133,6 +142,7 @@ export function DatabaseWorkspace({ connectionId, initialDatabase, theme, fontFa
         },
       });
       setResult(nextResult);
+      setTableBrowserTarget(null);
     } catch (caught) {
       setResult(null);
       setError(caught instanceof Error ? caught.message : String(caught));
@@ -142,8 +152,10 @@ export function DatabaseWorkspace({ connectionId, initialDatabase, theme, fontFa
   }
 
   function openTable(node: DatabaseTreeNode) {
-    const tableSql = `SELECT * FROM ${quoteTableName(connectionId, node.name)} LIMIT ${normalizeLimit(defaultLimit)}`;
-    void executeSql(tableSql);
+    if (!currentDatabase) return;
+    setResult(null);
+    setError(null);
+    setTableBrowserTarget({ database: currentDatabase, table: node.name });
   }
 
   function switchSqlFile(nextName: string) {
@@ -312,7 +324,9 @@ export function DatabaseWorkspace({ connectionId, initialDatabase, theme, fontFa
           {error ? <p className="database-query-panel__error" role="alert">{error}</p> : null}
         </div>
         <div className="database-workspace__content">
-          {result ? <DatabaseResultView result={result} /> : (
+          {tableBrowserTarget ? (
+            <DatabaseTableBrowser connectionId={connectionId} target={tableBrowserTarget} />
+          ) : result ? <DatabaseResultView result={result} /> : (
             <div className="database-workspace__empty" aria-label={t("database.query_result")}>{t("database.empty_query_result")}</div>
           )}
         </div>
@@ -468,13 +482,6 @@ function firstSqlKeyword(sql: string) {
     return remaining.split(/[^a-zA-Z]+/).find(Boolean) ?? null;
   }
   return null;
-}
-
-function quoteTableName(connectionId: string, tableName: string) {
-  if (connectionId.startsWith("postgresql") || connectionId.startsWith("postgres")) {
-    return `"${tableName.split("\"").join("\"\"")}"`;
-  }
-  return `\`${tableName.split("`").join("``")}\``;
 }
 
 function sqlFileKey(connectionId: string, database: string, name: string) {
