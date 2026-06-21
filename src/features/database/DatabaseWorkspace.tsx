@@ -1,11 +1,16 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import Editor from "@monaco-editor/react";
+import type { OnMount } from "@monaco-editor/react";
 import { callBackend } from "../../lib/tauri";
-import type { DatabaseCellValue, DatabaseQueryResult, DatabaseTreeNode, DatabaseWorkspaceProps } from "./databaseTypes";
+import type { DatabaseCellValue, DatabaseQueryResult, DatabaseSqlFile, DatabaseTreeNode, DatabaseWorkspaceProps } from "./databaseTypes";
 import { DatabaseObjectTree } from "./DatabaseObjectTree";
-import { QueryHistoryPanel } from "./QueryHistoryPanel";
 import { useI18n } from "../../i18n/useI18n";
+import { ContextMenu } from "../../app/ContextMenu";
+import type { ContextMenuState } from "../../app/ContextMenu";
+import { readClipboardText } from "../../lib/clipboard";
 
 const DEFAULT_SQL_LIMIT = 200;
+const CREATE_SQL_FILE_VALUE = "__create_sql_file__";
 const DANGEROUS_SQL_KEYWORDS = new Set([
   "insert",
   "update",
@@ -19,17 +24,90 @@ const DANGEROUS_SQL_KEYWORDS = new Set([
   "revoke",
 ]);
 
-export function DatabaseWorkspace({ connectionId }: DatabaseWorkspaceProps) {
+export function DatabaseWorkspace({ connectionId, initialDatabase, theme, fontFamily, fontSize }: DatabaseWorkspaceProps) {
   const { t } = useI18n();
   const [sql, setSql] = useState("");
   const [result, setResult] = useState<DatabaseQueryResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isExecuting, setIsExecuting] = useState(false);
   const [dangerousSqlToConfirm, setDangerousSqlToConfirm] = useState<string | null>(null);
-  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [currentDatabase, setCurrentDatabase] = useState(initialDatabase?.trim() ?? "");
+  const [isEditorOpen, setIsEditorOpen] = useState(true);
+  const [sqlFiles, setSqlFiles] = useState<DatabaseSqlFile[]>([]);
+  const [selectedSqlFileName, setSelectedSqlFileName] = useState("default");
+  const [isSqlFileLoaded, setIsSqlFileLoaded] = useState(false);
+  const [defaultLimit, setDefaultLimit] = useState(String(DEFAULT_SQL_LIMIT));
+  const [newSqlFileName, setNewSqlFileName] = useState("");
+  const [isCreateSqlFileDialogOpen, setIsCreateSqlFileDialogOpen] = useState(false);
+  const [editorContextMenu, setEditorContextMenu] = useState<ContextMenuState | null>(null);
+  const latestSqlFileKeyRef = useRef("");
+  const monacoEditorRef = useRef<Parameters<OnMount>[0] | null>(null);
 
-  async function requestExecuteSql() {
-    const trimmedSql = sql.trim();
+  useEffect(() => {
+    setCurrentDatabase(initialDatabase?.trim() ?? "");
+  }, [connectionId, initialDatabase]);
+
+  useEffect(() => {
+    let isActive = true;
+    setIsSqlFileLoaded(false);
+    if (!currentDatabase) {
+      setSqlFiles([]);
+      setSelectedSqlFileName("default");
+      setSql("");
+      return;
+    }
+
+    callBackend<DatabaseSqlFile[]>("list_database_sql_files", {
+      request: {
+        connection_id: connectionId,
+        database: currentDatabase,
+      },
+    })
+      .then((files) => {
+        if (!isActive) return;
+        const nextFiles = sortSqlFiles(files.length > 0 ? files : [{ name: "default", content: "" }]);
+        const defaultFile = nextFiles.find((file) => file.name === "default") ?? nextFiles[0];
+        setSqlFiles(nextFiles);
+        setSelectedSqlFileName(defaultFile.name);
+        setSql(defaultFile.content);
+        latestSqlFileKeyRef.current = sqlFileKey(connectionId, currentDatabase, defaultFile.name);
+        setIsSqlFileLoaded(true);
+      })
+      .catch((caught) => {
+        if (!isActive) return;
+        console.error("[devhub] load database SQL files failed", caught);
+        setSqlFiles([{ name: "default", content: "" }]);
+        setSelectedSqlFileName("default");
+        setSql("");
+        latestSqlFileKeyRef.current = sqlFileKey(connectionId, currentDatabase, "default");
+        setIsSqlFileLoaded(true);
+      });
+
+    return () => {
+      isActive = false;
+    };
+  }, [connectionId, currentDatabase]);
+
+  useEffect(() => {
+    if (!isSqlFileLoaded || !currentDatabase || !selectedSqlFileName) return;
+    const key = sqlFileKey(connectionId, currentDatabase, selectedSqlFileName);
+    latestSqlFileKeyRef.current = key;
+    const timer = window.setTimeout(() => {
+      if (latestSqlFileKeyRef.current !== key) return;
+      void callBackend("save_database_sql_file", {
+        request: {
+          connection_id: connectionId,
+          database: currentDatabase,
+          name: selectedSqlFileName,
+          content: sql,
+        },
+      });
+    }, 500);
+    return () => window.clearTimeout(timer);
+  }, [connectionId, currentDatabase, isSqlFileLoaded, selectedSqlFileName, sql]);
+
+  async function requestExecuteSql(sqlToExecute: string) {
+    const trimmedSql = sqlToExecute.trim();
     if (!trimmedSql) {
       setError(t("database.sql_required"));
       setResult(null);
@@ -49,9 +127,9 @@ export function DatabaseWorkspace({ connectionId }: DatabaseWorkspaceProps) {
       const nextResult = await callBackend<DatabaseQueryResult>("execute_database_query", {
         request: {
           connection_id: connectionId,
-          database: null,
+          database: currentDatabase || null,
           sql: sqlToExecute,
-          limit: DEFAULT_SQL_LIMIT,
+          limit: normalizeLimit(defaultLimit),
         },
       });
       setResult(nextResult);
@@ -64,64 +142,196 @@ export function DatabaseWorkspace({ connectionId }: DatabaseWorkspaceProps) {
   }
 
   function openTable(node: DatabaseTreeNode) {
-    const tableSql = `SELECT * FROM ${quoteTableName(connectionId, node.name)} LIMIT ${DEFAULT_SQL_LIMIT}`;
-    setSql(tableSql);
+    const tableSql = `SELECT * FROM ${quoteTableName(connectionId, node.name)} LIMIT ${normalizeLimit(defaultLimit)}`;
     void executeSql(tableSql);
+  }
+
+  function switchSqlFile(nextName: string) {
+    if (nextName === CREATE_SQL_FILE_VALUE) {
+      setNewSqlFileName("");
+      setIsCreateSqlFileDialogOpen(true);
+      return;
+    }
+    const nextFile = sqlFiles.find((file) => file.name === nextName);
+    if (!nextFile) return;
+    setSelectedSqlFileName(nextFile.name);
+    setSql(nextFile.content);
+  }
+
+  function getSelectedSql() {
+    const editor = monacoEditorRef.current;
+    if (!editor) return "";
+    const selection = editor.getSelection();
+    const model = editor.getModel();
+    if (!selection || selection.isEmpty() || !model) return "";
+    return model.getValueInRange(selection);
+  }
+
+  function handleEditorMount(editor: Parameters<OnMount>[0], monaco: Parameters<OnMount>[1]) {
+    monacoEditorRef.current = editor;
+    void monaco;
+  }
+
+  function openEditorContextMenu(event: React.MouseEvent) {
+    event.preventDefault();
+    const selectedSql = getSelectedSql();
+    setEditorContextMenu({
+      x: event.clientX,
+      y: event.clientY,
+      items: [
+        {
+          label: t("database.execute_selected_sql"),
+          disabled: !selectedSql.trim(),
+          onSelect: () => void requestExecuteSql(selectedSql),
+        },
+        { type: "separator" },
+        {
+          label: "Cut",
+          onSelect: () => triggerEditorCommand("editor.action.clipboardCutAction"),
+        },
+        {
+          label: "Copy",
+          onSelect: () => triggerEditorCommand("editor.action.clipboardCopyAction"),
+        },
+        {
+          label: "Paste",
+          onSelect: () => void pasteClipboardText(),
+        },
+      ],
+    });
+  }
+
+  function triggerEditorCommand(commandId: string) {
+    const editor = monacoEditorRef.current;
+    if (!editor) return;
+    editor.focus();
+    editor.trigger("devhub", commandId, null);
+  }
+
+  async function pasteClipboardText() {
+    const editor = monacoEditorRef.current;
+    if (!editor) return;
+    editor.focus();
+    const text = await readClipboardText();
+    if (!text) return;
+    const selection = editor.getSelection();
+    if (!selection) return;
+    editor.pushUndoStop();
+    editor.executeEdits("devhub", [{ range: selection, text, forceMoveMarkers: true }]);
+    editor.pushUndoStop();
+  }
+
+  async function createSqlFile() {
+    const name = newSqlFileName.trim();
+    if (!name || !currentDatabase) return;
+    await callBackend("save_database_sql_file", {
+      request: {
+        connection_id: connectionId,
+        database: currentDatabase,
+        name,
+        content: "",
+      },
+    });
+    const nextFiles = sortSqlFiles([...sqlFiles.filter((file) => file.name !== name), { name, content: "" }]);
+    setSqlFiles(nextFiles);
+    setSelectedSqlFileName(name);
+    setSql("");
+    setIsCreateSqlFileDialogOpen(false);
+  }
+
+  function closeCreateSqlFileDialog() {
+    setIsCreateSqlFileDialogOpen(false);
+    setNewSqlFileName("");
   }
 
   return (
     <section className="database-workspace" aria-label={t("database.workspace")}>
-      <DatabaseObjectTree connectionId={connectionId} onOpenTable={openTable} />
-      <div className="database-workspace__main">
+      <DatabaseObjectTree
+        connectionId={connectionId}
+        selectedDatabase={currentDatabase}
+        onDatabaseChange={setCurrentDatabase}
+        onOpenTable={openTable}
+      />
+      <div className="database-workspace__main" data-editor-open={isEditorOpen}>
         <div className="database-query-panel">
-          <label className="database-query-panel__editor">
+          <div className="database-query-panel__toolbar">
             <span>{t("database.sql_editor")}</span>
-            <textarea
-              aria-label={t("database.sql_editor")}
-              spellCheck={false}
-              value={sql}
-              placeholder={t("database.sql_placeholder")}
-              onChange={(event) => setSql(event.target.value)}
-            />
-          </label>
-          <div className="database-query-panel__actions">
-            <button type="button" disabled={isExecuting} onClick={() => void requestExecuteSql()}>
-              {isExecuting ? t("database.executing") : t("database.execute_sql")}
+            <button type="button" onClick={() => setIsEditorOpen((current) => !current)}>
+              {isEditorOpen ? t("database.collapse_editor") : t("database.open_editor")}
             </button>
-            <button type="button" onClick={() => setIsHistoryOpen((current) => !current)}>
-              {t("database.query_history")}
-            </button>
-            <span>{t("database.default_limit", { limit: DEFAULT_SQL_LIMIT })}</span>
-            <span>{connectionId}</span>
+            <label>
+              <span>{t("database.sql_file")}</span>
+              <select
+                aria-label={t("database.sql_file")}
+                value={selectedSqlFileName}
+                disabled={sqlFiles.length === 0}
+                onChange={(event) => switchSqlFile(event.target.value)}
+              >
+                <option value={CREATE_SQL_FILE_VALUE}>{t("database.create_sql_file")}</option>
+                {sqlFiles.map((file) => (
+                  <option key={file.name} value={file.name}>{file.name}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              <span>{t("database.default_limit_label")}</span>
+              <input
+                aria-label={t("database.default_limit_label")}
+                type="number"
+                min="1"
+                value={defaultLimit}
+                onChange={(event) => setDefaultLimit(event.target.value)}
+              />
+            </label>
+            <span className="database-query-panel__monaco">{t("database.monaco_support")}</span>
           </div>
+          {isEditorOpen ? (
+            <div className="database-query-panel__editor" onContextMenu={openEditorContextMenu}>
+              <Editor
+                height="100%"
+                defaultLanguage="sql"
+                value={sql}
+                theme={theme === "dark" ? "vs-dark" : "light"}
+                wrapperProps={{ "aria-label": t("database.sql_editor") }}
+                onMount={handleEditorMount}
+                onChange={(value) => setSql(value ?? "")}
+                options={{
+                  automaticLayout: true,
+                  contextmenu: false,
+                  fontFamily,
+                  fontSize,
+                  lineNumbers: "on",
+                  minimap: { enabled: false },
+                  scrollBeyondLastLine: false,
+                  tabSize: 2,
+                  wordWrap: "on",
+                }}
+              />
+            </div>
+          ) : null}
           {error ? <p className="database-query-panel__error" role="alert">{error}</p> : null}
         </div>
-        <div className="database-workspace__content" data-history-open={isHistoryOpen}>
+        <div className="database-workspace__content">
           {result ? <DatabaseResultView result={result} /> : (
-            <div className="database-workspace__empty">{t("database.empty_query_result")}</div>
+            <div className="database-workspace__empty" aria-label={t("database.query_result")}>{t("database.empty_query_result")}</div>
           )}
-          {isHistoryOpen ? (
-            <QueryHistoryPanel
-              connectionId={connectionId}
-              onSelectSql={(historySql) => setSql(historySql)}
-            />
-          ) : null}
         </div>
       </div>
+      <ContextMenu menu={editorContextMenu} onClose={() => setEditorContextMenu(null)} />
       {dangerousSqlToConfirm ? (
         <div className="connection-dialog__backdrop">
           <div
-            className="connection-dialog sftp-dialog"
+            className="connection-dialog database-dialog"
             role="dialog"
             aria-modal="true"
             aria-label={t("database.confirm_dangerous_sql")}
           >
-            <header className="connection-dialog__header">
+            <header className="database-dialog__header">
               <h2>{t("database.confirm_dangerous_sql")}</h2>
             </header>
             <p>{t("database.dangerous_sql_message")}</p>
             <pre className="database-dangerous-sql__preview">{dangerousSqlToConfirm}</pre>
-            <div className="sftp-dialog__actions">
+            <div className="database-dialog__actions">
               <button type="button" onClick={() => setDangerousSqlToConfirm(null)}>
                 {t("database.cancel")}
               </button>
@@ -136,6 +346,40 @@ export function DatabaseWorkspace({ connectionId }: DatabaseWorkspaceProps) {
                 }}
               >
                 {t("database.confirm_execute")}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {isCreateSqlFileDialogOpen ? (
+        <div className="connection-dialog__backdrop">
+          <div
+            className="connection-dialog database-dialog database-sql-file-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-label={t("database.create_sql_file")}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") closeCreateSqlFileDialog();
+            }}
+          >
+            <header className="database-dialog__header">
+              <h2>{t("database.create_sql_file")}</h2>
+            </header>
+            <label className="database-create-sql-file__field">
+              <span>{t("database.sql_file_name")}</span>
+              <input
+                aria-label={t("database.sql_file_name")}
+                autoFocus
+                value={newSqlFileName}
+                onChange={(event) => setNewSqlFileName(event.target.value)}
+              />
+            </label>
+            <div className="database-dialog__actions">
+              <button type="button" onClick={closeCreateSqlFileDialog}>
+                {t("database.cancel")}
+              </button>
+              <button type="button" disabled={!newSqlFileName.trim()} onClick={() => void createSqlFile()}>
+                {t("database.confirm")}
               </button>
             </div>
           </div>
@@ -231,4 +475,22 @@ function quoteTableName(connectionId: string, tableName: string) {
     return `"${tableName.split("\"").join("\"\"")}"`;
   }
   return `\`${tableName.split("`").join("``")}\``;
+}
+
+function sqlFileKey(connectionId: string, database: string, name: string) {
+  return `${connectionId}\n${database}\n${name}`;
+}
+
+function sortSqlFiles(files: DatabaseSqlFile[]) {
+  const defaultFile = files.find((file) => file.name === "default") ?? { name: "default", content: "" };
+  const otherFiles = files
+    .filter((file) => file.name !== "default")
+    .sort((left, right) => left.name.localeCompare(right.name));
+  return [defaultFile, ...otherFiles];
+}
+
+function normalizeLimit(value: string) {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed < 1) return DEFAULT_SQL_LIMIT;
+  return parsed;
 }

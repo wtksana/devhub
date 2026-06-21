@@ -1,16 +1,14 @@
 import { useEffect, useState } from "react";
+import { Table2 } from "lucide-react";
 import { useI18n } from "../../i18n/useI18n";
 import { callBackend } from "../../lib/tauri";
 import type { DatabaseTreeNode } from "./databaseTypes";
 
 interface DatabaseObjectTreeProps {
   connectionId: string;
+  selectedDatabase: string;
+  onDatabaseChange: (database: string) => void;
   onOpenTable?: (node: DatabaseTreeNode) => void;
-}
-
-interface DatabaseTreeRow {
-  node: DatabaseTreeNode;
-  depth: number;
 }
 
 function childRequest(connectionId: string, node?: DatabaseTreeNode) {
@@ -49,39 +47,44 @@ function childRequest(connectionId: string, node?: DatabaseTreeNode) {
   };
 }
 
-function flattenRows(nodes: DatabaseTreeNode[], childrenByNode: Map<string, DatabaseTreeNode[]>, expandedNodes: Set<string>) {
-  const rows: DatabaseTreeRow[] = [];
-  function append(node: DatabaseTreeNode, depth: number) {
-    rows.push({ node, depth });
-    if (!expandedNodes.has(node.id)) return;
-    for (const child of childrenByNode.get(node.id) ?? []) {
-      append(child, depth + 1);
-    }
-  }
-  for (const node of nodes) append(node, 0);
-  return rows;
-}
-
-export function DatabaseObjectTree({ connectionId, onOpenTable }: DatabaseObjectTreeProps) {
+export function DatabaseObjectTree({ connectionId, selectedDatabase, onDatabaseChange, onOpenTable }: DatabaseObjectTreeProps) {
   const { t } = useI18n();
-  const [rootNodes, setRootNodes] = useState<DatabaseTreeNode[]>([]);
-  const [childrenByNode, setChildrenByNode] = useState<Map<string, DatabaseTreeNode[]>>(new Map());
-  const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
+  const [databases, setDatabases] = useState<DatabaseTreeNode[]>([]);
+  const [tables, setTables] = useState<DatabaseTreeNode[]>([]);
+  const [tableFilter, setTableFilter] = useState("");
   const [error, setError] = useState("");
 
   useEffect(() => {
     let canceled = false;
     setError("");
-    setRootNodes([]);
-    setChildrenByNode(new Map());
-    setExpandedNodes(new Set());
+    setDatabases([]);
+    setTables([]);
+    setTableFilter("");
     void loadNodes().then((nodes) => {
-      if (!canceled) setRootNodes(nodes);
+      if (canceled) return;
+      setDatabases(nodes);
+      if (!selectedDatabase && nodes[0]?.name) {
+        onDatabaseChange(nodes[0].name);
+      }
     });
     return () => {
       canceled = true;
     };
   }, [connectionId]);
+
+  useEffect(() => {
+    let canceled = false;
+    setTables([]);
+    if (!selectedDatabase) return () => {
+      canceled = true;
+    };
+    void loadNodes({ id: `database:${selectedDatabase}`, name: selectedDatabase, kind: "database", has_children: true }).then((nodes) => {
+      if (!canceled) setTables(nodes);
+    });
+    return () => {
+      canceled = true;
+    };
+  }, [connectionId, selectedDatabase]);
 
   async function loadNodes(parent?: DatabaseTreeNode) {
     try {
@@ -96,43 +99,46 @@ export function DatabaseObjectTree({ connectionId, onOpenTable }: DatabaseObject
     }
   }
 
-  async function toggleNode(node: DatabaseTreeNode) {
-    if (!node.has_children) return;
-    if (expandedNodes.has(node.id)) {
-      setExpandedNodes((current) => {
-        const next = new Set(current);
-        next.delete(node.id);
-        return next;
-      });
-      return;
-    }
-
-    if (!childrenByNode.has(node.id)) {
-      const children = await loadNodes(node);
-      setChildrenByNode((current) => {
-        const next = new Map(current);
-        next.set(node.id, children);
-        return next;
-      });
-    }
-    setExpandedNodes((current) => new Set(current).add(node.id));
-  }
-
-  const rows = flattenRows(rootNodes, childrenByNode, expandedNodes);
+  const normalizedFilter = normalizeTableFilterText(tableFilter);
+  const visibleTables = normalizedFilter
+    ? tables.filter((table) => normalizeTableFilterText(table.name).includes(normalizedFilter))
+    : tables;
 
   return (
     <aside className="database-object-tree" aria-label={t("database.object_tree")}>
+      <header className="database-object-tree__header">
+        <label>
+          <span>{t("database.current_database")}</span>
+          <select
+            aria-label={t("database.current_database")}
+            value={selectedDatabase}
+            disabled={databases.length === 0}
+            onChange={(event) => onDatabaseChange(event.target.value)}
+          >
+            {!selectedDatabase ? <option value="">{t("database.no_database")}</option> : null}
+            {selectedDatabase && !databases.some((database) => database.name === selectedDatabase) ? (
+              <option value={selectedDatabase}>{selectedDatabase}</option>
+            ) : null}
+            {databases.map((database) => (
+              <option key={database.id} value={database.name}>{database.name}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          <span>{t("database.table_filter")}</span>
+          <input
+            aria-label={t("database.table_filter")}
+            value={tableFilter}
+            placeholder={t("database.table_filter_placeholder")}
+            onChange={(event) => setTableFilter(event.target.value)}
+          />
+        </label>
+      </header>
       {error ? <p role="alert">{error}</p> : null}
-      <ul>
-        {rows.map(({ node, depth }) => (
-          <li key={node.id} style={{ paddingLeft: `${depth * 16}px` }}>
-            {node.has_children ? (
-              <button type="button" onClick={() => void toggleNode(node)}>
-                {expandedNodes.has(node.id) ? t("database.collapse_node", { name: node.name }) : t("database.expand_node", { name: node.name })}
-              </button>
-            ) : (
-              <span className="database-object-tree__leaf" />
-            )}
+      <ul aria-label={t("database.table_list")}>
+        {visibleTables.map((node) => (
+          <li key={node.id}>
+            <Table2 aria-hidden="true" className="database-object-tree__icon" size={15} strokeWidth={1.75} />
             <span onDoubleClick={() => {
               if (node.kind === "table" || node.kind === "view") {
                 onOpenTable?.(node);
@@ -140,10 +146,16 @@ export function DatabaseObjectTree({ connectionId, onOpenTable }: DatabaseObject
             }}>
               {node.name}
             </span>
-            {node.detail ? <small>{node.detail}</small> : null}
           </li>
         ))}
+        {selectedDatabase && visibleTables.length === 0 && !error ? (
+          <li className="database-object-tree__empty">{t("database.no_tables")}</li>
+        ) : null}
       </ul>
     </aside>
   );
+}
+
+function normalizeTableFilterText(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]/g, "");
 }

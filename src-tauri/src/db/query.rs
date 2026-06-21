@@ -172,7 +172,7 @@ fn rows_to_mysql_result(
         .map(|row| {
             row.columns()
                 .iter()
-                .map(|column| mysql_cell_value(row, column.name()))
+                .map(|column| mysql_cell_value(row, column.name(), column.type_info().name()))
                 .collect()
         })
         .collect::<Vec<_>>();
@@ -222,31 +222,76 @@ fn rows_to_postgresql_result(
     }
 }
 
-fn mysql_cell_value(row: &MySqlRow, column_name: &str) -> DatabaseCellValue {
+fn mysql_cell_value(row: &MySqlRow, column_name: &str, type_name: &str) -> DatabaseCellValue {
     if let Ok(value_ref) = row.try_get_raw(column_name) {
         if value_ref.is_null() {
             return DatabaseCellValue::Null;
         }
     }
-    if let Ok(value) = row.try_get::<bool, _>(column_name) {
-        return DatabaseCellValue::Bool { value };
+
+    if mysql_prefers_bool_decode(type_name) {
+        if let Ok(value) = row.try_get::<bool, _>(column_name) {
+            return DatabaseCellValue::Bool { value };
+        }
     }
-    if let Ok(value) = row.try_get::<i64, _>(column_name) {
-        return DatabaseCellValue::Number {
-            value: value.to_string(),
-        };
-    }
-    if let Ok(value) = row.try_get::<f64, _>(column_name) {
-        return DatabaseCellValue::Number {
-            value: value.to_string(),
-        };
+    if mysql_prefers_numeric_decode(type_name) {
+        if let Some(value) = mysql_number_cell_value(row, column_name) {
+            return value;
+        }
     }
     if let Ok(value) = row.try_get::<String, _>(column_name) {
         return DatabaseCellValue::Text { value };
     }
+    if let Some(value) = mysql_number_cell_value(row, column_name) {
+        return value;
+    }
+    if let Ok(value) = row.try_get::<bool, _>(column_name) {
+        return DatabaseCellValue::Bool { value };
+    }
     DatabaseCellValue::Text {
         value: "<unsupported>".to_string(),
     }
+}
+
+fn mysql_number_cell_value(row: &MySqlRow, column_name: &str) -> Option<DatabaseCellValue> {
+    if let Ok(value) = row.try_get::<i64, _>(column_name) {
+        return Some(DatabaseCellValue::Number {
+            value: value.to_string(),
+        });
+    }
+    if let Ok(value) = row.try_get::<u64, _>(column_name) {
+        return Some(DatabaseCellValue::Number {
+            value: value.to_string(),
+        });
+    }
+    if let Ok(value) = row.try_get::<f64, _>(column_name) {
+        return Some(DatabaseCellValue::Number {
+            value: value.to_string(),
+        });
+    }
+    None
+}
+
+pub(crate) fn mysql_prefers_numeric_decode(type_name: &str) -> bool {
+    matches!(
+        type_name.to_ascii_uppercase().as_str(),
+        "TINYINT"
+            | "SMALLINT"
+            | "MEDIUMINT"
+            | "INT"
+            | "INTEGER"
+            | "BIGINT"
+            | "FLOAT"
+            | "DOUBLE"
+            | "REAL"
+            | "DECIMAL"
+            | "NUMERIC"
+            | "YEAR"
+    )
+}
+
+fn mysql_prefers_bool_decode(type_name: &str) -> bool {
+    matches!(type_name.to_ascii_uppercase().as_str(), "BOOL" | "BOOLEAN")
 }
 
 fn postgresql_cell_value(row: &PgRow, column_name: &str) -> DatabaseCellValue {

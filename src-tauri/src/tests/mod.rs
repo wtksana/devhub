@@ -1,6 +1,6 @@
 mod capability_tests;
-mod database_history_tests;
 mod database_query_tests;
+mod database_sql_file_tests;
 mod database_settings_tests;
 mod sensitive_config_tests;
 mod settings_store_tests;

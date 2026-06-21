@@ -315,6 +315,17 @@ p {
   background: var(--panel-raised);
 }
 
+.context-menu button:disabled {
+  color: var(--muted);
+  background: transparent;
+  cursor: default;
+  opacity: 0.55;
+}
+
+.context-menu button:disabled:hover {
+  background: transparent;
+}
+
 .context-menu__submenu {
   position: relative;
 }
@@ -404,6 +415,7 @@ p {
 .workspace-tab-panel {
   grid-row: 2;
   grid-column: 1;
+  width: 100%;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
@@ -704,9 +716,15 @@ p {
   border-bottom: 1px solid var(--border-subtle);
 }
 
+.connection-dialog__header h2,
 .connection-form h3 {
+  min-width: 0;
+  overflow: hidden;
   font-size: var(--panel-header-font-size);
   font-weight: 650;
+  line-height: var(--panel-header-height);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .connection-dialog__header button {
@@ -868,36 +886,65 @@ p {
   display: grid;
   grid-template-columns: 260px minmax(0, 1fr);
   gap: 0;
+  min-width: 0;
+  min-height: 0;
   height: 100%;
   overflow: hidden;
   padding: 0;
 }
 
 .database-object-tree {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
-  overflow: auto;
-  padding: 10px;
+  overflow: hidden;
+  padding: 0;
   border-right: 1px solid var(--border-subtle);
   background: var(--panel);
+}
+
+.database-object-tree__header {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--panel-raised);
+}
+
+.database-object-tree__header label {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 6px;
+  align-items: center;
+  color: var(--muted);
+}
+
+.database-object-tree__header select,
+.database-object-tree__header input {
+  width: 100%;
 }
 
 .database-object-tree ul {
   display: flex;
   flex-direction: column;
   gap: 1px;
-  padding: 0;
+  min-height: 0;
+  padding: 8px;
   margin: 0;
+  overflow: auto;
   list-style: none;
 }
 
 .database-object-tree li {
   display: grid;
-  grid-template-columns: 24px minmax(0, max-content) minmax(0, 1fr);
+  grid-template-columns: 22px minmax(0, 1fr);
   gap: 6px;
   align-items: center;
   min-height: 28px;
+  padding: 0 4px;
   color: var(--text);
+  border-radius: 4px;
 }
 
 .database-object-tree li:hover {
@@ -923,46 +970,113 @@ p {
   color: var(--muted);
 }
 
-.database-object-tree__leaf {
-  width: 22px;
-  height: 22px;
+.database-object-tree__icon {
+  color: var(--muted);
+}
+
+.database-object-tree__empty {
+  display: block;
+  grid-column: 1 / -1;
+  padding: 8px;
+  color: var(--muted);
+  white-space: normal;
+  word-break: keep-all;
 }
 
 .database-workspace__main {
   display: grid;
-  grid-template-rows: minmax(150px, 28%) minmax(0, 1fr);
+  grid-template-rows: minmax(120px, 25%) minmax(0, 1fr);
   gap: 12px;
+  width: 100%;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
   padding: 18px;
 }
 
+.database-workspace__main[data-editor-open="false"] {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
 .database-workspace__content {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 12px;
+  width: 100%;
+  min-width: 0;
   min-height: 0;
   overflow: hidden;
 }
 
-.database-workspace__content[data-history-open="true"] {
-  grid-template-columns: minmax(0, 1fr) 280px;
-}
-
 .database-query-panel {
   display: grid;
-  grid-template-rows: minmax(0, 1fr) auto auto;
+  grid-template-rows: auto minmax(0, 1fr) auto;
   gap: 8px;
+  width: 100%;
+  min-width: 0;
   min-height: 0;
+  overflow: hidden;
+}
+
+.database-workspace__main[data-editor-open="false"] .database-query-panel {
+  grid-template-rows: auto auto auto;
+}
+
+.database-query-panel__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+}
+
+.database-query-panel__toolbar > span:first-child {
+  color: var(--text);
+}
+
+.database-query-panel__toolbar label {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+}
+
+.database-query-panel__toolbar select {
+  width: 120px;
+  min-width: 0;
+}
+
+.database-query-panel__toolbar input {
+  width: 72px;
+  min-width: 0;
+}
+
+.database-query-panel__monaco {
+  margin-left: auto;
+  white-space: nowrap;
 }
 
 .database-query-panel__editor {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  gap: 6px;
+  min-width: 0;
   min-height: 0;
-  color: var(--muted);
+  overflow: hidden;
+}
+
+.database-query-panel__editor > section,
+.database-query-panel__editor > div {
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+.database-query-panel__editor .monaco-editor,
+.database-query-panel__editor .monaco-editor-background,
+.database-query-panel__editor .overflow-guard {
+  width: 100% !important;
+  min-width: 0;
 }
 
 .database-query-panel__editor textarea {
@@ -975,20 +1089,69 @@ p {
   line-height: 1.5;
 }
 
-.database-query-panel__actions {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  color: var(--muted);
-}
-
-.database-query-panel__actions button {
-  min-width: 88px;
-}
-
 .database-query-panel__error {
   margin: 0;
   color: var(--danger);
+}
+
+.database-dialog {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  width: min(440px, calc(100vw - 48px));
+  min-width: 0;
+  max-height: calc(100vh - 48px);
+}
+
+.database-dialog__header {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  height: var(--panel-header-height);
+  padding: 0 12px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.database-dialog__header h2 {
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--panel-header-font-size);
+  font-weight: 650;
+  line-height: var(--panel-header-height);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.database-dialog > p {
+  min-width: 0;
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+}
+
+.database-dialog__actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  min-width: 0;
+  padding: 10px 12px 12px;
+}
+
+.database-create-sql-file__field {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 12px;
+}
+
+.database-create-sql-file__field input {
+  width: 100%;
+  min-width: 0;
+  height: 32px;
+  padding: 0 8px;
+}
+
+.database-sql-file-dialog {
+  max-width: calc(100vw - 48px);
 }
 
 .database-dangerous-sql__preview {
@@ -1006,6 +1169,7 @@ p {
 .database-result {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
+  width: 100%;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
@@ -1014,18 +1178,25 @@ p {
 }
 
 .database-result header {
+  min-width: 0;
+  overflow: hidden;
   padding: 8px 10px;
   border-bottom: 1px solid var(--border-subtle);
   color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .database-result__table-wrap {
+  width: 100%;
+  min-width: 0;
   min-height: 0;
   overflow: auto;
 }
 
 .database-result table {
-  width: 100%;
+  width: max-content;
+  min-width: 100%;
   border-collapse: collapse;
   table-layout: auto;
 }
@@ -1056,62 +1227,6 @@ p {
 
 .database-result tbody tr:hover {
   background: var(--hover);
-}
-
-.database-history-panel {
-  min-width: 0;
-  min-height: 0;
-  overflow: auto;
-  border: 1px solid var(--border-subtle);
-  background: var(--panel);
-}
-
-.database-history-panel header {
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--border-subtle);
-  color: var(--muted);
-}
-
-.database-history-panel p {
-  margin: 10px;
-  color: var(--muted);
-}
-
-.database-history-panel ul {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 6px;
-  margin: 0;
-  list-style: none;
-}
-
-.database-history-panel button {
-  display: grid;
-  width: 100%;
-  gap: 4px;
-  padding: 8px;
-  border-color: transparent;
-  color: var(--text);
-  text-align: left;
-  background: transparent;
-}
-
-.database-history-panel button:hover {
-  background: var(--hover);
-}
-
-.database-history-panel button span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.database-history-panel button small {
-  overflow: hidden;
-  color: var(--muted);
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .settings-sidebar {

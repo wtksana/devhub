@@ -263,6 +263,39 @@ describe("ConnectionList", () => {
     });
   });
 
+  it("tests a MySQL connection from the dialog", async () => {
+    callBackendMock.mockResolvedValue("OK");
+
+    renderConnectionList();
+
+    await userEvent.click(screen.getByRole("button", { name: "添加连接" }));
+    const dialog = screen.getByRole("dialog", { name: "添加 SSH 连接" });
+    await userEvent.selectOptions(within(dialog).getByLabelText("连接类型"), "mysql");
+    await userEvent.type(within(dialog).getByLabelText("连接名称"), "开发 MySQL");
+    await userEvent.type(within(dialog).getByLabelText("分组"), "database");
+    await userEvent.type(within(dialog).getByLabelText("主机"), "127.0.0.1");
+    await userEvent.type(within(dialog).getByLabelText("用户名"), "root");
+    await userEvent.type(within(dialog).getByLabelText("密码"), "mysql-password");
+    await userEvent.type(within(dialog).getByLabelText("默认数据库"), "app");
+    await userEvent.click(within(dialog).getByRole("button", { name: "测试连接" }));
+
+    expect(callBackendMock).toHaveBeenCalledWith("test_database_connection_config", {
+      connection: {
+        kind: "mysql",
+        id: "mysql-form-test",
+        name: "开发 MySQL",
+        group: "database",
+        host: "127.0.0.1",
+        port: 3306,
+        username: "root",
+        password: "mysql-password",
+        database: "app",
+      },
+    });
+    expect(await within(dialog).findByRole("status")).toHaveTextContent("开发 MySQL 测试成功：OK");
+    expect(screen.queryByText("开发 MySQL 测试成功：OK", { selector: ".connection-list__status" })).not.toBeInTheDocument();
+  });
+
   it("submits a PostgreSQL connection with default port and optional database", async () => {
     const onAddConnection = vi.fn();
 
@@ -395,6 +428,19 @@ describe("ConnectionList", () => {
     const dialog = screen.getByRole("dialog", { name: "添加 SSH 连接" });
     await userEvent.selectOptions(within(dialog).getByLabelText("连接类型"), "redis");
     await userEvent.type(within(dialog).getByLabelText("连接名称"), "未填写主机 Redis");
+    await userEvent.click(within(dialog).getByRole("button", { name: "测试连接" }));
+
+    expect(callBackendMock).not.toHaveBeenCalled();
+    expect(await within(dialog).findByRole("status")).toHaveTextContent("请填写主机");
+  });
+
+  it("validates database connection fields before testing from the dialog", async () => {
+    renderConnectionList();
+
+    await userEvent.click(screen.getByRole("button", { name: "添加连接" }));
+    const dialog = screen.getByRole("dialog", { name: "添加 SSH 连接" });
+    await userEvent.selectOptions(within(dialog).getByLabelText("连接类型"), "mysql");
+    await userEvent.type(within(dialog).getByLabelText("连接名称"), "未填写主机 MySQL");
     await userEvent.click(within(dialog).getByRole("button", { name: "测试连接" }));
 
     expect(callBackendMock).not.toHaveBeenCalled();

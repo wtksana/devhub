@@ -1,78 +1,231 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "../../i18n/I18nProvider";
+import { readClipboardText } from "../../lib/clipboard";
 import { callBackend } from "../../lib/tauri";
 import { DatabaseWorkspace } from "./DatabaseWorkspace";
+
+const { executeEditsMock, focusMock, monacoEditorMock, pushUndoStopMock, triggerMock, setSelectedSqlText } = vi.hoisted(() => {
+  let selectedSqlText = "";
+  return {
+    executeEditsMock: vi.fn(),
+    focusMock: vi.fn(),
+    pushUndoStopMock: vi.fn(),
+    triggerMock: vi.fn(),
+    setSelectedSqlText: (value: string) => {
+      selectedSqlText = value;
+    },
+    monacoEditorMock: vi.fn((props: {
+      value?: string;
+      defaultLanguage?: string;
+      theme?: string;
+      language?: string;
+      options?: {
+        automaticLayout?: boolean;
+        contextmenu?: boolean;
+        fontFamily?: string;
+        fontSize?: number;
+        minimap?: { enabled?: boolean };
+      };
+      wrapperProps?: { "aria-label"?: string };
+      onChange?: (value?: string) => void;
+      onMount?: (editor: {
+        executeEdits: (source: string, edits: Array<{ range: unknown; text: string; forceMoveMarkers?: boolean }>) => void;
+        focus: () => void;
+        getSelection: () => { startLineNumber: number; startColumn: number; endLineNumber: number; endColumn: number; isEmpty: () => boolean } | null;
+        getModel: () => { getValueInRange: () => string };
+        pushUndoStop: () => void;
+        trigger: (source: string, handlerId: string, payload: unknown) => void;
+      }) => void;
+    }) => (
+      <textarea
+        aria-label={props.wrapperProps?.["aria-label"]}
+        data-testid="database-monaco-editor"
+        data-default-language={props.defaultLanguage}
+        data-language={props.language}
+        data-theme={props.theme}
+        data-automatic-layout={String(props.options?.automaticLayout)}
+        data-contextmenu={String(props.options?.contextmenu)}
+        data-font-family={props.options?.fontFamily}
+        data-font-size={props.options?.fontSize}
+        data-minimap={String(props.options?.minimap?.enabled)}
+        value={props.value ?? ""}
+        onChange={(event) => props.onChange?.(event.target.value)}
+        ref={(element) => {
+          if (!element) return;
+          props.onMount?.({
+            executeEdits: executeEditsMock,
+            focus: focusMock,
+            getSelection: () => {
+              if (!selectedSqlText) return null;
+              return {
+                startLineNumber: 1,
+                startColumn: 1,
+                endLineNumber: 1,
+                endColumn: selectedSqlText.length + 1,
+                isEmpty: () => selectedSqlText.length === 0,
+              };
+            },
+            getModel: () => ({
+              getValueInRange: () => selectedSqlText,
+            }),
+            pushUndoStop: pushUndoStopMock,
+            trigger: triggerMock,
+          });
+        }}
+      />
+    )),
+  };
+});
 
 vi.mock("../../lib/tauri", () => ({
   callBackend: vi.fn(),
 }));
 
+vi.mock("../../lib/clipboard", () => ({
+  readClipboardText: vi.fn(),
+}));
+
+vi.mock("@monaco-editor/react", () => ({
+  default: monacoEditorMock,
+}));
+
 const callBackendMock = vi.mocked(callBackend);
+const readClipboardTextMock = vi.mocked(readClipboardText);
 
 describe("DatabaseWorkspace", () => {
   afterEach(() => {
     cleanup();
     vi.clearAllMocks();
+    setSelectedSqlText("");
   });
 
-  function renderDatabaseWorkspace() {
+  function renderDatabaseWorkspace(initialDatabase?: string) {
     return render(
       <I18nProvider language="zh-CN">
-        <DatabaseWorkspace connectionId="mysql-dev" />
+        <DatabaseWorkspace
+          connectionId="mysql-dev"
+          initialDatabase={initialDatabase}
+          theme="light"
+          fontFamily="Consolas"
+          fontSize={14}
+        />
       </I18nProvider>,
     );
   }
 
-  it("loads and expands database object tree nodes", async () => {
+  it("loads the default database tables directly and switches databases from the selector", async () => {
     callBackendMock.mockImplementation((command, payload) => {
       if (command !== "list_database_objects") return Promise.resolve([]);
       const request = (payload as { request: { parent_kind?: string; database?: string } }).request;
       if (!request.parent_kind) {
-        return Promise.resolve([{ id: "database:app", name: "app", kind: "database", has_children: true }]);
+        return Promise.resolve([
+          { id: "database:app", name: "app", kind: "database", has_children: true },
+          { id: "database:audit", name: "audit", kind: "database", has_children: true },
+        ]);
+      }
+      if (request.database === "audit") {
+        return Promise.resolve([
+          { id: "table:audit.events", name: "events", kind: "table", has_children: true, detail: "BASE TABLE" },
+        ]);
       }
       return Promise.resolve([
         { id: "table:app.users", name: "users", kind: "table", has_children: true, detail: "BASE TABLE" },
+        { id: "table:app.orders", name: "orders", kind: "table", has_children: true, detail: "BASE TABLE" },
       ]);
     });
 
-    renderDatabaseWorkspace();
+    renderDatabaseWorkspace("app");
 
-    expect(await screen.findByText("app")).toBeInTheDocument();
+    expect(await screen.findByText("users")).toBeInTheDocument();
+    expect(screen.getByText("orders")).toBeInTheDocument();
+    expect(screen.queryByText("BASE TABLE")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("数据库")).toHaveValue("app");
     expect(callBackendMock).toHaveBeenCalledWith("list_database_objects", {
       request: {
         connection_id: "mysql-dev",
       },
     });
-
-    await userEvent.click(screen.getByRole("button", { name: "展开 app" }));
-
-    expect(await screen.findByText("users")).toBeInTheDocument();
-    expect(screen.getByText("BASE TABLE")).toBeInTheDocument();
-    expect(callBackendMock).toHaveBeenLastCalledWith("list_database_objects", {
+    expect(callBackendMock).toHaveBeenCalledWith("list_database_objects", {
       request: {
         connection_id: "mysql-dev",
         parent_kind: "database",
         database: "app",
       },
     });
+
+    await userEvent.selectOptions(screen.getByLabelText("数据库"), "audit");
+
+    expect(await screen.findByText("events")).toBeInTheDocument();
+    expect(screen.queryByText("users")).not.toBeInTheDocument();
+    expect(callBackendMock).toHaveBeenCalledWith("list_database_objects", {
+      request: {
+        connection_id: "mysql-dev",
+        parent_kind: "database",
+        database: "audit",
+      },
+    });
     expect(screen.getByLabelText("数据库对象树")).toBeInTheDocument();
-    expect(within(screen.getByLabelText("数据库工作区")).getByText("mysql-dev")).toBeInTheDocument();
+  });
+
+  it("filters table names on the client", async () => {
+    callBackendMock.mockImplementation((command, payload) => {
+      if (command !== "list_database_objects") return Promise.resolve([]);
+      const request = (payload as { request: { parent_kind?: string } }).request;
+      if (!request.parent_kind) {
+        return Promise.resolve([{ id: "database:app", name: "app", kind: "database", has_children: true }]);
+      }
+      return Promise.resolve([
+        { id: "table:app.users", name: "users", kind: "table", has_children: true, detail: "BASE TABLE" },
+        { id: "table:app.orders", name: "orders", kind: "table", has_children: true, detail: "BASE TABLE" },
+        { id: "table:app.t_bh_template", name: "t_bh_template", kind: "table", has_children: true, detail: "BASE TABLE" },
+        { id: "table:app.t_bh$template", name: "t_bh$template", kind: "table", has_children: true, detail: "BASE TABLE" },
+        { id: "table:app.t_bh-template", name: "t_bh-template", kind: "table", has_children: true, detail: "BASE TABLE" },
+      ]);
+    });
+
+    renderDatabaseWorkspace("app");
+
+    expect(await screen.findByText("users")).toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText("筛选表"), "ord");
+
+    expect(screen.queryByText("users")).not.toBeInTheDocument();
+    expect(screen.getByText("orders")).toBeInTheDocument();
+
+    await userEvent.clear(screen.getByLabelText("筛选表"));
+    await userEvent.type(screen.getByLabelText("筛选表"), "bht");
+
+    expect(screen.getByText("t_bh_template")).toBeInTheDocument();
+    expect(screen.getByText("t_bh$template")).toBeInTheDocument();
+    expect(screen.getByText("t_bh-template")).toBeInTheDocument();
+  });
+
+  it("uses Monaco as the SQL editor", () => {
+    renderDatabaseWorkspace("app");
+
+    const editor = screen.getByTestId("database-monaco-editor");
+    expect(editor).toHaveAttribute("data-default-language", "sql");
+    expect(editor).toHaveAttribute("data-theme", "light");
+    expect(editor).toHaveAttribute("data-font-family", "Consolas");
+    expect(editor).toHaveAttribute("data-font-size", "14");
+    expect(editor).toHaveAttribute("data-automatic-layout", "true");
+    expect(editor).toHaveAttribute("data-contextmenu", "false");
+    expect(editor).toHaveAttribute("data-minimap", "false");
   });
 
   it("shows node loading errors below the database object tree", async () => {
     callBackendMock.mockRejectedValue(new Error("metadata failed"));
 
-    renderDatabaseWorkspace();
+    renderDatabaseWorkspace("app");
 
     await waitFor(() => {
       expect(screen.getByRole("alert")).toHaveTextContent("metadata failed");
     });
   });
 
-  it("executes SQL and renders query result rows", async () => {
+  it("executes selected SQL from the editor context menu and renders query result rows", async () => {
     callBackendMock.mockImplementation((command) => {
       if (command === "execute_database_query") {
         return Promise.resolve({
@@ -101,16 +254,18 @@ describe("DatabaseWorkspace", () => {
       return Promise.resolve([]);
     });
 
-    renderDatabaseWorkspace();
+    renderDatabaseWorkspace("app");
 
-    await userEvent.type(screen.getByLabelText("SQL 编辑器"), "select * from users");
-    await userEvent.click(screen.getByRole("button", { name: "执行 SQL" }));
+    const editor = screen.getByLabelText("SQL 编辑器") as HTMLTextAreaElement;
+    await userEvent.type(editor, "select * from users; select * from orders");
+    setSelectedSqlText("select * from users");
+    await executeSelectedSqlFromContextMenu(editor);
 
     await waitFor(() => {
       expect(callBackendMock).toHaveBeenCalledWith("execute_database_query", {
         request: {
           connection_id: "mysql-dev",
-          database: null,
+          database: "app",
           sql: "select * from users",
           limit: 200,
         },
@@ -140,7 +295,7 @@ describe("DatabaseWorkspace", () => {
       return Promise.reject(new Error("syntax error near from"));
     });
 
-    renderDatabaseWorkspace();
+    renderDatabaseWorkspace("app");
 
     await waitFor(() => expect(callBackendMock).toHaveBeenCalledWith("list_database_objects", {
       request: {
@@ -149,14 +304,16 @@ describe("DatabaseWorkspace", () => {
     }));
     await userEvent.clear(screen.getByLabelText("SQL 编辑器"));
     await userEvent.type(screen.getByLabelText("SQL 编辑器"), "update users set active = 1");
-    await userEvent.click(screen.getByRole("button", { name: "执行 SQL" }));
-    await userEvent.click(screen.getByRole("button", { name: "确认执行" }));
+    setSelectedSqlText("update users set active = 1");
+    await executeSelectedSqlFromContextMenu(screen.getByLabelText("SQL 编辑器"));
+    await userEvent.click(await screen.findByRole("button", { name: "确认执行" }));
 
     expect(await screen.findByText("影响 3 行，耗时 8 ms")).toBeInTheDocument();
 
     await userEvent.clear(screen.getByLabelText("SQL 编辑器"));
     await userEvent.type(screen.getByLabelText("SQL 编辑器"), "select from");
-    await userEvent.click(screen.getByRole("button", { name: "执行 SQL" }));
+    setSelectedSqlText("select from");
+    await executeSelectedSqlFromContextMenu(screen.getByLabelText("SQL 编辑器"));
 
     expect(await screen.findByRole("alert")).toHaveTextContent("syntax error near from");
   });
@@ -175,12 +332,13 @@ describe("DatabaseWorkspace", () => {
       return Promise.resolve([]);
     });
 
-    renderDatabaseWorkspace();
+    renderDatabaseWorkspace("app");
 
     await userEvent.type(screen.getByLabelText("SQL 编辑器"), "delete from users");
-    await userEvent.click(screen.getByRole("button", { name: "执行 SQL" }));
+    setSelectedSqlText("delete from users");
+    await executeSelectedSqlFromContextMenu(screen.getByLabelText("SQL 编辑器"));
 
-    expect(screen.getByRole("dialog", { name: "确认执行危险 SQL" })).toBeInTheDocument();
+    expect(await screen.findByRole("dialog", { name: "确认执行危险 SQL" })).toBeInTheDocument();
     expect(callBackendMock).not.toHaveBeenCalledWith("execute_database_query", expect.anything());
 
     await userEvent.click(screen.getByRole("button", { name: "确认执行" }));
@@ -189,7 +347,7 @@ describe("DatabaseWorkspace", () => {
       expect(callBackendMock).toHaveBeenCalledWith("execute_database_query", {
         request: {
           connection_id: "mysql-dev",
-          database: null,
+          database: "app",
           sql: "delete from users",
           limit: 200,
         },
@@ -198,7 +356,7 @@ describe("DatabaseWorkspace", () => {
     expect(await screen.findByText("影响 1 行，耗时 2 ms")).toBeInTheDocument();
   });
 
-  it("loads table data when double clicking a table node", async () => {
+  it("loads table data when double clicking a table node without replacing the SQL editor content", async () => {
     callBackendMock.mockImplementation((command, payload) => {
       if (command === "list_database_objects") {
         const request = (payload as { request: { parent_kind?: string; database?: string } }).request;
@@ -208,6 +366,9 @@ describe("DatabaseWorkspace", () => {
         return Promise.resolve([
           { id: "table:app.users", name: "users", kind: "table", has_children: true, detail: "BASE TABLE" },
         ]);
+      }
+      if (command === "list_database_sql_files") {
+        return Promise.resolve([{ name: "default", content: "select 1" }]);
       }
       if (command === "execute_database_query") {
         return Promise.resolve({
@@ -221,17 +382,17 @@ describe("DatabaseWorkspace", () => {
       return Promise.resolve([]);
     });
 
-    renderDatabaseWorkspace();
+    renderDatabaseWorkspace("app");
 
-    await userEvent.click(await screen.findByRole("button", { name: "展开 app" }));
+    expect(await screen.findByLabelText("SQL 编辑器")).toHaveValue("select 1");
     await userEvent.dblClick(await screen.findByText("users"));
 
-    expect(screen.getByLabelText("SQL 编辑器")).toHaveValue("SELECT * FROM `users` LIMIT 200");
+    expect(screen.getByLabelText("SQL 编辑器")).toHaveValue("select 1");
     await waitFor(() => {
       expect(callBackendMock).toHaveBeenCalledWith("execute_database_query", {
         request: {
           connection_id: "mysql-dev",
-          database: null,
+          database: "app",
           sql: "SELECT * FROM `users` LIMIT 200",
           limit: 200,
         },
@@ -240,35 +401,169 @@ describe("DatabaseWorkspace", () => {
     expect(await screen.findByText("1 行，耗时 6 ms")).toBeInTheDocument();
   });
 
-  it("loads query history and fills the SQL editor from a history item", async () => {
+  it("loads SQL files for the selected database and switches editor content", async () => {
     callBackendMock.mockImplementation((command) => {
-      if (command === "list_database_query_history") {
+      if (command === "list_database_sql_files") {
         return Promise.resolve([
-          {
-            id: 1,
-            connection_id: "mysql-dev",
-            database_kind: "mysql",
-            database_name: "app",
-            sql_text: "select * from users",
-            executed_at: "2026-06-20 12:00:00",
-            duration_ms: 10,
-            success: true,
-            error_message: null,
-          },
+          { name: "z-report", content: "select * from z" },
+          { name: "default", content: "select * from users" },
+          { name: "report", content: "select count(*) from users" },
         ]);
       }
       return Promise.resolve([]);
     });
 
-    renderDatabaseWorkspace();
+    renderDatabaseWorkspace("app");
 
-    await userEvent.click(screen.getByRole("button", { name: "查询历史" }));
-    expect(callBackendMock).toHaveBeenCalledWith("list_database_query_history", {
-      connection_id: "mysql-dev",
+    expect(callBackendMock).toHaveBeenCalledWith("list_database_sql_files", {
+      request: {
+        connection_id: "mysql-dev",
+        database: "app",
+      },
+    });
+    expect(await screen.findByLabelText("SQL 编辑器")).toHaveValue("select * from users");
+    expect(within(screen.getByLabelText("SQL 文件")).getAllByRole("option").map((option) => option.textContent)).toEqual([
+      "新增 SQL 文件",
+      "default",
+      "report",
+      "z-report",
+    ]);
+
+    await userEvent.selectOptions(screen.getByLabelText("SQL 文件"), "report");
+
+    expect(screen.getByLabelText("SQL 编辑器")).toHaveValue("select count(*) from users");
+  });
+
+  it("creates a SQL file from the selector dialog and cancels it with Escape", async () => {
+    callBackendMock.mockImplementation((command) => {
+      if (command === "list_database_sql_files") {
+        return Promise.resolve([{ name: "default", content: "" }]);
+      }
+      return Promise.resolve([]);
     });
 
-    await userEvent.click(await screen.findByText("select * from users"));
+    renderDatabaseWorkspace("app");
 
-    expect(screen.getByLabelText("SQL 编辑器")).toHaveValue("select * from users");
+    await userEvent.selectOptions(await screen.findByLabelText("SQL 文件"), "__create_sql_file__");
+    const createDialog = screen.getByRole("dialog", { name: "新增 SQL 文件" });
+    expect(createDialog).toBeInTheDocument();
+    expect(createDialog).toHaveClass("database-dialog", "database-sql-file-dialog");
+    expect(createDialog.querySelector(".database-dialog__header")).toBeInTheDocument();
+    expect(createDialog.querySelector(".database-dialog__actions")).toBeInTheDocument();
+
+    await userEvent.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "新增 SQL 文件" })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("SQL 文件")).toHaveValue("default");
+
+    await userEvent.selectOptions(screen.getByLabelText("SQL 文件"), "__create_sql_file__");
+    await userEvent.type(screen.getByLabelText("SQL 文件名"), "daily");
+    await userEvent.click(screen.getByRole("button", { name: "确认" }));
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("save_database_sql_file", {
+        request: {
+          connection_id: "mysql-dev",
+          database: "app",
+          name: "daily",
+          content: "",
+        },
+      });
+    });
+    expect(screen.getByLabelText("SQL 文件")).toHaveValue("daily");
+    expect(screen.getByLabelText("SQL 编辑器")).toHaveValue("");
+  });
+
+  it("toggles the SQL editor visibility", async () => {
+    renderDatabaseWorkspace("app");
+
+    expect(screen.getByTestId("database-monaco-editor")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "收起编辑器" }));
+
+    expect(screen.queryByTestId("database-monaco-editor")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "打开编辑器" }));
+    expect(screen.getByTestId("database-monaco-editor")).toBeInTheDocument();
+  });
+
+  it("uses the configured default limit and disables context execution without selected SQL", async () => {
+    callBackendMock.mockImplementation((command) => {
+      if (command === "execute_database_query") {
+        return Promise.resolve({
+          columns: [],
+          rows: [],
+          affected_rows: 0,
+          duration_ms: 1,
+          limited: false,
+        });
+      }
+      return Promise.resolve([]);
+    });
+
+    renderDatabaseWorkspace("app");
+
+    expect(screen.queryByRole("button", { name: "执行 SQL" })).not.toBeInTheDocument();
+    await userEvent.clear(screen.getByLabelText("默认 LIMIT"));
+    await userEvent.type(screen.getByLabelText("默认 LIMIT"), "50");
+    const editor = screen.getByLabelText("SQL 编辑器");
+    await userEvent.type(editor, "select * from users");
+    readClipboardTextMock.mockResolvedValue("where id = 1");
+    fireEvent.contextMenu(editor, { clientX: 10, clientY: 20 });
+    expect(screen.getByRole("menuitem", { name: "执行选择 SQL" })).toBeDisabled();
+    expect(callBackendMock).not.toHaveBeenCalledWith("execute_database_query", expect.anything());
+    await userEvent.keyboard("{Escape}");
+
+    setSelectedSqlText("select * from users");
+    await executeSelectedSqlFromContextMenu(editor);
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("execute_database_query", {
+        request: {
+          connection_id: "mysql-dev",
+          database: "app",
+          sql: "select * from users",
+          limit: 50,
+        },
+      });
+    });
+  });
+
+  it("shows only selected SQL, Cut, Copy and Paste in the SQL editor context menu", async () => {
+    renderDatabaseWorkspace("app");
+
+    const editor = screen.getByLabelText("SQL 编辑器");
+    setSelectedSqlText("select 1");
+    fireEvent.contextMenu(editor, { clientX: 10, clientY: 20 });
+
+    expect(within(screen.getByRole("menu")).getAllByRole("menuitem").map((item) => item.textContent)).toEqual([
+      "执行选择 SQL",
+      "Cut",
+      "Copy",
+      "Paste",
+    ]);
+
+    await userEvent.click(screen.getByRole("menuitem", { name: "Cut" }));
+    expect(focusMock).toHaveBeenCalled();
+    expect(triggerMock).toHaveBeenCalledWith("devhub", "editor.action.clipboardCutAction", null);
+
+    fireEvent.contextMenu(editor, { clientX: 10, clientY: 20 });
+    await userEvent.click(screen.getByRole("menuitem", { name: "Copy" }));
+    expect(triggerMock).toHaveBeenCalledWith("devhub", "editor.action.clipboardCopyAction", null);
+
+    fireEvent.contextMenu(editor, { clientX: 10, clientY: 20 });
+    await userEvent.click(screen.getByRole("menuitem", { name: "Paste" }));
+    expect(readClipboardTextMock).toHaveBeenCalledTimes(1);
+    expect(executeEditsMock).toHaveBeenCalledWith("devhub", [
+      {
+        forceMoveMarkers: true,
+        range: expect.any(Object),
+        text: "where id = 1",
+      },
+    ]);
+    expect(pushUndoStopMock).toHaveBeenCalledTimes(2);
+    expect(triggerMock).not.toHaveBeenCalledWith("devhub", "editor.action.clipboardPasteAction", null);
   });
 });
+
+async function executeSelectedSqlFromContextMenu(target: HTMLElement) {
+  fireEvent.contextMenu(target, { clientX: 10, clientY: 20 });
+  await userEvent.click(screen.getByRole("menuitem", { name: "执行选择 SQL" }));
+}

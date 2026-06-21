@@ -1,5 +1,9 @@
 export interface DatabaseWorkspaceProps {
   connectionId: string;
+  initialDatabase?: string;
+  theme: "dark" | "light";
+  fontFamily: string;
+  fontSize: number;
 }
 
 export interface DatabaseTreeNode {
@@ -27,14 +31,7 @@ export interface DatabaseQueryResult {
   limited: boolean;
 }
 
-export interface QueryHistoryItem {
-  id: number;
-  connection_id: string;
-  database_kind: string;
-  database_name?: string | null;
-  sql_text: string;
-  executed_at: string;
-  duration_ms: number;
-  success: boolean;
-  error_message?: string | null;
+export interface DatabaseSqlFile {
+  name: string;
+  content: string;
 }

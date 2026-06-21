@@ -371,12 +371,40 @@ export function ConnectionList({
     }
   }
 
+  async function testDatabaseConnectionForm() {
+    if (kind !== "mysql" && kind !== "postgresql") return;
+    const connection = databaseConnectionFromForm(sourceConnection?.id ?? `${kind}-form-test`);
+    const connectionName = connection.name || connection.id;
+    const validationMessage = validateDatabaseConnection(connection);
+    if (validationMessage) {
+      setConnectionDialogMessage(validationMessage);
+      return;
+    }
+
+    setConnectionDialogMessage(t("connections.test_running", { name: connectionName }));
+    try {
+      const result = await callBackend<string>("test_database_connection_config", { connection });
+      setConnectionDialogMessage(t("connections.test_success", { name: connectionName, message: result }));
+    } catch (error) {
+      setConnectionDialogMessage(t("connections.test_failed", { name: connectionName, message: String(error) }));
+    }
+  }
+
   function validateRedisConnection(connection: ConnectionSettings) {
     if (connection.kind !== "redis") return "";
     if (!connection.name) return t("connections.validation_name_required");
     if (!connection.host) return t("connections.validation_host_required");
     if (!Number.isInteger(connection.port) || connection.port < 1 || connection.port > 65535) return t("connections.validation_port_invalid");
     if (!Number.isInteger(connection.database) || connection.database < 0) return t("connections.validation_database_invalid");
+    return "";
+  }
+
+  function validateDatabaseConnection(connection: ConnectionSettings) {
+    if (!isDatabaseConnection(connection)) return "";
+    if (!connection.name) return t("connections.validation_name_required");
+    if (!connection.host) return t("connections.validation_host_required");
+    if (!Number.isInteger(connection.port) || connection.port < 1 || connection.port > 65535) return t("connections.validation_port_invalid");
+    if (!connection.username) return t("connections.validation_username_required");
     return "";
   }
 
@@ -694,8 +722,8 @@ export function ConnectionList({
               ) : null}
               <footer>
                 <div>
-                  {kind === "redis" ? (
-                    <button type="button" onClick={() => void testRedisConnectionForm()}>
+                  {kind === "redis" || kind === "mysql" || kind === "postgresql" ? (
+                    <button type="button" onClick={() => void (kind === "redis" ? testRedisConnectionForm() : testDatabaseConnectionForm())}>
                       {t("connections.test_connection")}
                     </button>
                   ) : null}

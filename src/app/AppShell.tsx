@@ -8,7 +8,7 @@ import { ConnectionList } from "../features/connections/ConnectionList";
 import { DatabaseWorkspace } from "../features/database/DatabaseWorkspace";
 import { RedisWorkspace } from "../features/redis/RedisWorkspace";
 import { SettingsPanel } from "../features/settings/SettingsPanel";
-import type { RedisConnectionSettings } from "../features/settings/settingsTypes";
+import type { DatabaseConnectionSettings, RedisConnectionSettings } from "../features/settings/settingsTypes";
 import { SftpWorkspace } from "../features/sftp/SftpWorkspace";
 import { useSettings } from "../features/settings/useSettings";
 import { TerminalWorkspace } from "../features/terminal/TerminalWorkspace";
@@ -57,6 +57,11 @@ function connectionTitle(connectionId: string, settings: ReturnType<typeof useSe
 function redisConnection(connectionId: string, settings: ReturnType<typeof useSettings>["settings"]): RedisConnectionSettings | null {
   const connection = settings.connections.find((item) => item.id === connectionId);
   return connection?.kind === "redis" ? connection : null;
+}
+
+function databaseConnection(connectionId: string, settings: ReturnType<typeof useSettings>["settings"]): DatabaseConnectionSettings | null {
+  const connection = settings.connections.find((item) => item.id === connectionId);
+  return connection?.kind === "mysql" || connection?.kind === "postgresql" ? connection : null;
 }
 
 export function AppShell() {
@@ -380,7 +385,15 @@ function AppShellContent({ settingsState }: { settingsState: ReturnType<typeof u
                   initialDatabase={redisConnection(tab.connectionId, settings)?.database ?? 0}
                 />
               ) : null}
-              {tab.kind === "database" ? <DatabaseWorkspace connectionId={tab.connectionId} /> : null}
+              {tab.kind === "database" ? (
+                <DatabaseWorkspace
+                  connectionId={tab.connectionId}
+                  initialDatabase={databaseConnection(tab.connectionId, settings)?.database}
+                  theme={theme}
+                  fontFamily={settings.appearance.terminal_font_family}
+                  fontSize={settings.appearance.terminal_font_size}
+                />
+              ) : null}
               {tab.kind === "settings" ? <SettingsPanel settingsState={settingsState} /> : null}
             </div>
           ))}

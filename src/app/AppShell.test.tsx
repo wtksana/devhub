@@ -394,7 +394,13 @@ describe("AppShell", () => {
       "true",
     );
     expect(screen.getByLabelText("数据库工作区")).toBeInTheDocument();
-    expect(screen.getByText("mysql-dev")).toBeInTheDocument();
+    expect(callBackendMock).toHaveBeenCalledWith("list_database_objects", {
+      request: {
+        connection_id: "mysql-dev",
+        parent_kind: "database",
+        database: "app",
+      },
+    });
   });
 
   it("toggles panels from the status bar", async () => {

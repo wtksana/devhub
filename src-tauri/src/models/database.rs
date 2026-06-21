@@ -26,6 +26,26 @@ pub struct ExecuteDatabaseQueryRequest {
     pub limit: Option<u32>,
 }
 
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct ListDatabaseSqlFilesRequest {
+    pub connection_id: String,
+    pub database: String,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct SaveDatabaseSqlFileRequest {
+    pub connection_id: String,
+    pub database: String,
+    pub name: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct DatabaseSqlFile {
+    pub name: String,
+    pub content: String,
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct DatabaseResultColumn {
     pub name: String,
@@ -48,17 +68,4 @@ pub struct DatabaseQueryResult {
     pub affected_rows: u64,
     pub duration_ms: u128,
     pub limited: bool,
-}
-
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub struct QueryHistoryItem {
-    pub id: i64,
-    pub connection_id: String,
-    pub database_kind: String,
-    pub database_name: Option<String>,
-    pub sql_text: String,
-    pub executed_at: String,
-    pub duration_ms: i64,
-    pub success: bool,
-    pub error_message: Option<String>,
 }

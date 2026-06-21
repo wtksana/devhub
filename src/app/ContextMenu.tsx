@@ -1,10 +1,11 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useI18n } from "../i18n/useI18n";
 
 export type ContextMenuItem =
   | {
       type?: "action";
       label: string;
+      disabled?: boolean;
       onSelect: () => void;
     }
   | {
@@ -38,6 +39,7 @@ interface ContextMenuProps {
 
 export function ContextMenu({ menu, onClose }: ContextMenuProps) {
   const { t } = useI18n();
+  const skipNextClickRef = useRef(false);
 
   useEffect(() => {
     if (!menu) return;
@@ -61,6 +63,25 @@ export function ContextMenu({ menu, onClose }: ContextMenuProps) {
   }, [menu, onClose]);
 
   if (!menu) return null;
+
+  function runAction(item: Extract<ContextMenuItem, { label: string; onSelect: () => void }>) {
+    if (item.disabled) return;
+    item.onSelect();
+    onClose();
+  }
+
+  function runActionFromPointerDown(item: Extract<ContextMenuItem, { label: string; onSelect: () => void }>) {
+    skipNextClickRef.current = true;
+    runAction(item);
+  }
+
+  function runActionFromClick(item: Extract<ContextMenuItem, { label: string; onSelect: () => void }>) {
+    if (skipNextClickRef.current) {
+      skipNextClickRef.current = false;
+      return;
+    }
+    runAction(item);
+  }
 
   return (
     <div
@@ -113,9 +134,14 @@ export function ContextMenu({ menu, onClose }: ContextMenuProps) {
                       key={`action-${childIndex}-${child.label}`}
                       type="button"
                       role="menuitem"
+                      disabled={child.disabled}
+                      onPointerDown={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        runActionFromPointerDown(child);
+                      }}
                       onClick={() => {
-                        child.onSelect();
-                        onClose();
+                        runActionFromClick(child);
                       }}
                     >
                       {child.label}
@@ -131,9 +157,14 @@ export function ContextMenu({ menu, onClose }: ContextMenuProps) {
             key={`action-${index}-${item.label}`}
             type="button"
             role="menuitem"
+            disabled={item.disabled}
+            onPointerDown={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              runActionFromPointerDown(item);
+            }}
             onClick={() => {
-              item.onSelect();
-              onClose();
+              runActionFromClick(item);
             }}
           >
             {item.label}

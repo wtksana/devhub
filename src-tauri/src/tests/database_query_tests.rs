@@ -1,6 +1,8 @@
 use crate::db::connection::database_connection_url;
 use crate::db::metadata::{metadata_query_for_columns, metadata_query_for_tables};
-use crate::db::query::{apply_select_limit, is_dangerous_sql, quote_identifier};
+use crate::db::query::{
+    apply_select_limit, is_dangerous_sql, mysql_prefers_numeric_decode, quote_identifier,
+};
 use crate::models::settings::DatabaseConnectionSettings;
 
 #[test]
@@ -73,6 +75,11 @@ fn keeps_select_with_existing_limit() {
         apply_select_limit("select * from users limit 20", 200).unwrap(),
         "select * from users limit 20"
     );
+}
+
+#[test]
+fn treats_mysql_count_bigint_as_numeric_type() {
+    assert!(mysql_prefers_numeric_decode("BIGINT"));
 }
 
 #[test]
