@@ -393,7 +393,8 @@ describe("DatabaseWorkspace", () => {
     expect(screen.getByLabelText("SQL 编辑器")).toHaveValue("select 1");
     expect(await screen.findByLabelText("表数据")).toBeInTheDocument();
     expect(screen.getByText("表 users")).toBeInTheDocument();
-    expect(screen.getByText("共 501 条")).toBeInTheDocument();
+    expect(screen.getByText("1-200")).toBeInTheDocument();
+    expect(screen.getByText("of 501")).toBeInTheDocument();
     await waitFor(() => {
       expect(callBackendMock).toHaveBeenCalledWith("load_database_table_page", {
         request: {
@@ -404,11 +405,64 @@ describe("DatabaseWorkspace", () => {
           page_size: 200,
           sort_column: null,
           sort_direction: null,
+          order_by: null,
           filter: null,
         },
       });
     });
-    expect(screen.getByText("1")).toBeInTheDocument();
+    expect(screen.getAllByText("1")).toHaveLength(2);
+  });
+
+  it("shows table column types only in tooltip and constrains long cell values", async () => {
+    callBackendMock.mockImplementation((command, payload) => {
+      if (command === "list_database_objects") {
+        const request = (payload as { request: { parent_kind?: string } }).request;
+        if (!request.parent_kind) {
+          return Promise.resolve([{ id: "database:app", name: "app", kind: "database", has_children: true }]);
+        }
+        return Promise.resolve([{ id: "table:app.logs", name: "logs", kind: "table", has_children: true }]);
+      }
+      if (command === "load_database_table_page") {
+        return Promise.resolve({
+          columns: [
+            { name: "id", data_type: "int(11)" },
+            { name: "payload", data_type: "LONGTEXT" },
+          ],
+          rows: [[
+            { kind: "number", value: "1" },
+            { kind: "text", value: "this-is-a-very-long-log-payload-that-should-not-stretch-the-column" },
+          ]],
+          total_rows: 1,
+          page: 1,
+          page_size: 200,
+          duration_ms: 9,
+          primary_key_columns: ["id"],
+          editable: true,
+        });
+      }
+      return Promise.resolve([]);
+    });
+
+    renderDatabaseWorkspace("app");
+    await userEvent.dblClick(await screen.findByText("logs"));
+
+    const idHeader = await screen.findByRole("columnheader", { name: "id int(11)" });
+    expect(idHeader).toHaveAttribute("title", "id: int(11)");
+    expect(within(idHeader).queryByText("int(11)")).not.toBeInTheDocument();
+
+    const longCell = screen.getByText("this-is-a-very-long-log-payload-that-should-not-stretch-the-column");
+    expect(longCell).toHaveClass("database-table-browser__cell-content");
+    expect(longCell).toHaveAttribute("title", "this-is-a-very-long-log-payload-that-should-not-stretch-the-column");
+
+    const columnWidths = Array.from(
+      screen.getByLabelText("表数据").querySelectorAll<HTMLTableColElement>(".database-table-browser__data-column"),
+    ).map((column) => Number(column.style.width.replace("px", "")));
+    expect(columnWidths).toHaveLength(2);
+    expect(Math.min(...columnWidths)).toBeGreaterThanOrEqual(96);
+    expect(Math.max(...columnWidths)).toBeLessThanOrEqual(240);
+    expect(screen.getByLabelText("表数据").querySelector("table")).toHaveStyle({
+      width: `${52 + columnWidths.reduce((total, width) => total + width, 0)}px`,
+    });
   });
 
   it("updates table browser paging, sorting and filtering", async () => {
@@ -454,12 +508,14 @@ describe("DatabaseWorkspace", () => {
     });
 
     await userEvent.click(screen.getByRole("button", { name: "id INT" }));
+    expect(screen.getByLabelText("排序")).toHaveAttribute("placeholder", "如 id desc");
     await waitFor(() => {
       expect(callBackendMock).toHaveBeenCalledWith("load_database_table_page", {
         request: expect.objectContaining({
           page: 1,
           sort_column: "id",
           sort_direction: "asc",
+          order_by: null,
         }),
       });
     });
@@ -470,6 +526,20 @@ describe("DatabaseWorkspace", () => {
         request: expect.objectContaining({
           sort_column: "id",
           sort_direction: "desc",
+          order_by: null,
+        }),
+      });
+    });
+
+    expect(screen.getByLabelText("排序")).toHaveAttribute("placeholder", "如 id desc");
+    await userEvent.type(screen.getByLabelText("排序"), "id desc{Enter}");
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("load_database_table_page", {
+        request: expect.objectContaining({
+          page: 1,
+          sort_column: null,
+          sort_direction: null,
+          order_by: "id desc",
         }),
       });
     });
@@ -528,12 +598,7 @@ describe("DatabaseWorkspace", () => {
     expect(screen.getByLabelText("表数据").querySelector(".database-table-browser__table-wrap")).not.toBeNull();
     callBackendMock.mockClear();
 
-    const pageInput = screen.getByLabelText("页码");
-    await userEvent.clear(pageInput);
-    await userEvent.type(pageInput, "2");
-    expect(callBackendMock).not.toHaveBeenCalledWith("load_database_table_page", expect.anything());
-
-    await userEvent.keyboard("{Enter}");
+    await userEvent.click(screen.getByRole("button", { name: "下一页" }));
     await waitFor(() => {
       expect(callBackendMock).toHaveBeenCalledWith("load_database_table_page", {
         request: expect.objectContaining({
@@ -543,12 +608,8 @@ describe("DatabaseWorkspace", () => {
     });
 
     callBackendMock.mockClear();
-    const pageSizeInput = screen.getByLabelText("每页");
-    await userEvent.clear(pageSizeInput);
-    await userEvent.type(pageSizeInput, "500");
-    expect(callBackendMock).not.toHaveBeenCalledWith("load_database_table_page", expect.anything());
-
-    fireEvent.blur(pageSizeInput);
+    await userEvent.click(screen.getByRole("button", { name: "每页" }));
+    await userEvent.click(screen.getByRole("menuitemradio", { name: "500" }));
     await waitFor(() => {
       expect(callBackendMock).toHaveBeenCalledWith("load_database_table_page", {
         request: expect.objectContaining({
@@ -628,8 +689,132 @@ describe("DatabaseWorkspace", () => {
 
     expect(screen.getByText("未保存 1 行 / 1 字段")).toBeInTheDocument();
     expect(screen.getByText("Bob").closest("td")).toHaveClass("database-table-browser__cell--dirty");
-    await userEvent.dblClick(screen.getByText("1"));
+    await userEvent.dblClick(screen.getAllByText("1")[1]);
     expect(screen.queryByLabelText("编辑 id")).not.toBeInTheDocument();
+  });
+
+  it("selects a table cell on click and enters editing mode with all text selected on double click", async () => {
+    const selectSpy = vi.spyOn(HTMLInputElement.prototype, "select");
+    callBackendMock.mockImplementation((command, payload) => {
+      if (command === "list_database_objects") {
+        const request = (payload as { request: { parent_kind?: string } }).request;
+        if (!request.parent_kind) {
+          return Promise.resolve([{ id: "database:app", name: "app", kind: "database", has_children: true }]);
+        }
+        return Promise.resolve([{ id: "table:app.users", name: "users", kind: "table", has_children: true }]);
+      }
+      if (command === "load_database_table_page") {
+        return Promise.resolve({
+          columns: [
+            { name: "id", data_type: "INT" },
+            { name: "name", data_type: "VARCHAR" },
+          ],
+          rows: [[{ kind: "number", value: "1" }, { kind: "text", value: "Alice" }]],
+          total_rows: 1,
+          page: 1,
+          page_size: 200,
+          duration_ms: 9,
+          primary_key_columns: ["id"],
+          editable: true,
+        });
+      }
+      return Promise.resolve([]);
+    });
+
+    renderDatabaseWorkspace("app");
+    await userEvent.dblClick(await screen.findByText("users"));
+    await screen.findByLabelText("表数据");
+
+    const cell = screen.getByText("Alice").closest("td");
+    const row = screen.getByText("Alice").closest("tr");
+    expect(cell).not.toBeNull();
+    expect(row).not.toBeNull();
+
+    await userEvent.click(screen.getByText("Alice"));
+
+    expect(cell).toHaveClass("database-table-browser__cell--selected");
+    expect(row).toHaveClass("database-table-browser__row--selected");
+    expect(screen.queryByLabelText("编辑 name")).not.toBeInTheDocument();
+
+    await userEvent.dblClick(screen.getByText("Alice"));
+
+    const editor = screen.getByLabelText("编辑 name");
+    expect(editor).toHaveValue("Alice");
+    expect(editor.closest("td")).toHaveClass("database-table-browser__cell--editing");
+    expect(selectSpy).toHaveBeenCalled();
+    selectSpy.mockRestore();
+  });
+
+  it("does not mark a cell dirty when the edited value is unchanged", async () => {
+    callBackendMock.mockImplementation((command, payload) => {
+      if (command === "list_database_objects") {
+        const request = (payload as { request: { parent_kind?: string } }).request;
+        if (!request.parent_kind) {
+          return Promise.resolve([{ id: "database:app", name: "app", kind: "database", has_children: true }]);
+        }
+        return Promise.resolve([{ id: "table:app.users", name: "users", kind: "table", has_children: true }]);
+      }
+      if (command === "load_database_table_page") {
+        return Promise.resolve({
+          columns: [
+            { name: "id", data_type: "INT" },
+            { name: "name", data_type: "VARCHAR" },
+          ],
+          rows: [[{ kind: "number", value: "1" }, { kind: "text", value: "Alice" }]],
+          total_rows: 1,
+          page: 1,
+          page_size: 200,
+          duration_ms: 9,
+          primary_key_columns: ["id"],
+          editable: true,
+        });
+      }
+      return Promise.resolve([]);
+    });
+
+    renderDatabaseWorkspace("app");
+    await userEvent.dblClick(await screen.findByText("users"));
+    await screen.findByLabelText("表数据");
+
+    await userEvent.dblClick(screen.getByText("Alice"));
+    await userEvent.type(screen.getByLabelText("编辑 name"), "{Enter}");
+
+    expect(screen.queryByText("未保存 1 行 / 1 字段")).not.toBeInTheDocument();
+    expect(screen.getByText("Alice").closest("td")).not.toHaveClass("database-table-browser__cell--dirty");
+  });
+
+  it("closes the table page size menu when clicking outside", async () => {
+    callBackendMock.mockImplementation((command, payload) => {
+      if (command === "list_database_objects") {
+        const request = (payload as { request: { parent_kind?: string } }).request;
+        if (!request.parent_kind) {
+          return Promise.resolve([{ id: "database:app", name: "app", kind: "database", has_children: true }]);
+        }
+        return Promise.resolve([{ id: "table:app.users", name: "users", kind: "table", has_children: true }]);
+      }
+      if (command === "load_database_table_page") {
+        return Promise.resolve({
+          columns: [{ name: "id", data_type: "INT" }],
+          rows: [[{ kind: "number", value: "1" }]],
+          total_rows: 501,
+          page: 1,
+          page_size: 200,
+          duration_ms: 9,
+          primary_key_columns: ["id"],
+          editable: true,
+        });
+      }
+      return Promise.resolve([]);
+    });
+
+    renderDatabaseWorkspace("app");
+    await userEvent.dblClick(await screen.findByText("users"));
+    await userEvent.click(await screen.findByRole("button", { name: "每页" }));
+    expect(screen.getByRole("menu", { name: "Page Size" })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByText("表 users"));
+
+    expect(screen.queryByRole("menu", { name: "Page Size" })).not.toBeInTheDocument();
   });
 
   it("confirms and saves edited table cells", async () => {

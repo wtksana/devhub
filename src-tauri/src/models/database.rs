@@ -51,6 +51,7 @@ pub struct LoadDatabaseTablePageRequest {
     pub page_size: Option<u32>,
     pub sort_column: Option<String>,
     pub sort_direction: Option<String>,
+    pub order_by: Option<String>,
     pub filter: Option<String>,
 }
 

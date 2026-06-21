@@ -4,7 +4,8 @@ use crate::db::connection::database_connection_url;
 use crate::db::metadata::{metadata_query_for_columns, metadata_query_for_tables};
 use crate::db::query::{
     apply_select_limit, build_table_page_queries, build_table_update_queries, is_dangerous_sql,
-    mysql_prefers_numeric_decode, normalize_table_page_request, normalize_table_update_request,
+    mysql_prefers_datetime_decode, mysql_prefers_numeric_decode,
+    normalize_table_page_request, normalize_table_update_request, postgresql_prefers_datetime_decode,
     primary_key_query_for_table, quote_identifier,
 };
 use crate::models::database::{
@@ -91,6 +92,22 @@ fn treats_mysql_count_bigint_as_numeric_type() {
 }
 
 #[test]
+fn treats_mysql_date_and_time_types_as_datetime_types() {
+    assert!(mysql_prefers_datetime_decode("DATE"));
+    assert!(mysql_prefers_datetime_decode("DATETIME"));
+    assert!(mysql_prefers_datetime_decode("TIMESTAMP"));
+    assert!(mysql_prefers_datetime_decode("TIME"));
+}
+
+#[test]
+fn treats_postgresql_date_and_time_types_as_datetime_types() {
+    assert!(postgresql_prefers_datetime_decode("DATE"));
+    assert!(postgresql_prefers_datetime_decode("TIMESTAMP"));
+    assert!(postgresql_prefers_datetime_decode("TIMESTAMP WITH TIME ZONE"));
+    assert!(postgresql_prefers_datetime_decode("TIME"));
+}
+
+#[test]
 fn builds_mysql_table_page_queries_with_sort_and_filter() {
     let request = LoadDatabaseTablePageRequest {
         connection_id: "mysql-dev".to_string(),
@@ -100,6 +117,7 @@ fn builds_mysql_table_page_queries_with_sort_and_filter() {
         page_size: Some(50),
         sort_column: Some("created_at".to_string()),
         sort_direction: Some("desc".to_string()),
+        order_by: None,
         filter: Some("status = 'SUCCESS'".to_string()),
     };
     let normalized = normalize_table_page_request(request).unwrap();
@@ -116,6 +134,28 @@ fn builds_mysql_table_page_queries_with_sort_and_filter() {
 }
 
 #[test]
+fn builds_table_page_queries_with_custom_order_by_clause() {
+    let request = LoadDatabaseTablePageRequest {
+        connection_id: "mysql-dev".to_string(),
+        database: "app".to_string(),
+        table: "users".to_string(),
+        page: Some(1),
+        page_size: Some(200),
+        sort_column: None,
+        sort_direction: None,
+        order_by: Some("id desc".to_string()),
+        filter: None,
+    };
+    let normalized = normalize_table_page_request(request).unwrap();
+    let queries = build_table_page_queries("mysql", &normalized).unwrap();
+
+    assert_eq!(
+        queries.page_sql,
+        "SELECT * FROM `users` ORDER BY id desc LIMIT 200 OFFSET 0"
+    );
+}
+
+#[test]
 fn builds_postgresql_table_page_queries_without_optional_clauses() {
     let request = LoadDatabaseTablePageRequest {
         connection_id: "pg-dev".to_string(),
@@ -125,6 +165,7 @@ fn builds_postgresql_table_page_queries_without_optional_clauses() {
         page_size: Some(200),
         sort_column: None,
         sort_direction: None,
+        order_by: None,
         filter: None,
     };
     let normalized = normalize_table_page_request(request).unwrap();
@@ -144,6 +185,7 @@ fn mysql_table_page_identifier_uses_table_only() {
         page_size: Some(200),
         sort_column: None,
         sort_direction: None,
+        order_by: None,
         filter: None,
     };
     let normalized = normalize_table_page_request(request).unwrap();
@@ -162,6 +204,7 @@ fn normalizes_table_page_request_bounds() {
         page_size: Some(20_000),
         sort_column: None,
         sort_direction: None,
+        order_by: None,
         filter: Some("   ".to_string()),
     };
     let normalized = normalize_table_page_request(request).unwrap();
@@ -181,6 +224,7 @@ fn rejects_invalid_table_page_sort_direction() {
         page_size: Some(200),
         sort_column: Some("id".to_string()),
         sort_direction: Some("sideways".to_string()),
+        order_by: None,
         filter: None,
     };
 

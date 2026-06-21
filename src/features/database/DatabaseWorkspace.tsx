@@ -16,6 +16,9 @@ import { useI18n } from "../../i18n/useI18n";
 import { ContextMenu } from "../../app/ContextMenu";
 import type { ContextMenuState } from "../../app/ContextMenu";
 import { readClipboardText } from "../../lib/clipboard";
+import collapseEditorIcon from "../../assets/icons/oi--collapse-up.png";
+import expandEditorIcon from "../../assets/icons/oi--expand-down.png";
+import sqlFileIcon from "../../assets/icons/ph--file-sql-light.png";
 
 const DEFAULT_SQL_LIMIT = 200;
 const DEFAULT_OBJECT_TREE_WIDTH = 220;
@@ -314,11 +317,19 @@ export function DatabaseWorkspace({ connectionId, initialDatabase, theme, fontFa
         <div className="database-query-panel">
           <div className="database-query-panel__toolbar">
             <span>{t("database.sql_editor")}</span>
-            <button type="button" onClick={() => setIsEditorOpen((current) => !current)}>
-              {isEditorOpen ? t("database.collapse_editor") : t("database.open_editor")}
+            <button
+              type="button"
+              className="database-icon-button"
+              aria-label={isEditorOpen ? t("database.collapse_editor") : t("database.open_editor")}
+              title={isEditorOpen ? t("database.collapse_editor") : t("database.open_editor")}
+              onClick={() => setIsEditorOpen((current) => !current)}
+            >
+              <img aria-hidden="true" src={isEditorOpen ? collapseEditorIcon : expandEditorIcon} alt="" />
             </button>
             <label>
-              <span>{t("database.sql_file")}</span>
+              <span className="database-query-panel__icon-label" title={t("database.sql_file")}>
+                <img aria-hidden="true" src={sqlFileIcon} alt="" />
+              </span>
               <select
                 aria-label={t("database.sql_file")}
                 value={selectedSqlFileName}
@@ -471,9 +482,8 @@ function DatabaseResultView({ result }: { result: DatabaseQueryResult }) {
             <thead>
               <tr>
                 {result.columns.map((column) => (
-                  <th key={column.name} scope="col" aria-label={`${column.name} ${column.data_type}`}>
+                  <th key={column.name} scope="col" aria-label={`${column.name} ${column.data_type}`} title={columnTooltip(column.name, column.data_type)}>
                     <span>{column.name}</span>
-                    <small>{column.data_type}</small>
                   </th>
                 ))}
               </tr>
@@ -482,7 +492,11 @@ function DatabaseResultView({ result }: { result: DatabaseQueryResult }) {
               {result.rows.length > 0 ? result.rows.map((row, rowIndex) => (
                 <tr key={rowIndex}>
                   {row.map((cell, cellIndex) => (
-                    <td key={cellIndex}>{formatCellValue(cell)}</td>
+                    <td key={cellIndex}>
+                      <span className="database-result__cell-content" title={formatCellValue(cell)}>
+                        {formatCellValue(cell)}
+                      </span>
+                    </td>
                   ))}
                 </tr>
               )) : (
@@ -502,6 +516,10 @@ function formatCellValue(cell: DatabaseCellValue) {
   if (cell.kind === "null") return "NULL";
   if (cell.kind === "bool") return String(cell.value);
   return cell.value;
+}
+
+function columnTooltip(columnName: string, dataType: string) {
+  return dataType ? `${columnName}: ${dataType}` : columnName;
 }
 
 function isDangerousSql(sql: string) {

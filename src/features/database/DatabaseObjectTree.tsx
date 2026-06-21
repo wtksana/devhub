@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
-import { Table2 } from "lucide-react";
 import { useI18n } from "../../i18n/useI18n";
 import { callBackend } from "../../lib/tauri";
 import type { DatabaseTreeNode } from "./databaseTypes";
+import tableIcon from "../../assets/icons/mdi-light--table.png";
 
 interface DatabaseObjectTreeProps {
   connectionId: string;
@@ -138,7 +138,7 @@ export function DatabaseObjectTree({ connectionId, selectedDatabase, onDatabaseC
       <ul aria-label={t("database.table_list")}>
         {visibleTables.map((node) => (
           <li key={node.id}>
-            <Table2 aria-hidden="true" className="database-object-tree__icon" size={15} strokeWidth={1.75} />
+            <img aria-hidden="true" className="database-object-tree__icon" src={tableIcon} alt="" />
             <span onDoubleClick={() => {
               if (node.kind === "table" || node.kind === "view") {
                 onOpenTable?.(node);

@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Instant;
 
+use sqlx::types::chrono::{DateTime, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use sqlx::mysql::{MySqlArguments, MySqlRow};
 use sqlx::postgres::{PgArguments, PgRow};
 use sqlx::{Column, Connection, MySql, MySqlConnection, PgConnection, Postgres, Row, TypeInfo, ValueRef};
@@ -28,6 +29,7 @@ pub struct NormalizedTablePageRequest {
     pub page_size: u32,
     pub sort_column: Option<String>,
     pub sort_direction: Option<String>,
+    pub order_by: Option<String>,
     pub filter: Option<String>,
 }
 
@@ -174,6 +176,10 @@ pub fn normalize_table_page_request(
             .map(|column| column.trim().to_string())
             .filter(|column| !column.is_empty()),
         sort_direction,
+        order_by: request
+            .order_by
+            .map(|order_by| order_by.trim().to_string())
+            .filter(|order_by| !order_by.is_empty()),
         filter: request
             .filter
             .map(|filter| filter.trim().to_string())
@@ -191,12 +197,16 @@ pub fn build_table_page_queries(
         .as_ref()
         .map(|filter| format!(" WHERE {filter}"))
         .unwrap_or_default();
-    let order_clause = match (&request.sort_column, &request.sort_direction) {
-        (Some(column), Some(direction)) => {
-            let column = quote_identifier(kind, column)?;
-            format!(" ORDER BY {column} {}", direction.to_ascii_uppercase())
+    let order_clause = if let Some(order_by) = &request.order_by {
+        format!(" ORDER BY {order_by}")
+    } else {
+        match (&request.sort_column, &request.sort_direction) {
+            (Some(column), Some(direction)) => {
+                let column = quote_identifier(kind, column)?;
+                format!(" ORDER BY {column} {}", direction.to_ascii_uppercase())
+            }
+            _ => String::new(),
         }
-        _ => String::new(),
     };
     let offset = (request.page - 1) as u64 * request.page_size as u64;
 
@@ -750,7 +760,7 @@ fn rows_to_postgresql_result(
         .map(|row| {
             row.columns()
                 .iter()
-                .map(|column| postgresql_cell_value(row, column.name()))
+                .map(|column| postgresql_cell_value(row, column.name(), column.type_info().name()))
                 .collect()
         })
         .collect::<Vec<_>>();
@@ -778,6 +788,11 @@ fn mysql_cell_value(row: &MySqlRow, column_name: &str, type_name: &str) -> Datab
     }
     if mysql_prefers_numeric_decode(type_name) {
         if let Some(value) = mysql_number_cell_value(row, column_name) {
+            return value;
+        }
+    }
+    if mysql_prefers_datetime_decode(type_name) {
+        if let Some(value) = mysql_datetime_cell_value(row, column_name, type_name) {
             return value;
         }
     }
@@ -814,6 +829,34 @@ fn mysql_number_cell_value(row: &MySqlRow, column_name: &str) -> Option<Database
     None
 }
 
+fn mysql_datetime_cell_value(
+    row: &MySqlRow,
+    column_name: &str,
+    type_name: &str,
+) -> Option<DatabaseCellValue> {
+    match type_name.to_ascii_uppercase().as_str() {
+        "DATE" => row
+            .try_get::<NaiveDate, _>(column_name)
+            .ok()
+            .map(|value| DatabaseCellValue::Text {
+                value: value.to_string(),
+            }),
+        "TIME" => row
+            .try_get::<NaiveTime, _>(column_name)
+            .ok()
+            .map(|value| DatabaseCellValue::Text {
+                value: value.to_string(),
+            }),
+        "DATETIME" | "TIMESTAMP" => row
+            .try_get::<NaiveDateTime, _>(column_name)
+            .ok()
+            .map(|value| DatabaseCellValue::Text {
+                value: value.to_string(),
+            }),
+        _ => None,
+    }
+}
+
 pub(crate) fn mysql_prefers_numeric_decode(type_name: &str) -> bool {
     matches!(
         type_name.to_ascii_uppercase().as_str(),
@@ -832,14 +875,26 @@ pub(crate) fn mysql_prefers_numeric_decode(type_name: &str) -> bool {
     )
 }
 
+pub(crate) fn mysql_prefers_datetime_decode(type_name: &str) -> bool {
+    matches!(
+        type_name.to_ascii_uppercase().as_str(),
+        "DATE" | "DATETIME" | "TIMESTAMP" | "TIME"
+    )
+}
+
 fn mysql_prefers_bool_decode(type_name: &str) -> bool {
     matches!(type_name.to_ascii_uppercase().as_str(), "BOOL" | "BOOLEAN")
 }
 
-fn postgresql_cell_value(row: &PgRow, column_name: &str) -> DatabaseCellValue {
+fn postgresql_cell_value(row: &PgRow, column_name: &str, type_name: &str) -> DatabaseCellValue {
     if let Ok(value_ref) = row.try_get_raw(column_name) {
         if value_ref.is_null() {
             return DatabaseCellValue::Null;
+        }
+    }
+    if postgresql_prefers_datetime_decode(type_name) {
+        if let Some(value) = postgresql_datetime_cell_value(row, column_name, type_name) {
+            return value;
         }
     }
     if let Ok(value) = row.try_get::<bool, _>(column_name) {
@@ -861,6 +916,59 @@ fn postgresql_cell_value(row: &PgRow, column_name: &str) -> DatabaseCellValue {
     DatabaseCellValue::Text {
         value: "<unsupported>".to_string(),
     }
+}
+
+fn postgresql_datetime_cell_value(
+    row: &PgRow,
+    column_name: &str,
+    type_name: &str,
+) -> Option<DatabaseCellValue> {
+    match type_name.to_ascii_uppercase().as_str() {
+        "DATE" => row
+            .try_get::<NaiveDate, _>(column_name)
+            .ok()
+            .map(|value| DatabaseCellValue::Text {
+                value: value.to_string(),
+            }),
+        "TIME" | "TIME WITHOUT TIME ZONE" => row
+            .try_get::<NaiveTime, _>(column_name)
+            .ok()
+            .map(|value| DatabaseCellValue::Text {
+                value: value.to_string(),
+            }),
+        "TIMESTAMP" | "TIMESTAMP WITHOUT TIME ZONE" => row
+            .try_get::<NaiveDateTime, _>(column_name)
+            .ok()
+            .map(|value| DatabaseCellValue::Text {
+                value: value.to_string(),
+            }),
+        "TIMESTAMPTZ" | "TIMESTAMP WITH TIME ZONE" => {
+            if let Ok(value) = row.try_get::<DateTime<Utc>, _>(column_name) {
+                return Some(DatabaseCellValue::Text {
+                    value: value.to_string(),
+                });
+            }
+            row.try_get::<DateTime<FixedOffset>, _>(column_name)
+                .ok()
+                .map(|value| DatabaseCellValue::Text {
+                    value: value.to_string(),
+                })
+        }
+        _ => None,
+    }
+}
+
+pub(crate) fn postgresql_prefers_datetime_decode(type_name: &str) -> bool {
+    matches!(
+        type_name.to_ascii_uppercase().as_str(),
+        "DATE"
+            | "TIME"
+            | "TIME WITHOUT TIME ZONE"
+            | "TIMESTAMP"
+            | "TIMESTAMP WITHOUT TIME ZONE"
+            | "TIMESTAMPTZ"
+            | "TIMESTAMP WITH TIME ZONE"
+    )
 }
 
 fn contains_limit_clause(sql: &str) -> bool {
