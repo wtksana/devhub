@@ -1,14 +1,17 @@
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::Instant;
 
-use sqlx::mysql::MySqlRow;
-use sqlx::postgres::PgRow;
-use sqlx::{Column, Connection, MySqlConnection, PgConnection, Row, TypeInfo, ValueRef};
+use sqlx::mysql::{MySqlArguments, MySqlRow};
+use sqlx::postgres::{PgArguments, PgRow};
+use sqlx::{Column, Connection, MySql, MySqlConnection, PgConnection, Postgres, Row, TypeInfo, ValueRef};
 
 use crate::db::connection::database_connection_url;
 use crate::db::connection::DatabaseConnectionManager;
+use crate::db::metadata::MetadataQuery;
 use crate::models::database::{
     DatabaseCellValue, DatabaseQueryResult, DatabaseResultColumn, DatabaseTablePageResult,
-    ExecuteDatabaseQueryRequest, LoadDatabaseTablePageRequest,
+    DatabaseTableUpdateResult, ExecuteDatabaseQueryRequest, LoadDatabaseTablePageRequest,
+    UpdateDatabaseTableRowsRequest,
 };
 use crate::models::settings::DatabaseConnectionSettings;
 
@@ -32,6 +35,27 @@ pub struct NormalizedTablePageRequest {
 pub struct TablePageQueries {
     pub count_sql: String,
     pub page_sql: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct NormalizedTableUpdateRequest {
+    pub connection_id: String,
+    pub database: String,
+    pub table: String,
+    pub primary_key_columns: Vec<String>,
+    pub rows: Vec<NormalizedTableUpdateRow>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct NormalizedTableUpdateRow {
+    pub primary_key_values: BTreeMap<String, DatabaseCellValue>,
+    pub changes: BTreeMap<String, DatabaseCellValue>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TableUpdateQuery {
+    pub sql: String,
+    pub values: Vec<DatabaseCellValue>,
 }
 
 pub async fn execute_database_query(
@@ -93,6 +117,24 @@ pub fn quote_identifier(kind: &str, identifier: &str) -> Result<String, String> 
     match kind {
         "mysql" => Ok(format!("`{}`", identifier.replace('`', "``"))),
         "postgresql" => Ok(format!("\"{}\"", identifier.replace('"', "\"\""))),
+        kind => Err(format!("unsupported database connection kind: {kind}")),
+    }
+}
+
+pub fn primary_key_query_for_table(
+    kind: &str,
+    database: &str,
+    table: &str,
+) -> Result<MetadataQuery, String> {
+    match kind {
+        "mysql" => Ok(MetadataQuery {
+            sql: "select column_name from information_schema.key_column_usage where table_schema = ? and table_name = ? and constraint_name = 'PRIMARY' order by ordinal_position".to_string(),
+            binds: vec![database.to_string(), table.to_string()],
+        }),
+        "postgresql" => Ok(MetadataQuery {
+            sql: "select kcu.column_name from information_schema.table_constraints tc join information_schema.key_column_usage kcu on tc.constraint_name = kcu.constraint_name and tc.table_schema = kcu.table_schema where tc.table_schema = $1 and tc.table_name = $2 and tc.constraint_type = 'PRIMARY KEY' order by kcu.ordinal_position".to_string(),
+            binds: vec![database.to_string(), table.to_string()],
+        }),
         kind => Err(format!("unsupported database connection kind: {kind}")),
     }
 }
@@ -167,6 +209,122 @@ pub fn build_table_page_queries(
     })
 }
 
+pub fn normalize_table_update_request(
+    request: UpdateDatabaseTableRowsRequest,
+    actual_primary_key_columns: &[String],
+) -> Result<NormalizedTableUpdateRequest, String> {
+    let database = request.database.trim();
+    if database.is_empty() {
+        return Err("database is required".to_string());
+    }
+    let table = request.table.trim();
+    if table.is_empty() {
+        return Err("table is required".to_string());
+    }
+    if actual_primary_key_columns.is_empty() {
+        return Err("table has no primary key".to_string());
+    }
+    if request.rows.is_empty() {
+        return Err("rows are required".to_string());
+    }
+
+    let primary_key_set = actual_primary_key_columns
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let mut rows = Vec::with_capacity(request.rows.len());
+    for row in request.rows {
+        if row.changes.is_empty() {
+            return Err("row changes are required".to_string());
+        }
+        for key in row.changes.keys() {
+            if primary_key_set.contains(key) {
+                return Err(format!("primary key column cannot be updated: {key}"));
+            }
+        }
+        for key in actual_primary_key_columns {
+            if !row.primary_key_values.contains_key(key) {
+                return Err(format!("primary key value is required: {key}"));
+            }
+        }
+        rows.push(NormalizedTableUpdateRow {
+            primary_key_values: row.primary_key_values,
+            changes: row.changes,
+        });
+    }
+
+    Ok(NormalizedTableUpdateRequest {
+        connection_id: request.connection_id,
+        database: database.to_string(),
+        table: table.to_string(),
+        primary_key_columns: actual_primary_key_columns.to_vec(),
+        rows,
+    })
+}
+
+pub fn build_table_update_queries(
+    kind: &str,
+    request: &NormalizedTableUpdateRequest,
+) -> Result<Vec<TableUpdateQuery>, String> {
+    let table = table_identifier(kind, &request.database, &request.table)?;
+    request
+        .rows
+        .iter()
+        .map(|row| {
+            let mut values = Vec::new();
+            let mut parameter_index = 1;
+            let mut set_parts = Vec::new();
+            for (column, value) in &row.changes {
+                let placeholder = parameter_placeholder(kind, parameter_index)?;
+                parameter_index += 1;
+                set_parts.push(format!(
+                    "{} = {placeholder}",
+                    quote_identifier(kind, column)?
+                ));
+                values.push(value.clone());
+            }
+            let mut where_parts = Vec::new();
+            for column in &request.primary_key_columns {
+                let placeholder = parameter_placeholder(kind, parameter_index)?;
+                parameter_index += 1;
+                where_parts.push(format!(
+                    "{} = {placeholder}",
+                    quote_identifier(kind, column)?
+                ));
+                values.push(row.primary_key_values[column].clone());
+            }
+            Ok(TableUpdateQuery {
+                sql: format!(
+                    "UPDATE {table} SET {} WHERE {}",
+                    set_parts.join(", "),
+                    where_parts.join(" AND ")
+                ),
+                values,
+            })
+        })
+        .collect()
+}
+
+fn table_identifier(kind: &str, database: &str, table: &str) -> Result<String, String> {
+    match kind {
+        "mysql" => quote_identifier(kind, table),
+        "postgresql" => Ok(format!(
+            "{}.{}",
+            quote_identifier(kind, database)?,
+            quote_identifier(kind, table)?
+        )),
+        kind => Err(format!("unsupported database connection kind: {kind}")),
+    }
+}
+
+fn parameter_placeholder(kind: &str, index: usize) -> Result<String, String> {
+    match kind {
+        "mysql" => Ok("?".to_string()),
+        "postgresql" => Ok(format!("${index}")),
+        kind => Err(format!("unsupported database connection kind: {kind}")),
+    }
+}
+
 fn table_page_table_identifier(
     kind: &str,
     request: &NormalizedTablePageRequest,
@@ -197,6 +355,18 @@ pub async fn load_database_table_page(
     }
 }
 
+pub async fn update_database_table_rows(
+    _manager: &DatabaseConnectionManager,
+    connection: &DatabaseConnectionSettings,
+    request: &UpdateDatabaseTableRowsRequest,
+) -> Result<DatabaseTableUpdateResult, String> {
+    match connection.kind.as_str() {
+        "mysql" => update_mysql_table_rows(connection, request).await,
+        "postgresql" => update_postgresql_table_rows(connection, request).await,
+        kind => Err(format!("unsupported database connection kind: {kind}")),
+    }
+}
+
 async fn load_mysql_table_page(
     connection: &DatabaseConnectionSettings,
     request: &NormalizedTablePageRequest,
@@ -215,6 +385,9 @@ async fn load_mysql_table_page(
         .await
         .map_err(|error| error.to_string())?;
     let total_rows = mysql_count_value(&count_row, "total")?;
+    let primary_key_columns =
+        load_mysql_primary_key_columns(&mut connection, &request.database, &request.table).await?;
+    let editable = !primary_key_columns.is_empty();
     let rows = sqlx::query(&queries.page_sql)
         .fetch_all(&mut connection)
         .await
@@ -231,6 +404,8 @@ async fn load_mysql_table_page(
         page: request.page,
         page_size: request.page_size,
         duration_ms: started_at.elapsed().as_millis(),
+        primary_key_columns,
+        editable,
     })
 }
 
@@ -249,6 +424,10 @@ async fn load_postgresql_table_page(
         .await
         .map_err(|error| error.to_string())?;
     let total_rows = postgresql_count_value(&count_row, "total")?;
+    let primary_key_columns =
+        load_postgresql_primary_key_columns(&mut connection, &request.database, &request.table)
+            .await?;
+    let editable = !primary_key_columns.is_empty();
     let rows = sqlx::query(&queries.page_sql)
         .fetch_all(&mut connection)
         .await
@@ -265,7 +444,161 @@ async fn load_postgresql_table_page(
         page: request.page,
         page_size: request.page_size,
         duration_ms: started_at.elapsed().as_millis(),
+        primary_key_columns,
+        editable,
     })
+}
+
+async fn load_mysql_primary_key_columns(
+    connection: &mut MySqlConnection,
+    database: &str,
+    table: &str,
+) -> Result<Vec<String>, String> {
+    let query = primary_key_query_for_table("mysql", database, table)?;
+    let rows = sqlx::query(&query.sql)
+        .bind(&query.binds[0])
+        .bind(&query.binds[1])
+        .fetch_all(connection)
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(rows.into_iter().map(|row| row.get("column_name")).collect())
+}
+
+async fn load_postgresql_primary_key_columns(
+    connection: &mut PgConnection,
+    database: &str,
+    table: &str,
+) -> Result<Vec<String>, String> {
+    let query = primary_key_query_for_table("postgresql", database, table)?;
+    let rows = sqlx::query(&query.sql)
+        .bind(&query.binds[0])
+        .bind(&query.binds[1])
+        .fetch_all(connection)
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(rows.into_iter().map(|row| row.get("column_name")).collect())
+}
+
+async fn update_mysql_table_rows(
+    connection: &DatabaseConnectionSettings,
+    request: &UpdateDatabaseTableRowsRequest,
+) -> Result<DatabaseTableUpdateResult, String> {
+    let url = database_connection_url(&DatabaseConnectionSettings {
+        database: Some(request.database.clone()),
+        ..connection.clone()
+    })?;
+    let mut connection = MySqlConnection::connect(&url)
+        .await
+        .map_err(|error| error.to_string())?;
+    let primary_key_columns =
+        load_mysql_primary_key_columns(&mut connection, &request.database, &request.table).await?;
+    let normalized = normalize_table_update_request(request.clone(), &primary_key_columns)?;
+    let queries = build_table_update_queries("mysql", &normalized)?;
+    let started_at = Instant::now();
+    let mut updated_rows = 0;
+    let mut updated_fields = 0;
+
+    for (row, query) in normalized.rows.iter().zip(queries) {
+        let mut sql = sqlx::query(&query.sql);
+        for value in &query.values {
+            sql = bind_mysql_value(sql, value);
+        }
+        let result = sql
+            .execute(&mut connection)
+            .await
+            .map_err(|error| error.to_string())?;
+        if result.rows_affected() != 1 {
+            return Err(format!(
+                "expected to update 1 row, updated {}",
+                result.rows_affected()
+            ));
+        }
+        updated_rows += 1;
+        updated_fields += row.changes.len() as u64;
+    }
+
+    connection
+        .close()
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(DatabaseTableUpdateResult {
+        updated_rows,
+        updated_fields,
+        duration_ms: started_at.elapsed().as_millis(),
+    })
+}
+
+async fn update_postgresql_table_rows(
+    connection: &DatabaseConnectionSettings,
+    request: &UpdateDatabaseTableRowsRequest,
+) -> Result<DatabaseTableUpdateResult, String> {
+    let url = database_connection_url(connection)?;
+    let mut connection = PgConnection::connect(&url)
+        .await
+        .map_err(|error| error.to_string())?;
+    let primary_key_columns =
+        load_postgresql_primary_key_columns(&mut connection, &request.database, &request.table)
+            .await?;
+    let normalized = normalize_table_update_request(request.clone(), &primary_key_columns)?;
+    let queries = build_table_update_queries("postgresql", &normalized)?;
+    let started_at = Instant::now();
+    let mut updated_rows = 0;
+    let mut updated_fields = 0;
+
+    for (row, query) in normalized.rows.iter().zip(queries) {
+        let mut sql = sqlx::query(&query.sql);
+        for value in &query.values {
+            sql = bind_postgresql_value(sql, value);
+        }
+        let result = sql
+            .execute(&mut connection)
+            .await
+            .map_err(|error| error.to_string())?;
+        if result.rows_affected() != 1 {
+            return Err(format!(
+                "expected to update 1 row, updated {}",
+                result.rows_affected()
+            ));
+        }
+        updated_rows += 1;
+        updated_fields += row.changes.len() as u64;
+    }
+
+    connection
+        .close()
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(DatabaseTableUpdateResult {
+        updated_rows,
+        updated_fields,
+        duration_ms: started_at.elapsed().as_millis(),
+    })
+}
+
+fn bind_mysql_value<'q>(
+    query: sqlx::query::Query<'q, MySql, MySqlArguments>,
+    value: &'q DatabaseCellValue,
+) -> sqlx::query::Query<'q, MySql, MySqlArguments> {
+    match value {
+        DatabaseCellValue::Null => query.bind(Option::<String>::None),
+        DatabaseCellValue::Text { value } | DatabaseCellValue::Number { value } => {
+            query.bind(value)
+        }
+        DatabaseCellValue::Bool { value } => query.bind(*value),
+    }
+}
+
+fn bind_postgresql_value<'q>(
+    query: sqlx::query::Query<'q, Postgres, PgArguments>,
+    value: &'q DatabaseCellValue,
+) -> sqlx::query::Query<'q, Postgres, PgArguments> {
+    match value {
+        DatabaseCellValue::Null => query.bind(Option::<String>::None),
+        DatabaseCellValue::Text { value } | DatabaseCellValue::Number { value } => {
+            query.bind(value)
+        }
+        DatabaseCellValue::Bool { value } => query.bind(*value),
+    }
 }
 
 fn mysql_count_value(row: &MySqlRow, column_name: &str) -> Result<u64, String> {

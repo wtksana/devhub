@@ -79,6 +79,7 @@ pub fn run() {
             commands::database::list_database_objects,
             commands::database::execute_database_query,
             commands::database::load_database_table_page,
+            commands::database::update_database_table_rows,
             commands::database::list_database_sql_files,
             commands::database::save_database_sql_file,
             commands::redis::test_redis_connection,

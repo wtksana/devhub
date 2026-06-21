@@ -1,10 +1,16 @@
+use std::collections::BTreeMap;
+
 use crate::db::connection::database_connection_url;
 use crate::db::metadata::{metadata_query_for_columns, metadata_query_for_tables};
 use crate::db::query::{
-    apply_select_limit, build_table_page_queries, is_dangerous_sql, mysql_prefers_numeric_decode,
-    normalize_table_page_request, quote_identifier,
+    apply_select_limit, build_table_page_queries, build_table_update_queries, is_dangerous_sql,
+    mysql_prefers_numeric_decode, normalize_table_page_request, normalize_table_update_request,
+    primary_key_query_for_table, quote_identifier,
 };
-use crate::models::database::LoadDatabaseTablePageRequest;
+use crate::models::database::{
+    DatabaseCellValue, DatabaseTableUpdateRow, LoadDatabaseTablePageRequest,
+    UpdateDatabaseTableRowsRequest,
+};
 use crate::models::settings::DatabaseConnectionSettings;
 
 #[test]
@@ -129,6 +135,24 @@ fn builds_postgresql_table_page_queries_without_optional_clauses() {
 }
 
 #[test]
+fn mysql_table_page_identifier_uses_table_only() {
+    let request = LoadDatabaseTablePageRequest {
+        connection_id: "mysql-dev".to_string(),
+        database: "app".to_string(),
+        table: "users".to_string(),
+        page: Some(1),
+        page_size: Some(200),
+        sort_column: None,
+        sort_direction: None,
+        filter: None,
+    };
+    let normalized = normalize_table_page_request(request).unwrap();
+    let queries = build_table_page_queries("mysql", &normalized).unwrap();
+
+    assert!(queries.page_sql.starts_with("SELECT * FROM `users`"));
+}
+
+#[test]
 fn normalizes_table_page_request_bounds() {
     let request = LoadDatabaseTablePageRequest {
         connection_id: "mysql-dev".to_string(),
@@ -186,4 +210,200 @@ fn quotes_postgresql_identifier() {
         quote_identifier("postgresql", "user\"log").unwrap(),
         "\"user\"\"log\""
     );
+}
+
+#[test]
+fn builds_mysql_primary_key_query() {
+    let query = primary_key_query_for_table("mysql", "app", "users").unwrap();
+
+    assert!(query.sql.contains("information_schema.key_column_usage"));
+    assert!(query.sql.contains("constraint_name = 'PRIMARY'"));
+    assert_eq!(query.binds, vec!["app".to_string(), "users".to_string()]);
+}
+
+#[test]
+fn builds_postgresql_primary_key_query() {
+    let query = primary_key_query_for_table("postgresql", "public", "users").unwrap();
+
+    assert!(query.sql.contains("information_schema.table_constraints"));
+    assert!(query.sql.contains("PRIMARY KEY"));
+    assert_eq!(query.binds, vec!["public".to_string(), "users".to_string()]);
+}
+
+#[test]
+fn builds_mysql_table_update_query() {
+    let request = table_update_request(
+        "mysql-dev",
+        "app",
+        "users",
+        vec!["id"],
+        vec![(
+            "name",
+            DatabaseCellValue::Text {
+                value: "Alice".to_string(),
+            },
+        )],
+        vec![(
+            "id",
+            DatabaseCellValue::Number {
+                value: "1".to_string(),
+            },
+        )],
+    );
+    let normalized = normalize_table_update_request(request, &["id".to_string()]).unwrap();
+    let queries = build_table_update_queries("mysql", &normalized).unwrap();
+
+    assert_eq!(
+        queries[0].sql,
+        "UPDATE `users` SET `name` = ? WHERE `id` = ?"
+    );
+    assert_eq!(
+        queries[0].values,
+        vec![
+            DatabaseCellValue::Text {
+                value: "Alice".to_string()
+            },
+            DatabaseCellValue::Number {
+                value: "1".to_string()
+            },
+        ]
+    );
+}
+
+#[test]
+fn builds_postgresql_table_update_query_with_composite_primary_key() {
+    let request = table_update_request(
+        "pg-dev",
+        "public",
+        "order_items",
+        vec!["order_id", "item_id"],
+        vec![(
+            "quantity",
+            DatabaseCellValue::Number {
+                value: "2".to_string(),
+            },
+        )],
+        vec![
+            (
+                "order_id",
+                DatabaseCellValue::Number {
+                    value: "10".to_string(),
+                },
+            ),
+            (
+                "item_id",
+                DatabaseCellValue::Number {
+                    value: "3".to_string(),
+                },
+            ),
+        ],
+    );
+    let normalized = normalize_table_update_request(
+        request,
+        &["order_id".to_string(), "item_id".to_string()],
+    )
+    .unwrap();
+    let queries = build_table_update_queries("postgresql", &normalized).unwrap();
+
+    assert_eq!(
+        queries[0].sql,
+        "UPDATE \"public\".\"order_items\" SET \"quantity\" = $1 WHERE \"order_id\" = $2 AND \"item_id\" = $3"
+    );
+}
+
+#[test]
+fn rejects_table_update_without_primary_key() {
+    let request = table_update_request(
+        "mysql-dev",
+        "app",
+        "users",
+        vec![],
+        vec![(
+            "name",
+            DatabaseCellValue::Text {
+                value: "Alice".to_string(),
+            },
+        )],
+        vec![],
+    );
+
+    assert_eq!(
+        normalize_table_update_request(request, &[]).unwrap_err(),
+        "table has no primary key"
+    );
+}
+
+#[test]
+fn rejects_table_update_when_changes_include_primary_key() {
+    let request = table_update_request(
+        "mysql-dev",
+        "app",
+        "users",
+        vec!["id"],
+        vec![(
+            "id",
+            DatabaseCellValue::Number {
+                value: "2".to_string(),
+            },
+        )],
+        vec![(
+            "id",
+            DatabaseCellValue::Number {
+                value: "1".to_string(),
+            },
+        )],
+    );
+
+    assert_eq!(
+        normalize_table_update_request(request, &["id".to_string()]).unwrap_err(),
+        "primary key column cannot be updated: id"
+    );
+}
+
+#[test]
+fn rejects_table_update_without_changes() {
+    let request = table_update_request(
+        "mysql-dev",
+        "app",
+        "users",
+        vec!["id"],
+        vec![],
+        vec![(
+            "id",
+            DatabaseCellValue::Number {
+                value: "1".to_string(),
+            },
+        )],
+    );
+
+    assert_eq!(
+        normalize_table_update_request(request, &["id".to_string()]).unwrap_err(),
+        "row changes are required"
+    );
+}
+
+fn table_update_request(
+    connection_id: &str,
+    database: &str,
+    table: &str,
+    primary_key_columns: Vec<&str>,
+    changes: Vec<(&str, DatabaseCellValue)>,
+    primary_key_values: Vec<(&str, DatabaseCellValue)>,
+) -> UpdateDatabaseTableRowsRequest {
+    UpdateDatabaseTableRowsRequest {
+        connection_id: connection_id.to_string(),
+        database: database.to_string(),
+        table: table.to_string(),
+        primary_key_columns: primary_key_columns.into_iter().map(str::to_string).collect(),
+        rows: vec![DatabaseTableUpdateRow {
+            primary_key_values: primary_key_values
+                .into_iter()
+                .map(|(key, value)| (key.to_string(), value))
+                .collect::<BTreeMap<_, _>>(),
+            changes: changes
+                .into_iter()
+                .map(|(key, value)| (key.to_string(), value))
+                .collect::<BTreeMap<_, _>>(),
+        }],
+    }
 }

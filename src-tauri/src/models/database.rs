@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -64,7 +66,7 @@ pub struct DatabaseResultColumn {
     pub data_type: String,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum DatabaseCellValue {
     Null,
@@ -89,5 +91,29 @@ pub struct DatabaseTablePageResult {
     pub total_rows: u64,
     pub page: u32,
     pub page_size: u32,
+    pub duration_ms: u128,
+    pub primary_key_columns: Vec<String>,
+    pub editable: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct DatabaseTableUpdateRow {
+    pub primary_key_values: BTreeMap<String, DatabaseCellValue>,
+    pub changes: BTreeMap<String, DatabaseCellValue>,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct UpdateDatabaseTableRowsRequest {
+    pub connection_id: String,
+    pub database: String,
+    pub table: String,
+    pub primary_key_columns: Vec<String>,
+    pub rows: Vec<DatabaseTableUpdateRow>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct DatabaseTableUpdateResult {
+    pub updated_rows: u64,
+    pub updated_fields: u64,
     pub duration_ms: u128,
 }

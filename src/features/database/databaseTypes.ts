@@ -48,9 +48,30 @@ export interface DatabaseTablePageResult {
   page: number;
   page_size: number;
   duration_ms: number;
+  primary_key_columns: string[];
+  editable: boolean;
 }
 
 export interface DatabaseTableBrowserTarget {
   database: string;
   table: string;
+}
+
+export interface DatabaseTableUpdateRow {
+  primary_key_values: Record<string, DatabaseCellValue>;
+  changes: Record<string, DatabaseCellValue>;
+}
+
+export interface UpdateDatabaseTableRowsRequest {
+  connection_id: string;
+  database: string;
+  table: string;
+  primary_key_columns: string[];
+  rows: DatabaseTableUpdateRow[];
+}
+
+export interface DatabaseTableUpdateResult {
+  updated_rows: number;
+  updated_fields: number;
+  duration_ms: number;
 }

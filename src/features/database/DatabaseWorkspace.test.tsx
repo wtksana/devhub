@@ -378,6 +378,8 @@ describe("DatabaseWorkspace", () => {
           page: 1,
           page_size: 200,
           duration_ms: 9,
+          primary_key_columns: ["id"],
+          editable: true,
         });
       }
       return Promise.resolve([]);
@@ -430,6 +432,8 @@ describe("DatabaseWorkspace", () => {
           page: request.page,
           page_size: 200,
           duration_ms: 9,
+          primary_key_columns: ["id"],
+          editable: true,
         });
       }
       return Promise.resolve([]);
@@ -498,6 +502,8 @@ describe("DatabaseWorkspace", () => {
           page: request.page,
           page_size: request.page_size,
           duration_ms: 9,
+          primary_key_columns: ["id"],
+          editable: true,
         });
       }
       return Promise.resolve([]);
@@ -553,6 +559,185 @@ describe("DatabaseWorkspace", () => {
     });
   });
 
+  it("shows readonly reason when table page has no primary key", async () => {
+    callBackendMock.mockImplementation((command, payload) => {
+      if (command === "list_database_objects") {
+        const request = (payload as { request: { parent_kind?: string } }).request;
+        if (!request.parent_kind) {
+          return Promise.resolve([{ id: "database:app", name: "app", kind: "database", has_children: true }]);
+        }
+        return Promise.resolve([{ id: "table:app.logs", name: "logs", kind: "table", has_children: true }]);
+      }
+      if (command === "load_database_table_page") {
+        return Promise.resolve({
+          columns: [{ name: "message", data_type: "VARCHAR" }],
+          rows: [[{ kind: "text", value: "hello" }]],
+          total_rows: 1,
+          page: 1,
+          page_size: 200,
+          duration_ms: 9,
+          primary_key_columns: [],
+          editable: false,
+        });
+      }
+      return Promise.resolve([]);
+    });
+
+    renderDatabaseWorkspace("app");
+    await userEvent.dblClick(await screen.findByText("logs"));
+
+    expect(await screen.findByText("当前表没有主键，表数据只读。")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "保存更改" })).toBeDisabled();
+  });
+
+  it("edits non-primary-key cells locally and marks unsaved changes", async () => {
+    callBackendMock.mockImplementation((command, payload) => {
+      if (command === "list_database_objects") {
+        const request = (payload as { request: { parent_kind?: string } }).request;
+        if (!request.parent_kind) {
+          return Promise.resolve([{ id: "database:app", name: "app", kind: "database", has_children: true }]);
+        }
+        return Promise.resolve([{ id: "table:app.users", name: "users", kind: "table", has_children: true }]);
+      }
+      if (command === "load_database_table_page") {
+        return Promise.resolve({
+          columns: [
+            { name: "id", data_type: "INT" },
+            { name: "name", data_type: "VARCHAR" },
+          ],
+          rows: [[{ kind: "number", value: "1" }, { kind: "text", value: "Alice" }]],
+          total_rows: 1,
+          page: 1,
+          page_size: 200,
+          duration_ms: 9,
+          primary_key_columns: ["id"],
+          editable: true,
+        });
+      }
+      return Promise.resolve([]);
+    });
+
+    renderDatabaseWorkspace("app");
+    await userEvent.dblClick(await screen.findByText("users"));
+    await screen.findByLabelText("表数据");
+
+    await userEvent.dblClick(screen.getByText("Alice"));
+    const editor = screen.getByLabelText("编辑 name");
+    await userEvent.clear(editor);
+    await userEvent.type(editor, "Bob{Enter}");
+
+    expect(screen.getByText("未保存 1 行 / 1 字段")).toBeInTheDocument();
+    expect(screen.getByText("Bob").closest("td")).toHaveClass("database-table-browser__cell--dirty");
+    await userEvent.dblClick(screen.getByText("1"));
+    expect(screen.queryByLabelText("编辑 id")).not.toBeInTheDocument();
+  });
+
+  it("confirms and saves edited table cells", async () => {
+    callBackendMock.mockImplementation((command, payload) => {
+      if (command === "list_database_objects") {
+        const request = (payload as { request: { parent_kind?: string } }).request;
+        if (!request.parent_kind) {
+          return Promise.resolve([{ id: "database:app", name: "app", kind: "database", has_children: true }]);
+        }
+        return Promise.resolve([{ id: "table:app.users", name: "users", kind: "table", has_children: true }]);
+      }
+      if (command === "load_database_table_page") {
+        return Promise.resolve({
+          columns: [
+            { name: "id", data_type: "INT" },
+            { name: "name", data_type: "VARCHAR" },
+          ],
+          rows: [[{ kind: "number", value: "1" }, { kind: "text", value: "Alice" }]],
+          total_rows: 1,
+          page: 1,
+          page_size: 200,
+          duration_ms: 9,
+          primary_key_columns: ["id"],
+          editable: true,
+        });
+      }
+      if (command === "update_database_table_rows") {
+        return Promise.resolve({ updated_rows: 1, updated_fields: 1, duration_ms: 6 });
+      }
+      return Promise.resolve([]);
+    });
+
+    renderDatabaseWorkspace("app");
+    await userEvent.dblClick(await screen.findByText("users"));
+    await userEvent.dblClick(await screen.findByText("Alice"));
+    await userEvent.clear(screen.getByLabelText("编辑 name"));
+    await userEvent.type(screen.getByLabelText("编辑 name"), "Bob{Enter}");
+
+    await userEvent.click(screen.getByRole("button", { name: "保存更改" }));
+    expect(screen.getByText("确认保存 1 行 1 个字段的更改？")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "确认" }));
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("update_database_table_rows", {
+        request: {
+          connection_id: "mysql-dev",
+          database: "app",
+          table: "users",
+          primary_key_columns: ["id"],
+          rows: [{
+            primary_key_values: { id: { kind: "number", value: "1" } },
+            changes: { name: { kind: "text", value: "Bob" } },
+          }],
+        },
+      });
+    });
+  });
+
+  it("confirms before discarding edited table cells during refresh", async () => {
+    callBackendMock.mockImplementation((command, payload) => {
+      if (command === "list_database_objects") {
+        const request = (payload as { request: { parent_kind?: string } }).request;
+        if (!request.parent_kind) {
+          return Promise.resolve([{ id: "database:app", name: "app", kind: "database", has_children: true }]);
+        }
+        return Promise.resolve([{ id: "table:app.users", name: "users", kind: "table", has_children: true }]);
+      }
+      if (command === "load_database_table_page") {
+        return Promise.resolve({
+          columns: [
+            { name: "id", data_type: "INT" },
+            { name: "name", data_type: "VARCHAR" },
+          ],
+          rows: [[{ kind: "number", value: "1" }, { kind: "text", value: "Alice" }]],
+          total_rows: 1,
+          page: 1,
+          page_size: 200,
+          duration_ms: 9,
+          primary_key_columns: ["id"],
+          editable: true,
+        });
+      }
+      return Promise.resolve([]);
+    });
+
+    renderDatabaseWorkspace("app");
+    await userEvent.dblClick(await screen.findByText("users"));
+    await userEvent.dblClick(await screen.findByText("Alice"));
+    await userEvent.clear(screen.getByLabelText("编辑 name"));
+    await userEvent.type(screen.getByLabelText("编辑 name"), "Bob{Enter}");
+    callBackendMock.mockClear();
+
+    await userEvent.click(screen.getByRole("button", { name: "刷新" }));
+
+    expect(screen.getByText("当前有未保存更改，继续操作会放弃这些更改。")).toBeInTheDocument();
+    expect(callBackendMock).not.toHaveBeenCalledWith("load_database_table_page", expect.anything());
+
+    await userEvent.click(screen.getByRole("button", { name: "取消" }));
+    expect(screen.getByText("未保存 1 行 / 1 字段")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "刷新" }));
+    await userEvent.click(screen.getByRole("button", { name: "确认" }));
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("load_database_table_page", expect.anything());
+    });
+  });
+
   it("switches from table browser back to query result after running selected SQL", async () => {
     callBackendMock.mockImplementation((command, payload) => {
       if (command === "list_database_objects") {
@@ -570,6 +755,8 @@ describe("DatabaseWorkspace", () => {
           page: 1,
           page_size: 200,
           duration_ms: 9,
+          primary_key_columns: ["id"],
+          editable: true,
         });
       }
       if (command === "execute_database_query") {

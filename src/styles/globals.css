@@ -1309,6 +1309,10 @@ p {
   border-bottom: 1px solid var(--border-subtle);
 }
 
+.database-table-browser__readonly {
+  color: var(--muted);
+}
+
 .database-table-browser__table-wrap {
   grid-row: 3;
   height: 100%;
@@ -1330,6 +1334,18 @@ p {
 .database-table-browser th small {
   color: var(--muted);
   font-weight: 400;
+}
+
+.database-table-browser__cell--dirty {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.database-table-browser td input {
+  width: 100%;
+  min-width: 120px;
+  height: 28px;
+  padding: 0 6px;
+  font: inherit;
 }
 
 .settings-sidebar {
