@@ -69,7 +69,9 @@ export function DatabaseTableBrowser({ connectionId, target }: DatabaseTableBrow
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const editingCellRef = useRef<EditingCell>(null);
   const editingInputRef = useRef<HTMLInputElement | null>(null);
+  const tableCellRefs = useRef<Record<string, HTMLTableCellElement | null>>({});
 
   useEffect(() => {
     setPage(1);
@@ -82,12 +84,16 @@ export function DatabaseTableBrowser({ connectionId, target }: DatabaseTableBrow
     setOrderBy("");
     setDirtyRows({});
     setNewRows([]);
-    setEditingCell(null);
+    setActiveEditingCell(null);
     setSelectedCell(null);
     setSelectionRange(null);
     setIsSelectingRange(false);
     setIsPageSizeMenuOpen(false);
   }, [target.database, target.table]);
+
+  useEffect(() => {
+    editingCellRef.current = editingCell;
+  }, [editingCell]);
 
   useEffect(() => {
     void loadPage();
@@ -122,15 +128,12 @@ export function DatabaseTableBrowser({ connectionId, target }: DatabaseTableBrow
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
-      if (editingCell || !selectionRange || !result) return;
-      if (event.key.toLowerCase() !== "c" || (!event.ctrlKey && !event.metaKey)) return;
-      event.preventDefault();
-      void writeClipboardText(formatSelectedRange(result, displayedRows(), dirtyRows, selectionRange));
+      handleTableKeyDown(event);
     }
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [dirtyRows, editingCell, newRows, result, selectionRange]);
+  }, [dirtyRows, editingCell, newRows, result, selectedCell, selectionRange]);
 
   async function loadPage() {
     setIsLoading(true);
@@ -150,7 +153,7 @@ export function DatabaseTableBrowser({ connectionId, target }: DatabaseTableBrow
         },
       });
       setResult(nextResult);
-      setEditingCell(null);
+      setActiveEditingCell(null);
       setSelectedCell(null);
       setNewRows([]);
       setSelectionRange(null);
@@ -264,9 +267,9 @@ export function DatabaseTableBrowser({ connectionId, target }: DatabaseTableBrow
     event.preventDefault();
     const columnName = result?.columns[columnIndex]?.name;
     if (!columnName) return;
-    setEditingCell(null);
-    setSelectedCell({ rowIndex, columnName });
-    setSelectionRange({ anchor: { rowIndex, columnIndex }, focus: { rowIndex, columnIndex } });
+    const currentEditingCell = editingCellRef.current;
+    if (currentEditingCell) commitEditingCell(editingInputRef.current?.value ?? currentEditingCell.value);
+    selectCell(rowIndex, columnIndex);
     setIsSelectingRange(true);
   }
 
@@ -275,9 +278,139 @@ export function DatabaseTableBrowser({ connectionId, target }: DatabaseTableBrow
     setSelectionRange((current) => current ? { ...current, focus: { rowIndex, columnIndex } } : current);
   }
 
+  function setActiveEditingCell(nextEditingCell: EditingCell) {
+    editingCellRef.current = nextEditingCell;
+    setEditingCell(nextEditingCell);
+  }
+
   function copySelectedRange() {
     if (!result || !selectionRange) return;
     void writeClipboardText(formatSelectedRange(result, displayedRows(), dirtyRows, selectionRange));
+  }
+
+  function selectCell(rowIndex: number, columnIndex: number) {
+    if (!result) return;
+    const rows = displayedRows();
+    if (rows.length === 0) return;
+    const normalizedRowIndex = Math.max(0, Math.min(rowIndex, rows.length - 1));
+    const normalizedColumnIndex = Math.max(0, Math.min(columnIndex, result.columns.length - 1));
+    const columnName = result.columns[normalizedColumnIndex]?.name;
+    if (!columnName) return;
+    setSelectedCell({ rowIndex: normalizedRowIndex, columnName });
+    setSelectionRange({
+      anchor: { rowIndex: normalizedRowIndex, columnIndex: normalizedColumnIndex },
+      focus: { rowIndex: normalizedRowIndex, columnIndex: normalizedColumnIndex },
+    });
+    tableCellRefs.current[cellKey(normalizedRowIndex, normalizedColumnIndex)]?.focus();
+  }
+
+  function selectedPosition() {
+    if (!result || !selectedCell) return null;
+    const columnIndex = result.columns.findIndex((column) => column.name === selectedCell.columnName);
+    if (columnIndex < 0) return null;
+    return { rowIndex: selectedCell.rowIndex, columnIndex };
+  }
+
+  function startEditingSelectedCell() {
+    if (!result || !selectedCell) return;
+    if (!editableCell(selectedCell.columnName) && !isNewRow(selectedCell.rowIndex)) return;
+    const columnIndex = result.columns.findIndex((column) => column.name === selectedCell.columnName);
+    const original = displayedRows()[selectedCell.rowIndex]?.[columnIndex];
+    if (!original) return;
+    const displayed = displayedCell(selectedCell.rowIndex, selectedCell.columnName, original);
+    setActiveEditingCell({ rowIndex: selectedCell.rowIndex, columnName: selectedCell.columnName, value: cellText(displayed) });
+  }
+
+  function clearSelectedCell() {
+    if (!result || !selectedCell) return;
+    if (!editableCell(selectedCell.columnName) && !isNewRow(selectedCell.rowIndex)) return;
+    const newIndex = newRowIndex(selectedCell.rowIndex);
+    if (newIndex >= 0) {
+      setNewRows((current) => current.map((row, index) => {
+        if (index !== newIndex) return row;
+        return {
+          ...row,
+          values: {
+            ...row.values,
+            [selectedCell.columnName]: { kind: "text", value: "" },
+          },
+        };
+      }));
+      return;
+    }
+    const columnIndex = result.columns.findIndex((column) => column.name === selectedCell.columnName);
+    const original = result.rows[selectedCell.rowIndex]?.[columnIndex];
+    if (!original) return;
+    if (cellText(original) === "") {
+      setDirtyRows((current) => removeDirtyCell(current, selectedCell.rowIndex, selectedCell.columnName));
+      return;
+    }
+    setDirtyRows((current) => ({
+      ...current,
+      [selectedCell.rowIndex]: {
+        ...(current[selectedCell.rowIndex] ?? {}),
+        [selectedCell.columnName]: { kind: "text", value: "" },
+      },
+    }));
+  }
+
+  function moveSelectedCell(rowDelta: number, columnDelta: number) {
+    const position = selectedPosition();
+    if (!position) return;
+    selectCell(position.rowIndex + rowDelta, position.columnIndex + columnDelta);
+  }
+
+  function handleTableKeyDown(event: KeyboardEvent) {
+    if (editingCell || !result || !selectedCell) return;
+    if (isTextInputEventTarget(event.target)) return;
+    if (event.key.toLowerCase() === "c" && (event.ctrlKey || event.metaKey)) {
+      if (!selectionRange) return;
+      event.preventDefault();
+      copySelectedRange();
+      return;
+    }
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      moveSelectedCell(-1, 0);
+      return;
+    }
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      moveSelectedCell(1, 0);
+      return;
+    }
+    if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      moveSelectedCell(0, -1);
+      return;
+    }
+    if (event.key === "ArrowRight") {
+      event.preventDefault();
+      moveSelectedCell(0, 1);
+      return;
+    }
+    if (event.key === "Tab") {
+      event.preventDefault();
+      moveSelectedCell(0, event.shiftKey ? -1 : 1);
+      return;
+    }
+    if (event.key === "Enter" || event.key === "F2") {
+      event.preventDefault();
+      startEditingSelectedCell();
+      return;
+    }
+    if (event.key === "Delete" || event.key === "Backspace") {
+      event.preventDefault();
+      clearSelectedCell();
+    }
+  }
+
+  function commitEditingBeforeOutsidePointerDown(event: ReactMouseEvent) {
+    const currentEditingCell = editingCellRef.current;
+    if (!currentEditingCell) return;
+    if (event.target instanceof Element && event.target.closest("input, textarea, select, [contenteditable='true']")) return;
+    commitEditingCell(editingInputRef.current?.value ?? currentEditingCell.value);
   }
 
   function openCellContextMenu(event: ReactMouseEvent, rowIndex: number, columnName: string) {
@@ -344,9 +477,10 @@ export function DatabaseTableBrowser({ connectionId, target }: DatabaseTableBrow
     return rowIndex >= startRow && rowIndex <= endRow && columnIndex >= startColumn && columnIndex <= endColumn;
   }
 
-  function commitEditingCell() {
-    if (!editingCell || !result) return;
-    const newIndex = newRowIndex(editingCell.rowIndex);
+  function commitEditingCell(nextValue = editingCellRef.current?.value ?? "") {
+    const currentEditingCell = editingCellRef.current;
+    if (!currentEditingCell || !result) return;
+    const newIndex = newRowIndex(currentEditingCell.rowIndex);
     if (newIndex >= 0) {
       setNewRows((current) => current.map((row, index) => {
         if (index !== newIndex) return row;
@@ -354,40 +488,28 @@ export function DatabaseTableBrowser({ connectionId, target }: DatabaseTableBrow
           ...row,
           values: {
             ...row.values,
-            [editingCell.columnName]: { kind: "text", value: editingCell.value },
+            [currentEditingCell.columnName]: { kind: "text", value: nextValue },
           },
         };
       }));
-      setEditingCell(null);
+      setActiveEditingCell(null);
       return;
     }
-    const columnIndex = result.columns.findIndex((column) => column.name === editingCell.columnName);
-    const original = result.rows[editingCell.rowIndex]?.[columnIndex];
-    if (original && editingCell.value === cellText(original)) {
-      setDirtyRows((current) => {
-        const rowChanges = { ...(current[editingCell.rowIndex] ?? {}) };
-        delete rowChanges[editingCell.columnName];
-        if (Object.keys(rowChanges).length === 0) {
-          const { [editingCell.rowIndex]: _removed, ...rest } = current;
-          void _removed;
-          return rest;
-        }
-        return {
-          ...current,
-          [editingCell.rowIndex]: rowChanges,
-        };
-      });
-      setEditingCell(null);
+    const columnIndex = result.columns.findIndex((column) => column.name === currentEditingCell.columnName);
+    const original = result.rows[currentEditingCell.rowIndex]?.[columnIndex];
+    if (original && nextValue === cellText(original)) {
+      setDirtyRows((current) => removeDirtyCell(current, currentEditingCell.rowIndex, currentEditingCell.columnName));
+      setActiveEditingCell(null);
       return;
     }
     setDirtyRows((current) => ({
       ...current,
-      [editingCell.rowIndex]: {
-        ...(current[editingCell.rowIndex] ?? {}),
-        [editingCell.columnName]: { kind: "text", value: editingCell.value },
+      [currentEditingCell.rowIndex]: {
+        ...(current[currentEditingCell.rowIndex] ?? {}),
+        [currentEditingCell.columnName]: { kind: "text", value: nextValue },
       },
     }));
-    setEditingCell(null);
+    setActiveEditingCell(null);
   }
 
   function runAfterDiscardConfirmation(action: () => void) {
@@ -520,7 +642,11 @@ export function DatabaseTableBrowser({ connectionId, target }: DatabaseTableBrow
   const tableWidth = result ? 52 + result.columns.reduce((total, column) => total + (columnWidths[column.name] ?? MIN_DATA_COLUMN_WIDTH), 0) : undefined;
 
   return (
-    <section className="database-table-browser" aria-label={t("database.table_browser")}>
+    <section
+      className="database-table-browser"
+      aria-label={t("database.table_browser")}
+      onMouseDownCapture={commitEditingBeforeOutsidePointerDown}
+    >
       <header className="database-table-browser__toolbar">
         <span>{t("database.table_label", { table: target.table })}</span>
         <button
@@ -657,17 +783,24 @@ export function DatabaseTableBrowser({ connectionId, target }: DatabaseTableBrow
                       return (
                         <td
                           key={cellIndex}
+                          ref={(element) => {
+                            tableCellRefs.current[cellKey(rowIndex, cellIndex)] = element;
+                          }}
+                          tabIndex={0}
                           aria-label={`第 ${displayRowNumber(rowIndex)} 行 ${column.name}`}
                           className={className}
                           onMouseDown={(event) => startCellSelection(event, rowIndex, cellIndex)}
                           onMouseEnter={() => extendCellSelection(rowIndex, cellIndex)}
                           onMouseUp={() => setIsSelectingRange(false)}
-                          onClick={() => setSelectedCell({ rowIndex, columnName: column.name })}
+                          onClick={(event) => {
+                            if (isTextInputEventTarget(event.target)) return;
+                            selectCell(rowIndex, cellIndex);
+                          }}
                           onContextMenu={(event) => openCellContextMenu(event, rowIndex, column.name)}
                           onDoubleClick={() => {
                             if (!editableCell(column.name) && !isNewRow(rowIndex)) return;
-                            setSelectedCell({ rowIndex, columnName: column.name });
-                            setEditingCell({ rowIndex, columnName: column.name, value: cellText(displayed) });
+                            selectCell(rowIndex, cellIndex);
+                            setActiveEditingCell({ rowIndex, columnName: column.name, value: cellText(displayed) });
                           }}
                         >
                           {isEditing ? (
@@ -676,11 +809,11 @@ export function DatabaseTableBrowser({ connectionId, target }: DatabaseTableBrow
                               aria-label={`编辑 ${column.name}`}
                               autoFocus
                               value={editingCell.value}
-                              onBlur={commitEditingCell}
-                              onChange={(event) => setEditingCell({ ...editingCell, value: event.target.value })}
+                              onBlur={(event) => commitEditingCell(event.currentTarget.value)}
+                              onChange={(event) => setActiveEditingCell({ ...editingCell, value: event.target.value })}
                               onKeyDown={(event) => {
-                                if (event.key === "Enter") commitEditingCell();
-                                if (event.key === "Escape") setEditingCell(null);
+                                if (event.key === "Enter") commitEditingCell(event.currentTarget.value);
+                                if (event.key === "Escape") setActiveEditingCell(null);
                               }}
                             />
                           ) : (
@@ -873,6 +1006,28 @@ function displayCellValue(cell: DatabaseCellValue, column: DatabaseResultColumn,
 
 function isEmptyInsertCell(cell: DatabaseCellValue) {
   return cell.kind === "text" && cell.value === "";
+}
+
+function isTextInputEventTarget(target: EventTarget | null) {
+  return target instanceof Element && Boolean(target.closest("input, textarea, select, [contenteditable='true']"));
+}
+
+function cellKey(rowIndex: number, columnIndex: number) {
+  return `${rowIndex}:${columnIndex}`;
+}
+
+function removeDirtyCell(dirtyRows: DirtyRows, rowIndex: number, columnName: string) {
+  const rowChanges = { ...(dirtyRows[rowIndex] ?? {}) };
+  delete rowChanges[columnName];
+  if (Object.keys(rowChanges).length === 0) {
+    const { [rowIndex]: _removed, ...rest } = dirtyRows;
+    void _removed;
+    return rest;
+  }
+  return {
+    ...dirtyRows,
+    [rowIndex]: rowChanges,
+  };
 }
 
 function formatTableRow(result: DatabaseTablePageResult, rowIndex: number, dirtyRows: DirtyRows, newRows: NewRow[]) {

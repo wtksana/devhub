@@ -887,6 +887,47 @@ describe("DatabaseWorkspace", () => {
     expect(screen.getByLabelText("编辑 name")).toHaveValue("");
   });
 
+  it("commits typed text when a null cell editor loses focus after clicking another cell", async () => {
+    callBackendMock.mockImplementation((command, payload) => {
+      if (command === "list_database_objects") {
+        const request = (payload as { request: { parent_kind?: string } }).request;
+        if (!request.parent_kind) {
+          return Promise.resolve([{ id: "database:app", name: "app", kind: "database", has_children: true }]);
+        }
+        return Promise.resolve([{ id: "table:app.users", name: "users", kind: "table", has_children: true }]);
+      }
+      if (command === "load_database_table_page") {
+        return Promise.resolve({
+          columns: [
+            { name: "id", data_type: "INT", nullable: false, has_default: false, generated: true },
+            { name: "name", data_type: "VARCHAR", nullable: true, has_default: false, generated: false },
+          ],
+          rows: [[{ kind: "number", value: "1" }, { kind: "null" }]],
+          total_rows: 1,
+          page: 1,
+          page_size: 200,
+          duration_ms: 9,
+          primary_key_columns: ["id"],
+          editable: true,
+        });
+      }
+      return Promise.resolve([]);
+    });
+
+    renderDatabaseWorkspace("app");
+    await userEvent.dblClick(await screen.findByText("users"));
+
+    await userEvent.dblClick(await screen.findByText("null"));
+    await userEvent.type(screen.getByLabelText("编辑 name"), "Alice");
+    expect(screen.getByLabelText("编辑 name")).toHaveValue("Alice");
+    await userEvent.click(screen.getByLabelText("第 1 行 id"));
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("第 1 行 name")).toHaveTextContent("Alice");
+      expect(screen.getByLabelText("第 1 行 name")).toHaveClass("database-table-browser__cell--dirty");
+    });
+  });
+
   it("shows default, null and generated placeholders for new rows", async () => {
     callBackendMock.mockImplementation((command, payload) => {
       if (command === "list_database_objects") {
@@ -1039,6 +1080,149 @@ describe("DatabaseWorkspace", () => {
     fireEvent.keyDown(window, { key: "c", code: "KeyC", ctrlKey: true });
 
     expect(writeClipboardTextMock).toHaveBeenCalledWith("Alice\t12.34\nBob\t56.78");
+  });
+
+  it("supports keyboard navigation and editing for selected table cells", async () => {
+    callBackendMock.mockImplementation((command, payload) => {
+      if (command === "list_database_objects") {
+        const request = (payload as { request: { parent_kind?: string } }).request;
+        if (!request.parent_kind) {
+          return Promise.resolve([{ id: "database:app", name: "app", kind: "database", has_children: true }]);
+        }
+        return Promise.resolve([{ id: "table:app.users", name: "users", kind: "table", has_children: true }]);
+      }
+      if (command === "load_database_table_page") {
+        return Promise.resolve({
+          columns: [
+            { name: "id", data_type: "INT" },
+            { name: "name", data_type: "VARCHAR" },
+            { name: "amount", data_type: "DECIMAL" },
+          ],
+          rows: [
+            [{ kind: "number", value: "1" }, { kind: "text", value: "Alice" }, { kind: "number", value: "12.34" }],
+            [{ kind: "number", value: "2" }, { kind: "text", value: "Bob" }, { kind: "number", value: "56.78" }],
+          ],
+          total_rows: 2,
+          page: 1,
+          page_size: 200,
+          duration_ms: 9,
+          primary_key_columns: ["id"],
+          editable: true,
+        });
+      }
+      return Promise.resolve([]);
+    });
+
+    renderDatabaseWorkspace("app");
+    await userEvent.dblClick(await screen.findByText("users"));
+    await screen.findByLabelText("表数据");
+
+    await userEvent.click(screen.getByText("Alice"));
+    expect(screen.getByLabelText("第 1 行 name")).toHaveFocus();
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+    expect(screen.getByLabelText("第 1 行 amount")).toHaveClass("database-table-browser__cell--selected");
+
+    fireEvent.keyDown(window, { key: "ArrowDown" });
+    expect(screen.getByLabelText("第 2 行 amount")).toHaveClass("database-table-browser__cell--selected");
+
+    fireEvent.keyDown(window, { key: "Tab" });
+    expect(screen.getByLabelText("第 2 行 amount")).toHaveClass("database-table-browser__cell--selected");
+
+    fireEvent.keyDown(window, { key: "ArrowLeft" });
+    expect(screen.getByLabelText("第 2 行 name")).toHaveClass("database-table-browser__cell--selected");
+
+    fireEvent.keyDown(window, { key: "Enter" });
+    expect(screen.getByLabelText("编辑 name")).toHaveValue("Bob");
+
+    fireEvent.keyDown(screen.getByLabelText("编辑 name"), { key: "Escape" });
+    expect(screen.queryByLabelText("编辑 name")).not.toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: "F2" });
+    expect(screen.getByLabelText("编辑 name")).toHaveValue("Bob");
+  });
+
+  it("moves selected table cells after the SQL editor previously had focus", async () => {
+    callBackendMock.mockImplementation((command, payload) => {
+      if (command === "list_database_objects") {
+        const request = (payload as { request: { parent_kind?: string } }).request;
+        if (!request.parent_kind) {
+          return Promise.resolve([{ id: "database:app", name: "app", kind: "database", has_children: true }]);
+        }
+        return Promise.resolve([{ id: "table:app.users", name: "users", kind: "table", has_children: true }]);
+      }
+      if (command === "load_database_table_page") {
+        return Promise.resolve({
+          columns: [
+            { name: "id", data_type: "INT" },
+            { name: "name", data_type: "VARCHAR" },
+          ],
+          rows: [[{ kind: "number", value: "1" }, { kind: "text", value: "Alice" }]],
+          total_rows: 1,
+          page: 1,
+          page_size: 200,
+          duration_ms: 9,
+          primary_key_columns: ["id"],
+          editable: true,
+        });
+      }
+      return Promise.resolve([]);
+    });
+
+    renderDatabaseWorkspace("app");
+    await userEvent.dblClick(await screen.findByText("users"));
+    await userEvent.click(screen.getByTestId("database-monaco-editor"));
+    expect(screen.getByTestId("database-monaco-editor")).toHaveFocus();
+
+    await userEvent.click(await screen.findByText("Alice"));
+    expect(screen.getByLabelText("第 1 行 name")).toHaveFocus();
+
+    fireEvent.keyDown(screen.getByLabelText("第 1 行 name"), { key: "ArrowLeft" });
+
+    expect(screen.getByLabelText("第 1 行 id")).toHaveClass("database-table-browser__cell--selected");
+  });
+
+  it("clears selected editable table cells with Delete", async () => {
+    callBackendMock.mockImplementation((command, payload) => {
+      if (command === "list_database_objects") {
+        const request = (payload as { request: { parent_kind?: string } }).request;
+        if (!request.parent_kind) {
+          return Promise.resolve([{ id: "database:app", name: "app", kind: "database", has_children: true }]);
+        }
+        return Promise.resolve([{ id: "table:app.users", name: "users", kind: "table", has_children: true }]);
+      }
+      if (command === "load_database_table_page") {
+        return Promise.resolve({
+          columns: [
+            { name: "id", data_type: "INT" },
+            { name: "name", data_type: "VARCHAR" },
+          ],
+          rows: [[{ kind: "number", value: "1" }, { kind: "text", value: "Alice" }]],
+          total_rows: 1,
+          page: 1,
+          page_size: 200,
+          duration_ms: 9,
+          primary_key_columns: ["id"],
+          editable: true,
+        });
+      }
+      return Promise.resolve([]);
+    });
+
+    renderDatabaseWorkspace("app");
+    await userEvent.dblClick(await screen.findByText("users"));
+    await screen.findByLabelText("表数据");
+
+    await userEvent.click(screen.getByText("Alice"));
+    fireEvent.keyDown(window, { key: "Delete" });
+
+    expect(screen.getByLabelText("第 1 行 name")).toHaveClass("database-table-browser__cell--dirty");
+    expect(screen.getByText("未保存 1 行 / 1 字段")).toBeInTheDocument();
+    expect(screen.getByLabelText("第 1 行 name")).toHaveTextContent("");
+
+    fireEvent.keyDown(window, { key: "ArrowLeft" });
+    fireEvent.keyDown(window, { key: "Delete" });
+
+    expect(screen.getByLabelText("第 1 行 id")).not.toHaveClass("database-table-browser__cell--dirty");
   });
 
   it("adds a table row and saves it through the table browser toolbar", async () => {
