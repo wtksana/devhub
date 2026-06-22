@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "../../i18n/I18nProvider";
-import { readClipboardText } from "../../lib/clipboard";
+import { readClipboardText, writeClipboardText } from "../../lib/clipboard";
 import { callBackend } from "../../lib/tauri";
 import { DatabaseWorkspace } from "./DatabaseWorkspace";
 
@@ -86,6 +86,7 @@ vi.mock("../../lib/tauri", () => ({
 
 vi.mock("../../lib/clipboard", () => ({
   readClipboardText: vi.fn(),
+  writeClipboardText: vi.fn(),
 }));
 
 vi.mock("@monaco-editor/react", () => ({
@@ -94,6 +95,7 @@ vi.mock("@monaco-editor/react", () => ({
 
 const callBackendMock = vi.mocked(callBackend);
 const readClipboardTextMock = vi.mocked(readClipboardText);
+const writeClipboardTextMock = vi.mocked(writeClipboardText);
 
 describe("DatabaseWorkspace", () => {
   afterEach(() => {
@@ -411,6 +413,83 @@ describe("DatabaseWorkspace", () => {
       });
     });
     expect(screen.getAllByText("1")).toHaveLength(2);
+  });
+
+  it("opens tables from the whole table row and shows table actions from the row context menu", async () => {
+    callBackendMock.mockImplementation((command, payload) => {
+      if (command === "list_database_objects") {
+        const request = (payload as { request: { parent_kind?: string; database?: string; table?: string } }).request;
+        if (!request.parent_kind) {
+          return Promise.resolve([{ id: "database:app", name: "app", kind: "database", has_children: true }]);
+        }
+        if (request.parent_kind === "table" && request.table === "users") {
+          return Promise.resolve([
+            { id: "column:app.users.id", name: "id", kind: "column", has_children: false, detail: "int(11) NO" },
+            { id: "column:app.users.name", name: "name", kind: "column", has_children: false, detail: "varchar(255) YES" },
+          ]);
+        }
+        return Promise.resolve([{ id: "table:app.users", name: "users", kind: "table", has_children: true }]);
+      }
+      if (command === "load_database_table_page") {
+        return Promise.resolve({
+          columns: [{ name: "id", data_type: "INT" }],
+          rows: [[{ kind: "number", value: "1" }]],
+          total_rows: 1,
+          page: 1,
+          page_size: 200,
+          duration_ms: 9,
+          primary_key_columns: ["id"],
+          editable: true,
+        });
+      }
+      return Promise.resolve([]);
+    });
+
+    renderDatabaseWorkspace("app");
+
+    const tableRow = (await screen.findByRole("button", { name: "users" })).closest("li");
+    expect(tableRow).not.toBeNull();
+    expect(tableRow).toHaveClass("database-object-tree__item");
+    await userEvent.dblClick(tableRow!);
+    expect(await screen.findByLabelText("表数据")).toBeInTheDocument();
+
+    fireEvent.contextMenu(tableRow!, { clientX: 10, clientY: 20 });
+    expect(within(screen.getByRole("menu")).getAllByRole("menuitem").map((item) => item.textContent)).toEqual([
+      "复制表名",
+      "编辑",
+      "DDL",
+    ]);
+    expect(screen.getByRole("menuitem", { name: "DDL" })).toBeDisabled();
+
+    await userEvent.click(screen.getByRole("menuitem", { name: "复制表名" }));
+    expect(writeClipboardTextMock).toHaveBeenCalledWith("users");
+
+    fireEvent.contextMenu(tableRow!, { clientX: 10, clientY: 20 });
+    await userEvent.click(screen.getByRole("menuitem", { name: "编辑" }));
+
+    const structureDialog = await screen.findByRole("dialog", { name: "编辑表 users" });
+    expect(structureDialog).toBeInTheDocument();
+    expect(within(structureDialog).getByRole("columnheader", { name: "字段名" })).toBeInTheDocument();
+    expect(within(structureDialog).getByRole("columnheader", { name: "字段类型" })).toBeInTheDocument();
+    expect(within(structureDialog).getByRole("columnheader", { name: "可空" })).toBeInTheDocument();
+    expect(within(structureDialog).getByText("id")).toBeInTheDocument();
+    expect(within(structureDialog).getByText("int(11)")).toBeInTheDocument();
+    expect(within(structureDialog).getByText("否")).toBeInTheDocument();
+    expect(within(structureDialog).getByText("name")).toBeInTheDocument();
+    expect(within(structureDialog).getByText("varchar(255)")).toBeInTheDocument();
+    expect(within(structureDialog).getByText("是")).toBeInTheDocument();
+    expect(callBackendMock).toHaveBeenCalledWith("list_database_objects", {
+      request: {
+        connection_id: "mysql-dev",
+        parent_kind: "table",
+        database: "app",
+        schema: "app",
+        table: "users",
+      },
+    });
+
+    await userEvent.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "编辑表 users" })).not.toBeInTheDocument();
   });
 
   it("shows table column types only in tooltip and constrains long cell values", async () => {

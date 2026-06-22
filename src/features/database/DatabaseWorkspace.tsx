@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent } from "react";
 import Editor from "@monaco-editor/react";
 import type { OnMount } from "@monaco-editor/react";
 import { callBackend } from "../../lib/tauri";
@@ -15,7 +15,7 @@ import { DatabaseTableBrowser } from "./DatabaseTableBrowser";
 import { useI18n } from "../../i18n/useI18n";
 import { ContextMenu } from "../../app/ContextMenu";
 import type { ContextMenuState } from "../../app/ContextMenu";
-import { readClipboardText } from "../../lib/clipboard";
+import { readClipboardText, writeClipboardText } from "../../lib/clipboard";
 import collapseEditorIcon from "../../assets/icons/oi--collapse-up.png";
 import expandEditorIcon from "../../assets/icons/oi--expand-down.png";
 import sqlFileIcon from "../../assets/icons/ph--file-sql-light.png";
@@ -57,6 +57,8 @@ export function DatabaseWorkspace({ connectionId, initialDatabase, theme, fontFa
   const [objectTreeWidth, setObjectTreeWidth] = useState(DEFAULT_OBJECT_TREE_WIDTH);
   const [isResizingObjectTree, setIsResizingObjectTree] = useState(false);
   const [editorContextMenu, setEditorContextMenu] = useState<ContextMenuState | null>(null);
+  const [tableContextMenu, setTableContextMenu] = useState<ContextMenuState | null>(null);
+  const [tableStructureDialog, setTableStructureDialog] = useState<{ table: DatabaseTreeNode; columns: DatabaseTreeNode[]; error: string | null } | null>(null);
   const objectTreeResizeRef = useRef({ startX: 0, startWidth: DEFAULT_OBJECT_TREE_WIDTH });
   const latestSqlFileKeyRef = useRef("");
   const monacoEditorRef = useRef<Parameters<OnMount>[0] | null>(null);
@@ -144,6 +146,21 @@ export function DatabaseWorkspace({ connectionId, initialDatabase, theme, fontFa
     };
   }, [isResizingObjectTree]);
 
+  useEffect(() => {
+    if (!tableStructureDialog) return;
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        requestCloseTableStructureDialog();
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [tableStructureDialog]);
+
   function startObjectTreeResize(event: React.MouseEvent) {
     event.preventDefault();
     objectTreeResizeRef.current = {
@@ -194,6 +211,57 @@ export function DatabaseWorkspace({ connectionId, initialDatabase, theme, fontFa
     setResult(null);
     setError(null);
     setTableBrowserTarget({ database: currentDatabase, table: node.name });
+  }
+
+  function openTableContextMenu(event: ReactMouseEvent, node: DatabaseTreeNode) {
+    event.preventDefault();
+    setTableContextMenu({
+      x: event.clientX,
+      y: event.clientY,
+      items: [
+        {
+          label: t("database.copy_table_name"),
+          onSelect: () => void writeClipboardText(node.name),
+        },
+        {
+          label: t("database.edit_table"),
+          onSelect: () => void openTableStructureDialog(node),
+        },
+        {
+          label: t("database.ddl"),
+          disabled: true,
+          onSelect: () => {},
+        },
+      ],
+    });
+  }
+
+  async function openTableStructureDialog(node: DatabaseTreeNode) {
+    if (!currentDatabase) return;
+    setTableStructureDialog({ table: node, columns: [], error: null });
+    try {
+      const columns = await callBackend<DatabaseTreeNode[]>("list_database_objects", {
+        request: {
+          connection_id: connectionId,
+          parent_kind: node.kind,
+          database: currentDatabase,
+          schema: currentDatabase,
+          table: node.name,
+        },
+      });
+      setTableStructureDialog({ table: node, columns: Array.isArray(columns) ? columns : [], error: null });
+    } catch (caught) {
+      setTableStructureDialog({
+        table: node,
+        columns: [],
+        error: caught instanceof Error ? caught.message : String(caught),
+      });
+    }
+  }
+
+  function requestCloseTableStructureDialog() {
+    // 后续表结构支持编辑后，在这里检查 dirty 状态并弹二次确认。
+    setTableStructureDialog(null);
   }
 
   function switchSqlFile(nextName: string) {
@@ -305,6 +373,7 @@ export function DatabaseWorkspace({ connectionId, initialDatabase, theme, fontFa
         selectedDatabase={currentDatabase}
         onDatabaseChange={setCurrentDatabase}
         onOpenTable={openTable}
+        onTableContextMenu={openTableContextMenu}
       />
       <div
         role="separator"
@@ -389,6 +458,7 @@ export function DatabaseWorkspace({ connectionId, initialDatabase, theme, fontFa
         </div>
       </div>
       <ContextMenu menu={editorContextMenu} onClose={() => setEditorContextMenu(null)} />
+      <ContextMenu menu={tableContextMenu} onClose={() => setTableContextMenu(null)} />
       {dangerousSqlToConfirm ? (
         <div className="connection-dialog__backdrop">
           <div
@@ -451,6 +521,54 @@ export function DatabaseWorkspace({ connectionId, initialDatabase, theme, fontFa
               </button>
               <button type="button" disabled={!newSqlFileName.trim()} onClick={() => void createSqlFile()}>
                 {t("database.confirm")}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {tableStructureDialog ? (
+        <div className="connection-dialog__backdrop">
+          <div
+            className="connection-dialog database-dialog database-table-structure-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-label={t("database.edit_table_title", { table: tableStructureDialog.table.name })}
+          >
+            <header className="database-dialog__header">
+              <h2>{t("database.edit_table_title", { table: tableStructureDialog.table.name })}</h2>
+            </header>
+            <div className="database-table-structure-dialog__body">
+              {tableStructureDialog.error ? <p role="alert">{tableStructureDialog.error}</p> : null}
+              <table>
+                <thead>
+                  <tr>
+                    <th scope="col">{t("database.column_name")}</th>
+                    <th scope="col">{t("database.column_type")}</th>
+                    <th scope="col">{t("database.nullable")}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {tableStructureDialog.columns.map((column) => {
+                    const detail = parseColumnDetail(column.detail);
+                    return (
+                      <tr key={column.id}>
+                        <td>{column.name}</td>
+                        <td>{detail.dataType}</td>
+                        <td>{formatNullable(detail.nullable, t)}</td>
+                      </tr>
+                    );
+                  })}
+                  {tableStructureDialog.columns.length === 0 && !tableStructureDialog.error ? (
+                    <tr>
+                      <td colSpan={3}>{t("database.no_columns")}</td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+            <div className="database-dialog__actions">
+              <button type="button" onClick={requestCloseTableStructureDialog}>
+                {t("database.cancel")}
               </button>
             </div>
           </div>
@@ -564,6 +682,21 @@ function normalizeLimit(value: string) {
   const parsed = Number.parseInt(value, 10);
   if (!Number.isFinite(parsed) || parsed < 1) return DEFAULT_SQL_LIMIT;
   return parsed;
+}
+
+function parseColumnDetail(detail?: string | null) {
+  const trimmed = detail?.trim() ?? "";
+  const nullableMatch = trimmed.match(/\s+(YES|NO)$/i);
+  return {
+    dataType: nullableMatch ? trimmed.slice(0, nullableMatch.index).trim() : trimmed,
+    nullable: nullableMatch?.[1]?.toUpperCase() ?? "",
+  };
+}
+
+function formatNullable(nullable: string, t: ReturnType<typeof useI18n>["t"]) {
+  if (nullable === "YES") return t("database.yes");
+  if (nullable === "NO") return t("database.no");
+  return nullable || "-";
 }
 
 function clamp(value: number, min: number, max: number) {

@@ -983,32 +983,42 @@ p {
 
 .database-object-tree li {
   display: grid;
+  align-items: center;
+  min-height: 28px;
+  color: var(--text);
+  border-radius: 4px;
+  user-select: none;
+}
+
+.database-object-tree li:hover,
+.database-object-tree__item-button:hover {
+  background: color-mix(in srgb, var(--accent) 8%, var(--panel-raised));
+}
+
+.database-object-tree__item-button {
+  display: grid;
   grid-template-columns: 22px minmax(0, 1fr);
   gap: 6px;
   align-items: center;
-  min-height: 28px;
-  padding: 0 4px;
-  color: var(--text);
-  border-radius: 4px;
-}
-
-.database-object-tree li:hover {
-  background: var(--hover);
-}
-
-.database-object-tree button {
-  width: 22px;
-  height: 22px;
+  width: 100%;
+  height: 28px;
   padding: 0;
   overflow: hidden;
   border-color: transparent;
-  color: transparent;
+  color: var(--text);
   background: transparent;
+  text-align: left;
 }
 
-.database-object-tree button::before {
-  color: var(--muted);
-  content: ">";
+.database-object-tree__item-button:hover {
+  border-color: transparent;
+}
+
+.database-object-tree__item-button span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .database-object-tree small {
@@ -1201,6 +1211,35 @@ p {
   margin: 0;
   padding: 12px;
   overflow: auto;
+}
+
+.database-table-structure-dialog {
+  width: min(620px, calc(100vw - 48px));
+}
+
+.database-table-structure-dialog__body {
+  min-width: 0;
+  overflow: auto;
+  padding: 12px;
+}
+
+.database-table-structure-dialog table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.database-table-structure-dialog th,
+.database-table-structure-dialog td {
+  height: 30px;
+  padding: 0 9px;
+  border-bottom: 1px solid var(--border-subtle);
+  text-align: left;
+}
+
+.database-table-structure-dialog th {
+  color: var(--muted);
+  font-weight: 500;
+  background: var(--panel-soft);
 }
 
 .database-dialog__actions {
@@ -1586,7 +1625,8 @@ th.database-table-browser__row-number {
 }
 
 .database-table-browser__cell--dirty {
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  background: color-mix(in srgb, var(--accent) 30%, var(--panel)) !important;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 82%, transparent);
 }
 
 .database-table-browser__row--selected td {

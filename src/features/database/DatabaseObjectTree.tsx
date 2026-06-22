@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { useI18n } from "../../i18n/useI18n";
 import { callBackend } from "../../lib/tauri";
 import type { DatabaseTreeNode } from "./databaseTypes";
@@ -9,6 +9,7 @@ interface DatabaseObjectTreeProps {
   selectedDatabase: string;
   onDatabaseChange: (database: string) => void;
   onOpenTable?: (node: DatabaseTreeNode) => void;
+  onTableContextMenu?: (event: ReactMouseEvent, node: DatabaseTreeNode) => void;
 }
 
 function childRequest(connectionId: string, node?: DatabaseTreeNode) {
@@ -47,7 +48,7 @@ function childRequest(connectionId: string, node?: DatabaseTreeNode) {
   };
 }
 
-export function DatabaseObjectTree({ connectionId, selectedDatabase, onDatabaseChange, onOpenTable }: DatabaseObjectTreeProps) {
+export function DatabaseObjectTree({ connectionId, selectedDatabase, onDatabaseChange, onOpenTable, onTableContextMenu }: DatabaseObjectTreeProps) {
   const { t } = useI18n();
   const [databases, setDatabases] = useState<DatabaseTreeNode[]>([]);
   const [tables, setTables] = useState<DatabaseTreeNode[]>([]);
@@ -137,15 +138,27 @@ export function DatabaseObjectTree({ connectionId, selectedDatabase, onDatabaseC
       {error ? <p role="alert">{error}</p> : null}
       <ul aria-label={t("database.table_list")}>
         {visibleTables.map((node) => (
-          <li key={node.id}>
-            <img aria-hidden="true" className="database-object-tree__icon" src={tableIcon} alt="" />
-            <span onDoubleClick={() => {
+          <li
+            key={node.id}
+            className="database-object-tree__item"
+            onContextMenu={(event) => {
+              if (node.kind === "table" || node.kind === "view") {
+                onTableContextMenu?.(event, node);
+              }
+            }}
+            onDoubleClick={() => {
               if (node.kind === "table" || node.kind === "view") {
                 onOpenTable?.(node);
               }
-            }}>
-              {node.name}
-            </span>
+            }}
+          >
+            <button
+              type="button"
+              className="database-object-tree__item-button"
+            >
+              <img aria-hidden="true" className="database-object-tree__icon" src={tableIcon} alt="" />
+              <span>{node.name}</span>
+            </button>
           </li>
         ))}
         {selectedDatabase && visibleTables.length === 0 && !error ? (
