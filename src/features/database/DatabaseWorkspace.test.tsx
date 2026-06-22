@@ -847,6 +847,57 @@ describe("DatabaseWorkspace", () => {
     selectSpy.mockRestore();
   });
 
+  it("copies table browser cell, row and column name from the cell context menu", async () => {
+    callBackendMock.mockImplementation((command, payload) => {
+      if (command === "list_database_objects") {
+        const request = (payload as { request: { parent_kind?: string } }).request;
+        if (!request.parent_kind) {
+          return Promise.resolve([{ id: "database:app", name: "app", kind: "database", has_children: true }]);
+        }
+        return Promise.resolve([{ id: "table:app.users", name: "users", kind: "table", has_children: true }]);
+      }
+      if (command === "load_database_table_page") {
+        return Promise.resolve({
+          columns: [
+            { name: "id", data_type: "INT" },
+            { name: "name", data_type: "VARCHAR" },
+          ],
+          rows: [[{ kind: "number", value: "1" }, { kind: "text", value: "Alice" }]],
+          total_rows: 1,
+          page: 1,
+          page_size: 200,
+          duration_ms: 9,
+          primary_key_columns: ["id"],
+          editable: true,
+        });
+      }
+      return Promise.resolve([]);
+    });
+
+    renderDatabaseWorkspace("app");
+    await userEvent.dblClick(await screen.findByText("users"));
+    await screen.findByLabelText("表数据");
+    const cell = screen.getByText("Alice").closest("td");
+    expect(cell).not.toBeNull();
+
+    fireEvent.contextMenu(cell!, { clientX: 10, clientY: 20 });
+    expect(within(screen.getByRole("menu")).getAllByRole("menuitem").map((item) => item.textContent)).toEqual([
+      "复制单元格",
+      "复制整行",
+      "复制列名",
+    ]);
+    await userEvent.click(screen.getByRole("menuitem", { name: "复制单元格" }));
+    expect(writeClipboardTextMock).toHaveBeenCalledWith("Alice");
+
+    fireEvent.contextMenu(cell!, { clientX: 10, clientY: 20 });
+    await userEvent.click(screen.getByRole("menuitem", { name: "复制整行" }));
+    expect(writeClipboardTextMock).toHaveBeenCalledWith("1\tAlice");
+
+    fireEvent.contextMenu(cell!, { clientX: 10, clientY: 20 });
+    await userEvent.click(screen.getByRole("menuitem", { name: "复制列名" }));
+    expect(writeClipboardTextMock).toHaveBeenCalledWith("name");
+  });
+
   it("does not mark a cell dirty when the edited value is unchanged", async () => {
     callBackendMock.mockImplementation((command, payload) => {
       if (command === "list_database_objects") {

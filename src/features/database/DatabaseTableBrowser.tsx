@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { useI18n } from "../../i18n/useI18n";
 import { callBackend } from "../../lib/tauri";
+import { ContextMenu, type ContextMenuState } from "../../app/ContextMenu";
+import { writeClipboardText } from "../../lib/clipboard";
 import firstPageIcon from "../../assets/icons/material-symbols--first-page-rounded.png";
 import lastPageIcon from "../../assets/icons/material-symbols--last-page-rounded.png";
 import nextPageIcon from "../../assets/icons/material-symbols--chevron-right-rounded.png";
@@ -50,6 +52,7 @@ export function DatabaseTableBrowser({ connectionId, target }: DatabaseTableBrow
   const [confirmDialog, setConfirmDialog] = useState<"save" | "discard" | null>(null);
   const [pendingAction, setPendingAction] = useState<(() => void) | null>(null);
   const [isPageSizeMenuOpen, setIsPageSizeMenuOpen] = useState(false);
+  const [cellContextMenu, setCellContextMenu] = useState<ContextMenuState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -181,6 +184,35 @@ export function DatabaseTableBrowser({ connectionId, target }: DatabaseTableBrow
     if (cell.kind === "null") return "NULL";
     if (cell.kind === "bool") return String(cell.value);
     return cell.value;
+  }
+
+  function openCellContextMenu(event: ReactMouseEvent, rowIndex: number, columnName: string) {
+    if (!result) return;
+    event.preventDefault();
+    const columnIndex = result.columns.findIndex((column) => column.name === columnName);
+    const row = result.rows[rowIndex];
+    const cell = row?.[columnIndex];
+    if (!row || !cell) return;
+    const displayed = displayedCell(rowIndex, columnName, cell);
+    setSelectedCell({ rowIndex, columnName });
+    setCellContextMenu({
+      x: event.clientX,
+      y: event.clientY,
+      items: [
+        {
+          label: t("database.copy_cell"),
+          onSelect: () => void writeClipboardText(formatCellValue(displayed)),
+        },
+        {
+          label: t("database.copy_row"),
+          onSelect: () => void writeClipboardText(formatTableRow(result, rowIndex, dirtyRows)),
+        },
+        {
+          label: t("database.copy_column_name"),
+          onSelect: () => void writeClipboardText(columnName),
+        },
+      ],
+    });
   }
 
   function isPrimaryKeyColumn(columnName: string) {
@@ -409,6 +441,7 @@ export function DatabaseTableBrowser({ connectionId, target }: DatabaseTableBrow
                           key={cellIndex}
                           className={className}
                           onClick={() => setSelectedCell({ rowIndex, columnName: column.name })}
+                          onContextMenu={(event) => openCellContextMenu(event, rowIndex, column.name)}
                           onDoubleClick={() => {
                             if (!editableCell(column.name)) return;
                             setSelectedCell({ rowIndex, columnName: column.name });
@@ -560,6 +593,7 @@ export function DatabaseTableBrowser({ connectionId, target }: DatabaseTableBrow
           </div>
         </div>
       ) : null}
+      <ContextMenu menu={cellContextMenu} onClose={() => setCellContextMenu(null)} />
     </section>
   );
 }
@@ -574,6 +608,15 @@ function formatCellValue(cell: DatabaseCellValue) {
   if (cell.kind === "null") return "NULL";
   if (cell.kind === "bool") return String(cell.value);
   return cell.value;
+}
+
+function formatTableRow(result: DatabaseTablePageResult, rowIndex: number, dirtyRows: DirtyRows) {
+  const row = result.rows[rowIndex] ?? [];
+  return row.map((cell, cellIndex) => {
+    const columnName = result.columns[cellIndex]?.name;
+    if (!columnName) return formatCellValue(cell);
+    return formatCellValue(dirtyRows[rowIndex]?.[columnName] ?? cell);
+  }).join("\t");
 }
 
 function sortButtonLabel(columnName: string, dataType: string, direction: DatabaseSortDirection | null) {
