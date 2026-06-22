@@ -69,14 +69,8 @@ describe("CommandPalette", () => {
 
     render(<CommandPalette onOpenSettings={onOpenSettings} onToggleTheme={onToggleTheme} />);
 
-    expect(screen.getByRole("button", { name: "切换主题" }).querySelector("img")).toHaveAttribute(
-      "src",
-      expect.stringContaining("bi--brilliance"),
-    );
-    expect(screen.getByRole("button", { name: "打开设置" }).querySelector("img")).toHaveAttribute(
-      "src",
-      expect.stringContaining("bi--gear-wide-connected"),
-    );
+    expect(screen.getByRole("button", { name: "切换主题" }).querySelector(".app-icon")?.tagName.toLowerCase()).toBe("svg");
+    expect(screen.getByRole("button", { name: "打开设置" }).querySelector(".app-icon")?.tagName.toLowerCase()).toBe("svg");
 
     screen.getByRole("button", { name: "切换主题" }).click();
     screen.getByRole("button", { name: "打开设置" }).click();

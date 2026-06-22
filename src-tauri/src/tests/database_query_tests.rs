@@ -3,16 +3,18 @@ use std::collections::BTreeMap;
 use crate::db::connection::{database_connection_url, database_pool_key};
 use crate::db::metadata::{metadata_query_for_columns, metadata_query_for_tables};
 use crate::db::query::{
-    append_postgresql_indexes_to_ddl, apply_select_limit, build_table_page_queries,
-    build_table_update_queries, is_dangerous_sql, mysql_prefers_datetime_decode,
-    mysql_prefers_numeric_decode, mysql_table_ddl_from_values, mysql_table_ddl_query,
-    normalize_table_page_request, normalize_table_update_request, postgresql_index_query_for_table,
-    postgresql_prefers_datetime_decode, postgresql_table_ddl_query, primary_key_query_for_table,
-    quote_identifier,
+    append_postgresql_indexes_to_ddl, apply_select_limit, build_table_delete_queries,
+    build_table_insert_queries, build_table_page_queries, build_table_update_queries,
+    is_dangerous_sql, mysql_prefers_datetime_decode, mysql_prefers_numeric_decode,
+    mysql_prefers_text_decode, mysql_table_column_metadata_query, mysql_table_ddl_from_values, mysql_table_ddl_query, normalize_table_delete_request,
+    normalize_table_insert_request, normalize_table_page_request, normalize_table_update_request,
+    postgresql_index_query_for_table, postgresql_prefers_datetime_decode,
+    postgresql_table_ddl_query, primary_key_query_for_table, quote_identifier,
 };
 use crate::models::database::{
-    DatabaseCellValue, DatabaseTableUpdateRow, LoadDatabaseTablePageRequest,
-    UpdateDatabaseTableRowsRequest,
+    DatabaseCellValue, DatabaseTableDeleteRow, DatabaseTableInsertRow, DatabaseTableUpdateRow,
+    InsertDatabaseTableRowsRequest, LoadDatabaseTablePageRequest, UpdateDatabaseTableRowsRequest,
+    DeleteDatabaseTableRowsRequest,
 };
 use crate::models::settings::DatabaseConnectionSettings;
 
@@ -87,6 +89,16 @@ fn builds_mysql_table_metadata_query() {
 }
 
 #[test]
+fn builds_mysql_table_column_metadata_query_with_default_and_generated_flags() {
+    let query = mysql_table_column_metadata_query("app", "users").unwrap();
+
+    assert!(query.sql.contains("column_default"));
+    assert!(query.sql.contains("is_nullable"));
+    assert!(query.sql.contains("extra"));
+    assert_eq!(query.binds, vec!["app".to_string(), "users".to_string()]);
+}
+
+#[test]
 fn builds_postgresql_column_metadata_query() {
     let query = metadata_query_for_columns("postgresql", "public", "users").unwrap();
 
@@ -113,6 +125,13 @@ fn keeps_select_with_existing_limit() {
 #[test]
 fn treats_mysql_count_bigint_as_numeric_type() {
     assert!(mysql_prefers_numeric_decode("BIGINT"));
+}
+
+#[test]
+fn treats_mysql_decimal_as_text_first_type() {
+    assert!(mysql_prefers_text_decode("DECIMAL"));
+    assert!(mysql_prefers_text_decode("NEWDECIMAL"));
+    assert!(mysql_prefers_text_decode("NUMERIC"));
 }
 
 #[test]
@@ -403,6 +422,80 @@ fn builds_mysql_table_update_query() {
 }
 
 #[test]
+fn builds_mysql_table_insert_query() {
+    let request = InsertDatabaseTableRowsRequest {
+        connection_id: "mysql-dev".to_string(),
+        database: "app".to_string(),
+        table: "users".to_string(),
+        rows: vec![DatabaseTableInsertRow {
+            values: vec![
+                ("id".to_string(), DatabaseCellValue::Number { value: "1".to_string() }),
+                ("name".to_string(), DatabaseCellValue::Text { value: "Alice".to_string() }),
+            ]
+            .into_iter()
+            .collect::<BTreeMap<_, _>>(),
+        }],
+    };
+    let normalized = normalize_table_insert_request(request).unwrap();
+    let queries = build_table_insert_queries("mysql", &normalized).unwrap();
+
+    assert_eq!(
+        queries[0].sql,
+        "INSERT INTO `users` (`id`, `name`) VALUES (?, ?)"
+    );
+    assert_eq!(
+        queries[0].values,
+        vec![
+            DatabaseCellValue::Number { value: "1".to_string() },
+            DatabaseCellValue::Text { value: "Alice".to_string() },
+        ]
+    );
+}
+
+#[test]
+fn builds_mysql_table_insert_query_with_default_values() {
+    let request = InsertDatabaseTableRowsRequest {
+        connection_id: "mysql-dev".to_string(),
+        database: "app".to_string(),
+        table: "users".to_string(),
+        rows: vec![DatabaseTableInsertRow {
+            values: BTreeMap::new(),
+        }],
+    };
+    let normalized = normalize_table_insert_request(request).unwrap();
+    let queries = build_table_insert_queries("mysql", &normalized).unwrap();
+
+    assert_eq!(queries[0].sql, "INSERT INTO `users` () VALUES ()");
+    assert!(queries[0].values.is_empty());
+}
+
+#[test]
+fn builds_mysql_table_delete_query() {
+    let request = DeleteDatabaseTableRowsRequest {
+        connection_id: "mysql-dev".to_string(),
+        database: "app".to_string(),
+        table: "users".to_string(),
+        primary_key_columns: vec!["id".to_string()],
+        rows: vec![DatabaseTableDeleteRow {
+            primary_key_values: vec![(
+                "id".to_string(),
+                DatabaseCellValue::Number { value: "1".to_string() },
+            )]
+            .into_iter()
+            .collect::<BTreeMap<_, _>>(),
+        }],
+    };
+    let normalized = normalize_table_delete_request(request, &["id".to_string()]).unwrap();
+    let queries = build_table_delete_queries("mysql", &normalized).unwrap();
+
+    assert_eq!(queries[0].sql, "DELETE FROM `users` WHERE `id` = ?");
+    assert_eq!(
+        queries[0].values,
+        vec![DatabaseCellValue::Number { value: "1".to_string() }]
+    );
+}
+
+#[test]
 fn builds_postgresql_table_update_query_with_composite_primary_key() {
     let request = table_update_request(
         "pg-dev",
@@ -459,6 +552,24 @@ fn rejects_table_update_without_primary_key() {
 
     assert_eq!(
         normalize_table_update_request(request, &[]).unwrap_err(),
+        "table has no primary key"
+    );
+}
+
+#[test]
+fn rejects_table_delete_without_primary_key() {
+    let request = DeleteDatabaseTableRowsRequest {
+        connection_id: "mysql-dev".to_string(),
+        database: "app".to_string(),
+        table: "users".to_string(),
+        primary_key_columns: vec![],
+        rows: vec![DatabaseTableDeleteRow {
+            primary_key_values: BTreeMap::new(),
+        }],
+    };
+
+    assert_eq!(
+        normalize_table_delete_request(request, &[]).unwrap_err(),
         "table has no primary key"
     );
 }

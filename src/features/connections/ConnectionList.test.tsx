@@ -128,6 +128,31 @@ describe("ConnectionList", () => {
     expect(screen.getByText("本地终端")).toHaveClass("connection-list__name");
   });
 
+  it("closes connection and group dialogs with Escape", async () => {
+    renderConnectionList({ connections });
+
+    await userEvent.click(screen.getByRole("button", { name: "添加连接" }));
+    expect(screen.getByRole("dialog", { name: "添加 SSH 连接" })).toBeInTheDocument();
+    await userEvent.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "添加 SSH 连接" })).not.toBeInTheDocument();
+
+    await userEvent.pointer({ keys: "[MouseRight]", target: screen.getByLabelText("连接分组列表") });
+    await userEvent.click(screen.getByRole("menuitem", { name: "添加分组" }));
+    expect(screen.getByRole("dialog", { name: "添加分组" })).toBeInTheDocument();
+    await userEvent.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "添加分组" })).not.toBeInTheDocument();
+  });
+
+  it("closes the edit connection dialog with Escape", async () => {
+    renderConnectionList({ connections });
+
+    await userEvent.pointer({ keys: "[MouseRight]", target: screen.getByText("生产 Web") });
+    await userEvent.click(screen.getByRole("menuitem", { name: "编辑" }));
+    expect(screen.getByRole("dialog", { name: "编辑 SSH 连接" })).toBeInTheDocument();
+    await userEvent.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "编辑 SSH 连接" })).not.toBeInTheDocument();
+  });
+
   it("opens a modal add SSH connection form and submits a password connection", async () => {
     const onAddConnection = vi.fn();
 

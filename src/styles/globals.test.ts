@@ -71,4 +71,24 @@ describe("global style defaults", () => {
     expect(globalsCss).not.toContain(".database-object-tree li:hover,\n.database-object-tree__item-button:hover {\n  background: var(--hover);");
     expect(globalsCss).toContain(".database-object-tree li:hover,\n.database-object-tree__item-button:hover {\n  background: color-mix(in srgb, var(--accent) 8%, var(--panel-raised));");
   });
+
+  it("prevents connection item text selection during double click", () => {
+    const globalsCss = readCssSource();
+
+    expect(globalsCss).toContain(".connection-list li {\n  display: grid;");
+    expect(globalsCss).toContain("  user-select: none;");
+  });
+
+  it("keeps icon button hover states flat and compact", () => {
+    const globalsCss = readCssSource();
+
+    expect(globalsCss).toContain(".command-palette__icon-button:hover,\n.command-palette__icon-button:focus-visible");
+    expect(globalsCss).toContain(".database-icon-button:hover:not(:disabled),\n.database-icon-button:focus-visible:not(:disabled)");
+    expect(globalsCss).toContain("border-radius: 6px;");
+    expect(globalsCss).toContain("background: color-mix(in srgb, var(--button-hover) 72%, transparent);");
+    expect(globalsCss).not.toContain("0 8px 18px rgb(0 0 0 / 16%)");
+    expect(globalsCss).not.toContain("transform: translateY(-1px);");
+    expect(globalsCss).toContain(".command-palette__icon-button:active,\n.database-icon-button:active:not(:disabled)");
+    expect(globalsCss).toContain("background: color-mix(in srgb, var(--button-active) 78%, transparent);");
+  });
 });

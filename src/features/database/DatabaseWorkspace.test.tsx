@@ -277,7 +277,7 @@ describe("DatabaseWorkspace", () => {
     expect(screen.getByRole("columnheader", { name: "id INT" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "name VARCHAR" })).toBeInTheDocument();
     expect(screen.getByText("Alice")).toBeInTheDocument();
-    expect(screen.getByText("NULL")).toBeInTheDocument();
+    expect(screen.getByText("null")).toHaveClass("database-result__cell-placeholder");
     expect(screen.getByText("true")).toBeInTheDocument();
   });
 
@@ -836,6 +836,7 @@ describe("DatabaseWorkspace", () => {
 
     expect(cell).toHaveClass("database-table-browser__cell--selected");
     expect(row).toHaveClass("database-table-browser__row--selected");
+    expect(screen.getByLabelText("第 1 行 id")).toHaveClass("database-table-browser__cell--number");
     expect(screen.queryByLabelText("编辑 name")).not.toBeInTheDocument();
 
     await userEvent.dblClick(screen.getByText("Alice"));
@@ -845,6 +846,83 @@ describe("DatabaseWorkspace", () => {
     expect(editor.closest("td")).toHaveClass("database-table-browser__cell--editing");
     expect(selectSpy).toHaveBeenCalled();
     selectSpy.mockRestore();
+  });
+
+  it("renders null cells as muted placeholders and edits them as empty values", async () => {
+    callBackendMock.mockImplementation((command, payload) => {
+      if (command === "list_database_objects") {
+        const request = (payload as { request: { parent_kind?: string } }).request;
+        if (!request.parent_kind) {
+          return Promise.resolve([{ id: "database:app", name: "app", kind: "database", has_children: true }]);
+        }
+        return Promise.resolve([{ id: "table:app.users", name: "users", kind: "table", has_children: true }]);
+      }
+      if (command === "load_database_table_page") {
+        return Promise.resolve({
+          columns: [
+            { name: "id", data_type: "INT", nullable: false, has_default: false, generated: true },
+            { name: "name", data_type: "VARCHAR", nullable: true, has_default: false, generated: false },
+          ],
+          rows: [[{ kind: "number", value: "1" }, { kind: "null" }]],
+          total_rows: 1,
+          page: 1,
+          page_size: 200,
+          duration_ms: 9,
+          primary_key_columns: ["id"],
+          editable: true,
+        });
+      }
+      return Promise.resolve([]);
+    });
+
+    renderDatabaseWorkspace("app");
+    await userEvent.dblClick(await screen.findByText("users"));
+
+    const nullPlaceholder = await screen.findByText("null");
+    expect(nullPlaceholder).toHaveClass("database-table-browser__cell-placeholder");
+    expect(nullPlaceholder.closest("td")).toHaveClass("database-table-browser__cell--null");
+
+    await userEvent.dblClick(nullPlaceholder);
+
+    expect(screen.getByLabelText("编辑 name")).toHaveValue("");
+  });
+
+  it("shows default, null and generated placeholders for new rows", async () => {
+    callBackendMock.mockImplementation((command, payload) => {
+      if (command === "list_database_objects") {
+        const request = (payload as { request: { parent_kind?: string } }).request;
+        if (!request.parent_kind) {
+          return Promise.resolve([{ id: "database:app", name: "app", kind: "database", has_children: true }]);
+        }
+        return Promise.resolve([{ id: "table:app.users", name: "users", kind: "table", has_children: true }]);
+      }
+      if (command === "load_database_table_page") {
+        return Promise.resolve({
+          columns: [
+            { name: "id", data_type: "INT", nullable: false, has_default: false, generated: true },
+            { name: "name", data_type: "VARCHAR", nullable: false, has_default: true, generated: false },
+            { name: "remark", data_type: "VARCHAR", nullable: true, has_default: false, generated: false },
+          ],
+          rows: [],
+          total_rows: 0,
+          page: 1,
+          page_size: 200,
+          duration_ms: 9,
+          primary_key_columns: ["id"],
+          editable: true,
+        });
+      }
+      return Promise.resolve([]);
+    });
+
+    renderDatabaseWorkspace("app");
+    await userEvent.dblClick(await screen.findByText("users"));
+    await userEvent.click(await screen.findByRole("button", { name: "添加行" }));
+
+    expect(screen.getByText("<generated>")).toHaveClass("database-table-browser__cell-placeholder");
+    expect(screen.getByText("<default>")).toHaveClass("database-table-browser__cell-placeholder");
+    expect(screen.getByText("<null>")).toHaveClass("database-table-browser__cell-placeholder");
+    expect(screen.getByText("<generated>").closest("tr")).toHaveClass("database-table-browser__row--new");
   });
 
   it("copies table browser cell, row and column name from the cell context menu", async () => {
@@ -883,8 +961,10 @@ describe("DatabaseWorkspace", () => {
     fireEvent.contextMenu(cell!, { clientX: 10, clientY: 20 });
     expect(within(screen.getByRole("menu")).getAllByRole("menuitem").map((item) => item.textContent)).toEqual([
       "复制单元格",
+      "复制选中",
       "复制整行",
       "复制列名",
+      "删除行",
     ]);
     await userEvent.click(screen.getByRole("menuitem", { name: "复制单元格" }));
     expect(writeClipboardTextMock).toHaveBeenCalledWith("Alice");
@@ -896,6 +976,242 @@ describe("DatabaseWorkspace", () => {
     fireEvent.contextMenu(cell!, { clientX: 10, clientY: 20 });
     await userEvent.click(screen.getByRole("menuitem", { name: "复制列名" }));
     expect(writeClipboardTextMock).toHaveBeenCalledWith("name");
+  });
+
+  it("selects table cells by dragging and copies the selected range", async () => {
+    callBackendMock.mockImplementation((command, payload) => {
+      if (command === "list_database_objects") {
+        const request = (payload as { request: { parent_kind?: string } }).request;
+        if (!request.parent_kind) {
+          return Promise.resolve([{ id: "database:app", name: "app", kind: "database", has_children: true }]);
+        }
+        return Promise.resolve([{ id: "table:app.users", name: "users", kind: "table", has_children: true }]);
+      }
+      if (command === "load_database_table_page") {
+        return Promise.resolve({
+          columns: [
+            { name: "id", data_type: "INT" },
+            { name: "name", data_type: "VARCHAR" },
+            { name: "amount", data_type: "DECIMAL" },
+          ],
+          rows: [
+            [{ kind: "number", value: "1" }, { kind: "text", value: "Alice" }, { kind: "number", value: "12.34" }],
+            [{ kind: "number", value: "2" }, { kind: "text", value: "Bob" }, { kind: "number", value: "56.78" }],
+          ],
+          total_rows: 2,
+          page: 1,
+          page_size: 200,
+          duration_ms: 9,
+          primary_key_columns: ["id"],
+          editable: true,
+        });
+      }
+      return Promise.resolve([]);
+    });
+
+    renderDatabaseWorkspace("app");
+    await userEvent.dblClick(await screen.findByText("users"));
+    await screen.findByLabelText("表数据");
+    const startCell = screen.getByText("Alice").closest("td");
+    const endCell = screen.getByText("56.78").closest("td");
+    expect(startCell).not.toBeNull();
+    expect(endCell).not.toBeNull();
+
+    fireEvent.mouseDown(startCell!, { button: 0 });
+    fireEvent.mouseEnter(endCell!);
+    fireEvent.mouseUp(endCell!);
+
+    expect(startCell).toHaveClass("database-table-browser__cell--range-selected");
+    expect(endCell).toHaveClass("database-table-browser__cell--range-selected");
+
+    fireEvent.contextMenu(endCell!, { clientX: 10, clientY: 20 });
+    expect(within(screen.getByRole("menu")).getAllByRole("menuitem").map((item) => item.textContent)).toEqual([
+      "复制单元格",
+      "复制选中",
+      "复制整行",
+      "复制列名",
+      "删除行",
+    ]);
+    await userEvent.click(screen.getByRole("menuitem", { name: "复制选中" }));
+    expect(writeClipboardTextMock).toHaveBeenCalledWith("Alice\t12.34\nBob\t56.78");
+    writeClipboardTextMock.mockClear();
+
+    fireEvent.keyDown(window, { key: "c", code: "KeyC", ctrlKey: true });
+
+    expect(writeClipboardTextMock).toHaveBeenCalledWith("Alice\t12.34\nBob\t56.78");
+  });
+
+  it("adds a table row and saves it through the table browser toolbar", async () => {
+    callBackendMock.mockImplementation((command, payload) => {
+      if (command === "list_database_objects") {
+        const request = (payload as { request: { parent_kind?: string } }).request;
+        if (!request.parent_kind) {
+          return Promise.resolve([{ id: "database:app", name: "app", kind: "database", has_children: true }]);
+        }
+        return Promise.resolve([{ id: "table:app.users", name: "users", kind: "table", has_children: true }]);
+      }
+      if (command === "load_database_table_page") {
+        return Promise.resolve({
+          columns: [
+            { name: "id", data_type: "INT" },
+            { name: "name", data_type: "VARCHAR" },
+          ],
+          rows: [[{ kind: "number", value: "1" }, { kind: "text", value: "Alice" }]],
+          total_rows: 1,
+          page: 1,
+          page_size: 200,
+          duration_ms: 9,
+          primary_key_columns: ["id"],
+          editable: true,
+        });
+      }
+      if (command === "insert_database_table_rows") {
+        return Promise.resolve({ updated_rows: 1, updated_fields: 2, duration_ms: 4 });
+      }
+      return Promise.resolve([]);
+    });
+
+    renderDatabaseWorkspace("app");
+    await userEvent.dblClick(await screen.findByText("users"));
+    await userEvent.click(await screen.findByRole("button", { name: "添加行" }));
+    await userEvent.dblClick(screen.getByLabelText("第 2 行 id"));
+    await userEvent.type(screen.getByLabelText("编辑 id"), "2{Enter}");
+    await userEvent.dblClick(screen.getByLabelText("第 2 行 name"));
+    await userEvent.type(screen.getByLabelText("编辑 name"), "Bob{Enter}");
+    await userEvent.click(screen.getByRole("button", { name: "保存更改" }));
+    await userEvent.click(screen.getByRole("button", { name: "确认" }));
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("insert_database_table_rows", {
+        request: {
+          connection_id: "mysql-dev",
+          database: "app",
+          table: "users",
+          rows: [{
+            values: {
+              id: { kind: "text", value: "2" },
+              name: { kind: "text", value: "Bob" },
+            },
+          }],
+        },
+      });
+    });
+  });
+
+  it("omits empty new row fields so database defaults can apply", async () => {
+    callBackendMock.mockImplementation((command, payload) => {
+      if (command === "list_database_objects") {
+        const request = (payload as { request: { parent_kind?: string } }).request;
+        if (!request.parent_kind) {
+          return Promise.resolve([{ id: "database:app", name: "app", kind: "database", has_children: true }]);
+        }
+        return Promise.resolve([{ id: "table:app.users", name: "users", kind: "table", has_children: true }]);
+      }
+      if (command === "load_database_table_page") {
+        return Promise.resolve({
+          columns: [
+            { name: "id", data_type: "INT" },
+            { name: "name", data_type: "VARCHAR" },
+            { name: "create_time", data_type: "DATETIME" },
+          ],
+          rows: [],
+          total_rows: 0,
+          page: 1,
+          page_size: 200,
+          duration_ms: 9,
+          primary_key_columns: ["id"],
+          editable: true,
+        });
+      }
+      if (command === "insert_database_table_rows") {
+        return Promise.resolve({ updated_rows: 1, updated_fields: 2, duration_ms: 4 });
+      }
+      return Promise.resolve([]);
+    });
+
+    renderDatabaseWorkspace("app");
+    await userEvent.dblClick(await screen.findByText("users"));
+    await userEvent.click(await screen.findByRole("button", { name: "添加行" }));
+    await userEvent.dblClick(screen.getByLabelText("第 1 行 id"));
+    await userEvent.type(screen.getByLabelText("编辑 id"), "2{Enter}");
+    await userEvent.dblClick(screen.getByLabelText("第 1 行 name"));
+    await userEvent.type(screen.getByLabelText("编辑 name"), "Bob{Enter}");
+    await userEvent.click(screen.getByRole("button", { name: "保存更改" }));
+    await userEvent.click(screen.getByRole("button", { name: "确认" }));
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("insert_database_table_rows", {
+        request: {
+          connection_id: "mysql-dev",
+          database: "app",
+          table: "users",
+          rows: [{
+            values: {
+              id: { kind: "text", value: "2" },
+              name: { kind: "text", value: "Bob" },
+            },
+          }],
+        },
+      });
+    });
+  });
+
+  it("deletes a table row from the cell context menu after confirmation", async () => {
+    callBackendMock.mockImplementation((command, payload) => {
+      if (command === "list_database_objects") {
+        const request = (payload as { request: { parent_kind?: string } }).request;
+        if (!request.parent_kind) {
+          return Promise.resolve([{ id: "database:app", name: "app", kind: "database", has_children: true }]);
+        }
+        return Promise.resolve([{ id: "table:app.users", name: "users", kind: "table", has_children: true }]);
+      }
+      if (command === "load_database_table_page") {
+        return Promise.resolve({
+          columns: [
+            { name: "id", data_type: "INT" },
+            { name: "name", data_type: "VARCHAR" },
+          ],
+          rows: [[{ kind: "number", value: "1" }, { kind: "text", value: "Alice" }]],
+          total_rows: 1,
+          page: 1,
+          page_size: 200,
+          duration_ms: 9,
+          primary_key_columns: ["id"],
+          editable: true,
+        });
+      }
+      if (command === "delete_database_table_rows") {
+        return Promise.resolve({ updated_rows: 1, updated_fields: 0, duration_ms: 5 });
+      }
+      return Promise.resolve([]);
+    });
+
+    renderDatabaseWorkspace("app");
+    await userEvent.dblClick(await screen.findByText("users"));
+    await screen.findByLabelText("表数据");
+    const cell = screen.getByText("Alice").closest("td");
+    expect(cell).not.toBeNull();
+
+    fireEvent.contextMenu(cell!, { clientX: 10, clientY: 20 });
+    await userEvent.click(screen.getByRole("menuitem", { name: "删除行" }));
+    expect(screen.getByText("确认删除当前行？")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "确认" }));
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("delete_database_table_rows", {
+        request: {
+          connection_id: "mysql-dev",
+          database: "app",
+          table: "users",
+          primary_key_columns: ["id"],
+          rows: [{
+            primary_key_values: {
+              id: { kind: "number", value: "1" },
+            },
+          }],
+        },
+      });
+    });
   });
 
   it("does not mark a cell dirty when the edited value is unchanged", async () => {

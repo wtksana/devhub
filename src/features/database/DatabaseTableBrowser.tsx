@@ -2,19 +2,24 @@ import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEven
 import { useI18n } from "../../i18n/useI18n";
 import { callBackend } from "../../lib/tauri";
 import { ContextMenu, type ContextMenuState } from "../../app/ContextMenu";
+import { AppIcon } from "../../app/AppIcon";
 import { writeClipboardText } from "../../lib/clipboard";
-import firstPageIcon from "../../assets/icons/material-symbols--first-page-rounded.png";
-import lastPageIcon from "../../assets/icons/material-symbols--last-page-rounded.png";
-import nextPageIcon from "../../assets/icons/material-symbols--chevron-right-rounded.png";
-import pageSizeIcon from "../../assets/icons/material-symbols--keyboard-arrow-down-rounded.png";
-import previousPageIcon from "../../assets/icons/material-symbols--chevron-left-rounded.png";
-import refreshIcon from "../../assets/icons/solar--refresh-bold.png";
-import saveChangesIcon from "../../assets/icons/material-symbols--upload.png";
-import discardChangesIcon from "../../assets/icons/material-symbols--undo.png";
+import FirstPageIcon from "../../assets/icons/material-symbols--first-page-rounded.svg?react";
+import LastPageIcon from "../../assets/icons/material-symbols--last-page-rounded.svg?react";
+import NextPageIcon from "../../assets/icons/material-symbols--chevron-right-rounded.svg?react";
+import PageSizeIcon from "../../assets/icons/material-symbols--keyboard-arrow-down-rounded.svg?react";
+import PreviousPageIcon from "../../assets/icons/material-symbols--chevron-left-rounded.svg?react";
+import RefreshIcon from "../../assets/icons/solar--refresh-bold.svg?react";
+import SaveChangesIcon from "../../assets/icons/material-symbols--upload.svg?react";
+import DiscardChangesIcon from "../../assets/icons/material-symbols--undo.svg?react";
+import AddRowIcon from "../../assets/icons/material-symbols--add-rounded.svg?react";
 import type {
   DatabaseCellValue,
+  DatabaseResultColumn,
   DatabaseSortDirection,
   DatabaseTableBrowserTarget,
+  DatabaseTableDeleteRow,
+  DatabaseTableInsertRow,
   DatabaseTablePageResult,
   DatabaseTableUpdateResult,
 } from "./databaseTypes";
@@ -34,6 +39,10 @@ interface DatabaseTableBrowserProps {
 type DirtyRows = Record<number, Record<string, DatabaseCellValue>>;
 type EditingCell = { rowIndex: number; columnName: string; value: string } | null;
 type SelectedCell = { rowIndex: number; columnName: string } | null;
+type CellPosition = { rowIndex: number; columnIndex: number };
+type SelectionRange = { anchor: CellPosition; focus: CellPosition } | null;
+type NewRow = { id: string; values: Record<string, DatabaseCellValue> };
+type DeleteTarget = { rowIndex: number } | null;
 
 export function DatabaseTableBrowser({ connectionId, target }: DatabaseTableBrowserProps) {
   const { t } = useI18n();
@@ -47,9 +56,13 @@ export function DatabaseTableBrowser({ connectionId, target }: DatabaseTableBrow
   const [orderBy, setOrderBy] = useState("");
   const [result, setResult] = useState<DatabaseTablePageResult | null>(null);
   const [dirtyRows, setDirtyRows] = useState<DirtyRows>({});
+  const [newRows, setNewRows] = useState<NewRow[]>([]);
   const [editingCell, setEditingCell] = useState<EditingCell>(null);
   const [selectedCell, setSelectedCell] = useState<SelectedCell>(null);
+  const [selectionRange, setSelectionRange] = useState<SelectionRange>(null);
+  const [isSelectingRange, setIsSelectingRange] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState<"save" | "discard" | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<DeleteTarget>(null);
   const [pendingAction, setPendingAction] = useState<(() => void) | null>(null);
   const [isPageSizeMenuOpen, setIsPageSizeMenuOpen] = useState(false);
   const [cellContextMenu, setCellContextMenu] = useState<ContextMenuState | null>(null);
@@ -68,8 +81,11 @@ export function DatabaseTableBrowser({ connectionId, target }: DatabaseTableBrow
     setOrderByInput("");
     setOrderBy("");
     setDirtyRows({});
+    setNewRows([]);
     setEditingCell(null);
     setSelectedCell(null);
+    setSelectionRange(null);
+    setIsSelectingRange(false);
     setIsPageSizeMenuOpen(false);
   }, [target.database, target.table]);
 
@@ -95,6 +111,27 @@ export function DatabaseTableBrowser({ connectionId, target }: DatabaseTableBrow
     editingInputRef.current?.select();
   }, [editingCell?.rowIndex, editingCell?.columnName]);
 
+  useEffect(() => {
+    function handleMouseUp() {
+      setIsSelectingRange(false);
+    }
+
+    window.addEventListener("mouseup", handleMouseUp);
+    return () => window.removeEventListener("mouseup", handleMouseUp);
+  }, []);
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (editingCell || !selectionRange || !result) return;
+      if (event.key.toLowerCase() !== "c" || (!event.ctrlKey && !event.metaKey)) return;
+      event.preventDefault();
+      void writeClipboardText(formatSelectedRange(result, displayedRows(), dirtyRows, selectionRange));
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [dirtyRows, editingCell, newRows, result, selectionRange]);
+
   async function loadPage() {
     setIsLoading(true);
     setError(null);
@@ -115,6 +152,9 @@ export function DatabaseTableBrowser({ connectionId, target }: DatabaseTableBrow
       setResult(nextResult);
       setEditingCell(null);
       setSelectedCell(null);
+      setNewRows([]);
+      setSelectionRange(null);
+      setIsSelectingRange(false);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
@@ -181,16 +221,71 @@ export function DatabaseTableBrowser({ connectionId, target }: DatabaseTableBrow
   }
 
   function cellText(cell: DatabaseCellValue) {
-    if (cell.kind === "null") return "NULL";
+    if (cell.kind === "null") return "";
     if (cell.kind === "bool") return String(cell.value);
     return cell.value;
+  }
+
+  function displayRowNumber(rowIndex: number) {
+    if (!result) return rowIndex + 1;
+    if (rowIndex < result.rows.length) return (result.page - 1) * result.page_size + rowIndex + 1;
+    return result.total_rows + rowIndex - result.rows.length + 1;
+  }
+
+  function newRowIndex(rowIndex: number) {
+    if (!result || rowIndex < result.rows.length) return -1;
+    return rowIndex - result.rows.length;
+  }
+
+  function isNewRow(rowIndex: number) {
+    return newRowIndex(rowIndex) >= 0;
+  }
+
+  function displayedRows() {
+    if (!result) return [];
+    return [
+      ...result.rows,
+      ...newRows.map((row) => result.columns.map((column) => row.values[column.name] ?? { kind: "text", value: "" } as DatabaseCellValue)),
+    ];
+  }
+
+  function addRow() {
+    if (!result) return;
+    const values = Object.fromEntries(result.columns.map((column) => [column.name, { kind: "text", value: "" } as DatabaseCellValue]));
+    const rowIndex = result.rows.length + newRows.length;
+    setNewRows((current) => [...current, { id: `new-${Date.now()}-${current.length}`, values }]);
+    setSelectedCell({ rowIndex, columnName: result.columns[0]?.name ?? "" });
+    setSelectionRange(result.columns[0] ? { anchor: { rowIndex, columnIndex: 0 }, focus: { rowIndex, columnIndex: 0 } } : null);
+  }
+
+  function startCellSelection(event: ReactMouseEvent, rowIndex: number, columnIndex: number) {
+    if (event.button !== 0) return;
+    if (event.target instanceof Element && event.target.closest("input, textarea, select, [contenteditable='true']")) return;
+    event.preventDefault();
+    const columnName = result?.columns[columnIndex]?.name;
+    if (!columnName) return;
+    setEditingCell(null);
+    setSelectedCell({ rowIndex, columnName });
+    setSelectionRange({ anchor: { rowIndex, columnIndex }, focus: { rowIndex, columnIndex } });
+    setIsSelectingRange(true);
+  }
+
+  function extendCellSelection(rowIndex: number, columnIndex: number) {
+    if (!isSelectingRange) return;
+    setSelectionRange((current) => current ? { ...current, focus: { rowIndex, columnIndex } } : current);
+  }
+
+  function copySelectedRange() {
+    if (!result || !selectionRange) return;
+    void writeClipboardText(formatSelectedRange(result, displayedRows(), dirtyRows, selectionRange));
   }
 
   function openCellContextMenu(event: ReactMouseEvent, rowIndex: number, columnName: string) {
     if (!result) return;
     event.preventDefault();
     const columnIndex = result.columns.findIndex((column) => column.name === columnName);
-    const row = result.rows[rowIndex];
+    const rows = displayedRows();
+    const row = rows[rowIndex];
     const cell = row?.[columnIndex];
     if (!row || !cell) return;
     const displayed = displayedCell(rowIndex, columnName, cell);
@@ -204,12 +299,23 @@ export function DatabaseTableBrowser({ connectionId, target }: DatabaseTableBrow
           onSelect: () => void writeClipboardText(formatCellValue(displayed)),
         },
         {
+          label: t("database.copy_selected_cells"),
+          disabled: !selectionRange,
+          onSelect: copySelectedRange,
+        },
+        {
           label: t("database.copy_row"),
-          onSelect: () => void writeClipboardText(formatTableRow(result, rowIndex, dirtyRows)),
+          onSelect: () => void writeClipboardText(formatTableRow(result, rowIndex, dirtyRows, newRows)),
         },
         {
           label: t("database.copy_column_name"),
           onSelect: () => void writeClipboardText(columnName),
+        },
+        { type: "separator" },
+        {
+          label: t("database.delete_row"),
+          disabled: !result.editable,
+          onSelect: () => requestDeleteRow(rowIndex),
         },
       ],
     });
@@ -224,11 +330,37 @@ export function DatabaseTableBrowser({ connectionId, target }: DatabaseTableBrow
   }
 
   function displayedCell(rowIndex: number, columnName: string, original: DatabaseCellValue) {
+    const newIndex = newRowIndex(rowIndex);
+    if (newIndex >= 0) return newRows[newIndex]?.values[columnName] ?? original;
     return dirtyRows[rowIndex]?.[columnName] ?? original;
+  }
+
+  function isCellInSelectionRange(rowIndex: number, columnIndex: number) {
+    if (!selectionRange) return false;
+    const startRow = Math.min(selectionRange.anchor.rowIndex, selectionRange.focus.rowIndex);
+    const endRow = Math.max(selectionRange.anchor.rowIndex, selectionRange.focus.rowIndex);
+    const startColumn = Math.min(selectionRange.anchor.columnIndex, selectionRange.focus.columnIndex);
+    const endColumn = Math.max(selectionRange.anchor.columnIndex, selectionRange.focus.columnIndex);
+    return rowIndex >= startRow && rowIndex <= endRow && columnIndex >= startColumn && columnIndex <= endColumn;
   }
 
   function commitEditingCell() {
     if (!editingCell || !result) return;
+    const newIndex = newRowIndex(editingCell.rowIndex);
+    if (newIndex >= 0) {
+      setNewRows((current) => current.map((row, index) => {
+        if (index !== newIndex) return row;
+        return {
+          ...row,
+          values: {
+            ...row.values,
+            [editingCell.columnName]: { kind: "text", value: editingCell.value },
+          },
+        };
+      }));
+      setEditingCell(null);
+      return;
+    }
     const columnIndex = result.columns.findIndex((column) => column.name === editingCell.columnName);
     const original = result.rows[editingCell.rowIndex]?.[columnIndex];
     if (original && editingCell.value === cellText(original)) {
@@ -259,7 +391,7 @@ export function DatabaseTableBrowser({ connectionId, target }: DatabaseTableBrow
   }
 
   function runAfterDiscardConfirmation(action: () => void) {
-    if (dirtyFieldCount === 0) {
+    if (dirtyFieldCount === 0 && newRows.length === 0) {
       action();
       return;
     }
@@ -282,21 +414,53 @@ export function DatabaseTableBrowser({ connectionId, target }: DatabaseTableBrow
     });
   }
 
+  function buildInsertRows(): DatabaseTableInsertRow[] {
+    return newRows.map((row) => ({
+      values: Object.fromEntries(
+        Object.entries(row.values).filter(([, value]) => !isEmptyInsertCell(value)),
+      ),
+    }));
+  }
+
+  function buildDeleteRows(rowIndex: number): DatabaseTableDeleteRow[] {
+    if (!result) return [];
+    const row = result.rows[rowIndex];
+    return [{
+      primary_key_values: Object.fromEntries(result.primary_key_columns.map((columnName) => {
+        const index = result.columns.findIndex((column) => column.name === columnName);
+        return [columnName, row[index]];
+      })),
+    }];
+  }
+
   async function saveChanges() {
-    if (!result || dirtyFieldCount === 0) return;
+    if (!result || (dirtyFieldCount === 0 && newRows.length === 0)) return;
     setIsSaving(true);
     setError(null);
     try {
-      await callBackend<DatabaseTableUpdateResult>("update_database_table_rows", {
-        request: {
-          connection_id: connectionId,
-          database: target.database,
-          table: target.table,
-          primary_key_columns: result.primary_key_columns,
-          rows: buildUpdateRows(),
-        },
-      });
+      if (newRows.length > 0) {
+        await callBackend<DatabaseTableUpdateResult>("insert_database_table_rows", {
+          request: {
+            connection_id: connectionId,
+            database: target.database,
+            table: target.table,
+            rows: buildInsertRows(),
+          },
+        });
+      }
+      if (dirtyFieldCount > 0) {
+        await callBackend<DatabaseTableUpdateResult>("update_database_table_rows", {
+          request: {
+            connection_id: connectionId,
+            database: target.database,
+            table: target.table,
+            primary_key_columns: result.primary_key_columns,
+            rows: buildUpdateRows(),
+          },
+        });
+      }
       setDirtyRows({});
+      setNewRows([]);
       setConfirmDialog(null);
       await loadPage();
     } catch (caught) {
@@ -308,14 +472,50 @@ export function DatabaseTableBrowser({ connectionId, target }: DatabaseTableBrow
 
   function discardChanges() {
     setDirtyRows({});
+    setNewRows([]);
     setConfirmDialog(null);
     const action = pendingAction;
     setPendingAction(null);
     action?.();
   }
 
+  function requestDeleteRow(rowIndex: number) {
+    if (isNewRow(rowIndex)) {
+      const nextNewRows = newRows.filter((_, index) => index !== newRowIndex(rowIndex));
+      setNewRows(nextNewRows);
+      setSelectedCell(null);
+      return;
+    }
+    setDeleteTarget({ rowIndex });
+  }
+
+  async function deleteRow() {
+    if (!result || !deleteTarget) return;
+    setIsSaving(true);
+    setError(null);
+    try {
+      await callBackend<DatabaseTableUpdateResult>("delete_database_table_rows", {
+        request: {
+          connection_id: connectionId,
+          database: target.database,
+          table: target.table,
+          primary_key_columns: result.primary_key_columns,
+          rows: buildDeleteRows(deleteTarget.rowIndex),
+        },
+      });
+      setDeleteTarget(null);
+      await loadPage();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
   const dirtyRowCount = Object.keys(dirtyRows).length;
   const dirtyFieldCount = Object.values(dirtyRows).reduce((total, row) => total + Object.keys(row).length, 0);
+  const changedRowCount = dirtyRowCount + newRows.length;
+  const changedFieldCount = dirtyFieldCount + newRows.reduce((total, row) => total + Object.keys(row.values).length, 0);
   const columnWidths = useMemo(() => calculateColumnWidths(result), [result]);
   const tableWidth = result ? 52 + result.columns.reduce((total, column) => total + (columnWidths[column.name] ?? MIN_DATA_COLUMN_WIDTH), 0) : undefined;
 
@@ -325,26 +525,36 @@ export function DatabaseTableBrowser({ connectionId, target }: DatabaseTableBrow
         <span>{t("database.table_label", { table: target.table })}</span>
         <button
           type="button"
-          className="database-icon-button"
-          aria-label={t("database.save_changes")}
-          title={t("database.save_changes")}
-          disabled={dirtyFieldCount === 0 || isSaving}
-          onClick={() => setConfirmDialog("save")}
+          className="database-icon-button database-icon-button--ghost"
+          aria-label={t("database.add_row")}
+          title={t("database.add_row")}
+          disabled={!result?.editable || isSaving}
+          onClick={addRow}
         >
-          <img aria-hidden="true" src={saveChangesIcon} alt="" />
+          <AppIcon icon={AddRowIcon} decorative />
         </button>
         <button
           type="button"
-          className="database-icon-button"
+          className="database-icon-button database-icon-button--ghost"
+          aria-label={t("database.save_changes")}
+          title={t("database.save_changes")}
+          disabled={changedFieldCount === 0 || isSaving}
+          onClick={() => setConfirmDialog("save")}
+        >
+          <AppIcon icon={SaveChangesIcon} decorative />
+        </button>
+        <button
+          type="button"
+          className="database-icon-button database-icon-button--ghost"
           aria-label={t("database.discard_changes")}
           title={t("database.discard_changes")}
-          disabled={dirtyFieldCount === 0 || isSaving}
+          disabled={changedFieldCount === 0 || isSaving}
           onClick={() => setConfirmDialog("discard")}
         >
-          <img aria-hidden="true" src={discardChangesIcon} alt="" />
+          <AppIcon icon={DiscardChangesIcon} decorative />
         </button>
-        {dirtyFieldCount > 0 ? (
-          <span>{t("database.unsaved_changes", { rows: dirtyRowCount, fields: dirtyFieldCount })}</span>
+        {changedFieldCount > 0 ? (
+          <span>{t("database.unsaved_changes", { rows: changedRowCount, fields: changedFieldCount })}</span>
         ) : null}
         {result && !result.editable ? (
           <span className="database-table-browser__readonly">
@@ -353,13 +563,13 @@ export function DatabaseTableBrowser({ connectionId, target }: DatabaseTableBrow
         ) : null}
         <button
           type="button"
-          className="database-icon-button"
+          className="database-icon-button database-icon-button--ghost"
           aria-label={t("database.refresh")}
           title={isLoading ? t("database.loading") : t("database.refresh")}
           disabled={isLoading}
           onClick={() => runAfterDiscardConfirmation(() => void loadPage())}
         >
-          <img aria-hidden="true" src={refreshIcon} alt="" />
+          <AppIcon icon={RefreshIcon} decorative />
         </button>
       </header>
       <div className="database-table-browser__criteria">
@@ -419,31 +629,43 @@ export function DatabaseTableBrowser({ connectionId, target }: DatabaseTableBrow
                 </tr>
               </thead>
               <tbody>
-                {result.rows.length > 0 ? result.rows.map((row, rowIndex) => (
+                {displayedRows().length > 0 ? displayedRows().map((row, rowIndex) => (
                   <tr
                     key={rowIndex}
-                    className={selectedCell?.rowIndex === rowIndex ? "database-table-browser__row--selected" : undefined}
+                    className={[
+                      selectedCell?.rowIndex === rowIndex ? "database-table-browser__row--selected" : "",
+                      isNewRow(rowIndex) ? "database-table-browser__row--new" : "",
+                    ].filter(Boolean).join(" ") || undefined}
                   >
-                    <td className="database-table-browser__row-number">{(result.page - 1) * result.page_size + rowIndex + 1}</td>
+                    <td className="database-table-browser__row-number">{displayRowNumber(rowIndex)}</td>
                     {row.map((cell, cellIndex) => {
                       const column = result.columns[cellIndex];
                       const displayed = displayedCell(rowIndex, column.name, cell);
                       const isDirty = Boolean(dirtyRows[rowIndex]?.[column.name]);
                       const isEditing = editingCell?.rowIndex === rowIndex && editingCell.columnName === column.name;
                       const isSelected = selectedCell?.rowIndex === rowIndex && selectedCell.columnName === column.name;
+                      const isRangeSelected = isCellInSelectionRange(rowIndex, cellIndex);
+                      const display = displayCellValue(displayed, column, isNewRow(rowIndex));
                       const className = [
+                        display.placeholder && displayed.kind === "null" ? "database-table-browser__cell--null" : "",
+                        displayed.kind === "number" ? "database-table-browser__cell--number" : "",
                         isDirty ? "database-table-browser__cell--dirty" : "",
+                        isRangeSelected ? "database-table-browser__cell--range-selected" : "",
                         isSelected ? "database-table-browser__cell--selected" : "",
                         isEditing ? "database-table-browser__cell--editing" : "",
                       ].filter(Boolean).join(" ") || undefined;
                       return (
                         <td
                           key={cellIndex}
+                          aria-label={`第 ${displayRowNumber(rowIndex)} 行 ${column.name}`}
                           className={className}
+                          onMouseDown={(event) => startCellSelection(event, rowIndex, cellIndex)}
+                          onMouseEnter={() => extendCellSelection(rowIndex, cellIndex)}
+                          onMouseUp={() => setIsSelectingRange(false)}
                           onClick={() => setSelectedCell({ rowIndex, columnName: column.name })}
                           onContextMenu={(event) => openCellContextMenu(event, rowIndex, column.name)}
                           onDoubleClick={() => {
-                            if (!editableCell(column.name)) return;
+                            if (!editableCell(column.name) && !isNewRow(rowIndex)) return;
                             setSelectedCell({ rowIndex, columnName: column.name });
                             setEditingCell({ rowIndex, columnName: column.name, value: cellText(displayed) });
                           }}
@@ -462,8 +684,14 @@ export function DatabaseTableBrowser({ connectionId, target }: DatabaseTableBrow
                               }}
                             />
                           ) : (
-                            <span className="database-table-browser__cell-content" title={formatCellValue(displayed)}>
-                              {formatCellValue(displayed)}
+                            <span
+                              className={[
+                                "database-table-browser__cell-content",
+                                display.placeholder ? "database-table-browser__cell-placeholder" : "",
+                              ].filter(Boolean).join(" ")}
+                              title={display.text}
+                            >
+                              {display.text}
                             </span>
                           )}
                         </td>
@@ -487,7 +715,7 @@ export function DatabaseTableBrowser({ connectionId, target }: DatabaseTableBrow
             disabled={!canGoPrevious}
             onClick={() => goToPage(1)}
           >
-            <img aria-hidden="true" src={firstPageIcon} alt="" />
+            <AppIcon icon={FirstPageIcon} decorative />
           </button>
           <button
             type="button"
@@ -497,7 +725,7 @@ export function DatabaseTableBrowser({ connectionId, target }: DatabaseTableBrow
             disabled={!canGoPrevious}
             onClick={() => goToPage(Math.max(1, page - 1))}
           >
-            <img aria-hidden="true" src={previousPageIcon} alt="" />
+            <AppIcon icon={PreviousPageIcon} decorative />
           </button>
           <div className="database-table-browser__page-size">
             <button
@@ -508,7 +736,7 @@ export function DatabaseTableBrowser({ connectionId, target }: DatabaseTableBrow
               onClick={() => setIsPageSizeMenuOpen((current) => !current)}
             >
               <span>{pageStart}-{pageEnd}</span>
-              <img aria-hidden="true" src={pageSizeIcon} alt="" />
+              <AppIcon icon={PageSizeIcon} decorative />
             </button>
             {isPageSizeMenuOpen ? (
               <div className="database-table-browser__page-size-menu" role="menu" aria-label={t("database.page_size_menu_title")}>
@@ -538,7 +766,7 @@ export function DatabaseTableBrowser({ connectionId, target }: DatabaseTableBrow
             disabled={!canGoNext}
             onClick={() => goToPage(page + 1)}
           >
-            <img aria-hidden="true" src={nextPageIcon} alt="" />
+            <AppIcon icon={NextPageIcon} decorative />
           </button>
           <button
             type="button"
@@ -548,7 +776,7 @@ export function DatabaseTableBrowser({ connectionId, target }: DatabaseTableBrow
             disabled={!canGoNext}
             onClick={() => goToPage(totalPages)}
           >
-            <img aria-hidden="true" src={lastPageIcon} alt="" />
+            <AppIcon icon={LastPageIcon} decorative />
           </button>
           </div>
         </div>
@@ -568,7 +796,7 @@ export function DatabaseTableBrowser({ connectionId, target }: DatabaseTableBrow
             </header>
             <p>
               {confirmDialog === "save"
-                ? t("database.confirm_save_changes_message", { rows: dirtyRowCount, fields: dirtyFieldCount })
+                ? t("database.confirm_save_changes_message", { rows: changedRowCount, fields: changedFieldCount })
                 : pendingAction
                   ? t("database.confirm_discard_before_action")
                   : t("database.confirm_discard_changes_message")}
@@ -593,6 +821,29 @@ export function DatabaseTableBrowser({ connectionId, target }: DatabaseTableBrow
           </div>
         </div>
       ) : null}
+      {deleteTarget ? (
+        <div className="connection-dialog__backdrop">
+          <div
+            className="connection-dialog database-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-label={t("database.confirm_delete_row")}
+          >
+            <header className="database-dialog__header">
+              <h2>{t("database.confirm_delete_row")}</h2>
+            </header>
+            <p>{t("database.confirm_delete_row_message")}</p>
+            <div className="database-dialog__actions">
+              <button type="button" onClick={() => setDeleteTarget(null)}>
+                {t("database.cancel")}
+              </button>
+              <button type="button" disabled={isSaving} onClick={() => void deleteRow()}>
+                {t("database.confirm")}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
       <ContextMenu menu={cellContextMenu} onClose={() => setCellContextMenu(null)} />
     </section>
   );
@@ -605,18 +856,66 @@ function normalizePage(value: string) {
 }
 
 function formatCellValue(cell: DatabaseCellValue) {
-  if (cell.kind === "null") return "NULL";
+  if (cell.kind === "null") return "null";
   if (cell.kind === "bool") return String(cell.value);
   return cell.value;
 }
 
-function formatTableRow(result: DatabaseTablePageResult, rowIndex: number, dirtyRows: DirtyRows) {
-  const row = result.rows[rowIndex] ?? [];
+function displayCellValue(cell: DatabaseCellValue, column: DatabaseResultColumn, isNewRow: boolean) {
+  if (isNewRow && cell.kind === "text" && cell.value === "") {
+    if (column.generated) return { text: "<generated>", placeholder: true };
+    if (column.has_default) return { text: "<default>", placeholder: true };
+    if (column.nullable) return { text: "<null>", placeholder: true };
+  }
+  if (cell.kind === "null") return { text: "null", placeholder: true };
+  return { text: formatCellValue(cell), placeholder: false };
+}
+
+function isEmptyInsertCell(cell: DatabaseCellValue) {
+  return cell.kind === "text" && cell.value === "";
+}
+
+function formatTableRow(result: DatabaseTablePageResult, rowIndex: number, dirtyRows: DirtyRows, newRows: NewRow[]) {
+  const newIndex = rowIndex - result.rows.length;
+  const row = newIndex >= 0
+    ? result.columns.map((column) => newRows[newIndex]?.values[column.name] ?? { kind: "null" } as DatabaseCellValue)
+    : result.rows[rowIndex] ?? [];
   return row.map((cell, cellIndex) => {
     const columnName = result.columns[cellIndex]?.name;
     if (!columnName) return formatCellValue(cell);
     return formatCellValue(dirtyRows[rowIndex]?.[columnName] ?? cell);
   }).join("\t");
+}
+
+function formatSelectedRange(
+  result: DatabaseTablePageResult,
+  rows: DatabaseCellValue[][],
+  dirtyRows: DirtyRows,
+  selection: NonNullable<SelectionRange>,
+) {
+  const startRow = Math.min(selection.anchor.rowIndex, selection.focus.rowIndex);
+  const endRow = Math.max(selection.anchor.rowIndex, selection.focus.rowIndex);
+  const startColumn = Math.min(selection.anchor.columnIndex, selection.focus.columnIndex);
+  const endColumn = Math.max(selection.anchor.columnIndex, selection.focus.columnIndex);
+  const lines: string[] = [];
+
+  for (let rowIndex = startRow; rowIndex <= endRow; rowIndex += 1) {
+    const row = rows[rowIndex];
+    if (!row) continue;
+    const values: string[] = [];
+    for (let columnIndex = startColumn; columnIndex <= endColumn; columnIndex += 1) {
+      const columnName = result.columns[columnIndex]?.name;
+      const cell = row[columnIndex];
+      if (!columnName || !cell) {
+        values.push("");
+        continue;
+      }
+      values.push(formatCellValue(dirtyRows[rowIndex]?.[columnName] ?? cell));
+    }
+    lines.push(values.join("\t"));
+  }
+
+  return lines.join("\n");
 }
 
 function sortButtonLabel(columnName: string, dataType: string, direction: DatabaseSortDirection | null) {

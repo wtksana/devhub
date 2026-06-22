@@ -6,9 +6,11 @@ use crate::db::metadata;
 use crate::db::query;
 use crate::db::sql_files::DatabaseSqlFileStore;
 use crate::models::database::{
+    DeleteDatabaseTableRowsRequest,
     DatabaseQueryResult, DatabaseSqlFile, DatabaseTableDdlResult, DatabaseTablePageResult,
     DatabaseTableUpdateResult, ExecuteDatabaseQueryRequest, GetDatabaseTableDdlRequest,
-    ListDatabaseSqlFilesRequest, LoadDatabaseTablePageRequest, SaveDatabaseSqlFileRequest,
+    InsertDatabaseTableRowsRequest, ListDatabaseSqlFilesRequest, LoadDatabaseTablePageRequest,
+    SaveDatabaseSqlFileRequest,
     UpdateDatabaseTableRowsRequest,
 };
 use crate::models::database::{DatabaseTreeNode, ListDatabaseObjectsRequest};
@@ -76,6 +78,26 @@ pub async fn update_database_table_rows(
 ) -> Result<DatabaseTableUpdateResult, String> {
     let connection = load_database_connection(settings_store.inner(), &request.connection_id)?;
     query::update_database_table_rows(database_manager.inner(), &connection, &request).await
+}
+
+#[tauri::command]
+pub async fn insert_database_table_rows(
+    settings_store: State<'_, SettingsStore>,
+    database_manager: State<'_, DatabaseConnectionManager>,
+    request: InsertDatabaseTableRowsRequest,
+) -> Result<DatabaseTableUpdateResult, String> {
+    let connection = load_database_connection(settings_store.inner(), &request.connection_id)?;
+    query::insert_database_table_rows(database_manager.inner(), &connection, &request).await
+}
+
+#[tauri::command]
+pub async fn delete_database_table_rows(
+    settings_store: State<'_, SettingsStore>,
+    database_manager: State<'_, DatabaseConnectionManager>,
+    request: DeleteDatabaseTableRowsRequest,
+) -> Result<DatabaseTableUpdateResult, String> {
+    let connection = load_database_connection(settings_store.inner(), &request.connection_id)?;
+    query::delete_database_table_rows(database_manager.inner(), &connection, &request).await
 }
 
 #[tauri::command]

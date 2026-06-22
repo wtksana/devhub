@@ -78,6 +78,12 @@ pub struct DatabaseSqlFile {
 pub struct DatabaseResultColumn {
     pub name: String,
     pub data_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nullable: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub has_default: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub generated: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -114,6 +120,33 @@ pub struct DatabaseTablePageResult {
 pub struct DatabaseTableUpdateRow {
     pub primary_key_values: BTreeMap<String, DatabaseCellValue>,
     pub changes: BTreeMap<String, DatabaseCellValue>,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct DatabaseTableInsertRow {
+    pub values: BTreeMap<String, DatabaseCellValue>,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct InsertDatabaseTableRowsRequest {
+    pub connection_id: String,
+    pub database: String,
+    pub table: String,
+    pub rows: Vec<DatabaseTableInsertRow>,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct DatabaseTableDeleteRow {
+    pub primary_key_values: BTreeMap<String, DatabaseCellValue>,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct DeleteDatabaseTableRowsRequest {
+    pub connection_id: String,
+    pub database: String,
+    pub table: String,
+    pub primary_key_columns: Vec<String>,
+    pub rows: Vec<DatabaseTableDeleteRow>,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq)]

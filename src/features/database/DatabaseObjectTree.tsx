@@ -2,7 +2,8 @@ import { useEffect, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { useI18n } from "../../i18n/useI18n";
 import { callBackend } from "../../lib/tauri";
 import type { DatabaseTreeNode } from "./databaseTypes";
-import tableIcon from "../../assets/icons/mdi-light--table.png";
+import { AppIcon } from "../../app/AppIcon";
+import TableIcon from "../../assets/icons/mdi-light--table.svg?react";
 
 interface DatabaseObjectTreeProps {
   connectionId: string;
@@ -156,7 +157,7 @@ export function DatabaseObjectTree({ connectionId, selectedDatabase, onDatabaseC
               type="button"
               className="database-object-tree__item-button"
             >
-              <img aria-hidden="true" className="database-object-tree__icon" src={tableIcon} alt="" />
+              <AppIcon icon={TableIcon} decorative className="database-object-tree__icon" />
               <span>{node.name}</span>
             </button>
           </li>

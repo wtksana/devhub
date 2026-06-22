@@ -16,10 +16,11 @@ import { DatabaseTableBrowser } from "./DatabaseTableBrowser";
 import { useI18n } from "../../i18n/useI18n";
 import { ContextMenu } from "../../app/ContextMenu";
 import type { ContextMenuState } from "../../app/ContextMenu";
+import { AppIcon } from "../../app/AppIcon";
 import { readClipboardText, writeClipboardText } from "../../lib/clipboard";
-import collapseEditorIcon from "../../assets/icons/oi--collapse-up.png";
-import expandEditorIcon from "../../assets/icons/oi--expand-down.png";
-import sqlFileIcon from "../../assets/icons/ph--file-sql-light.png";
+import CollapseEditorIcon from "../../assets/icons/oi--collapse-up.svg?react";
+import ExpandEditorIcon from "../../assets/icons/oi--expand-down.svg?react";
+import SqlFileIcon from "../../assets/icons/ph--file-sql-light.svg?react";
 
 const DEFAULT_SQL_LIMIT = 200;
 const DEFAULT_OBJECT_TREE_WIDTH = 220;
@@ -422,11 +423,11 @@ export function DatabaseWorkspace({ connectionId, initialDatabase, theme, fontFa
               title={isEditorOpen ? t("database.collapse_editor") : t("database.open_editor")}
               onClick={() => setIsEditorOpen((current) => !current)}
             >
-              <img aria-hidden="true" src={isEditorOpen ? collapseEditorIcon : expandEditorIcon} alt="" />
+              <AppIcon icon={isEditorOpen ? CollapseEditorIcon : ExpandEditorIcon} decorative />
             </button>
             <label>
               <span className="database-query-panel__icon-label" title={t("database.sql_file")}>
-                <img aria-hidden="true" src={sqlFileIcon} alt="" />
+                <AppIcon icon={SqlFileIcon} decorative />
               </span>
               <select
                 aria-label={t("database.sql_file")}
@@ -676,7 +677,13 @@ function DatabaseResultView({ result }: { result: DatabaseQueryResult }) {
                 <tr key={rowIndex}>
                   {row.map((cell, cellIndex) => (
                     <td key={cellIndex}>
-                      <span className="database-result__cell-content" title={formatCellValue(cell)}>
+                      <span
+                        className={[
+                          "database-result__cell-content",
+                          cell.kind === "null" ? "database-result__cell-placeholder" : "",
+                        ].filter(Boolean).join(" ")}
+                        title={formatCellValue(cell)}
+                      >
                         {formatCellValue(cell)}
                       </span>
                     </td>
@@ -696,7 +703,7 @@ function DatabaseResultView({ result }: { result: DatabaseQueryResult }) {
 }
 
 function formatCellValue(cell: DatabaseCellValue) {
-  if (cell.kind === "null") return "NULL";
+  if (cell.kind === "null") return "null";
   if (cell.kind === "bool") return String(cell.value);
   return cell.value;
 }

@@ -1,6 +1,7 @@
-import themeIcon from "../assets/icons/bi--brilliance.png";
-import settingsIcon from "../assets/icons/bi--gear-wide-connected.png";
+import ThemeIcon from "../assets/icons/bi--brilliance.svg?react";
+import SettingsIcon from "../assets/icons/bi--gear-wide-connected.svg?react";
 import { useI18n } from "../i18n/useI18n";
+import { AppIcon } from "./AppIcon";
 import { WindowControls } from "./WindowControls";
 import { getSafeCurrentWindow } from "./windowRuntime";
 
@@ -36,7 +37,7 @@ export function CommandPalette({ onOpenSettings, onToggleTheme }: CommandPalette
         onDoubleClick={(event) => event.stopPropagation()}
         onClick={onToggleTheme}
       >
-        <img src={themeIcon} alt="" aria-hidden="true" />
+        <AppIcon icon={ThemeIcon} decorative />
       </button>
       <button
         type="button"
@@ -46,7 +47,7 @@ export function CommandPalette({ onOpenSettings, onToggleTheme }: CommandPalette
         onDoubleClick={(event) => event.stopPropagation()}
         onClick={onOpenSettings}
       >
-        <img src={settingsIcon} alt="" aria-hidden="true" />
+        <AppIcon icon={SettingsIcon} decorative />
       </button>
       <WindowControls />
     </section>

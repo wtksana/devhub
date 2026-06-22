@@ -1,4 +1,4 @@
-import { useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import type {
   ConnectionAuthSettings,
   ConnectionSettings,
@@ -175,6 +175,24 @@ export function ConnectionList({
       ? [[ungroupedName, ungroupedConnections] as const, ...sortedGroups]
       : sortedGroups;
   }, [connectionSortMode, connections, groupNames, groupSortMode]);
+
+  useEffect(() => {
+    if (!dialogMode && !isGroupDialogOpen) return;
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key !== "Escape") return;
+      if (dialogMode) {
+        closeConnectionDialog();
+        return;
+      }
+      if (isGroupDialogOpen) {
+        closeGroupDialog();
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [dialogMode, isGroupDialogOpen]);
 
   function dialogTitle(mode: ConnectionDialogMode) {
     if (kind === "mysql") {

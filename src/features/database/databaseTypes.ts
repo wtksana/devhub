@@ -20,11 +20,16 @@ export type DatabaseCellValue =
   | { kind: "number"; value: string }
   | { kind: "bool"; value: boolean };
 
+export interface DatabaseResultColumn {
+  name: string;
+  data_type: string;
+  nullable?: boolean | null;
+  has_default?: boolean | null;
+  generated?: boolean | null;
+}
+
 export interface DatabaseQueryResult {
-  columns: Array<{
-    name: string;
-    data_type: string;
-  }>;
+  columns: DatabaseResultColumn[];
   rows: DatabaseCellValue[][];
   affected_rows: number;
   duration_ms: number;
@@ -44,10 +49,7 @@ export interface DatabaseTableDdlResult {
 export type DatabaseSortDirection = "asc" | "desc";
 
 export interface DatabaseTablePageResult {
-  columns: Array<{
-    name: string;
-    data_type: string;
-  }>;
+  columns: DatabaseResultColumn[];
   rows: DatabaseCellValue[][];
   total_rows: number;
   page: number;
@@ -65,6 +67,29 @@ export interface DatabaseTableBrowserTarget {
 export interface DatabaseTableUpdateRow {
   primary_key_values: Record<string, DatabaseCellValue>;
   changes: Record<string, DatabaseCellValue>;
+}
+
+export interface DatabaseTableInsertRow {
+  values: Record<string, DatabaseCellValue>;
+}
+
+export interface InsertDatabaseTableRowsRequest {
+  connection_id: string;
+  database: string;
+  table: string;
+  rows: DatabaseTableInsertRow[];
+}
+
+export interface DatabaseTableDeleteRow {
+  primary_key_values: Record<string, DatabaseCellValue>;
+}
+
+export interface DeleteDatabaseTableRowsRequest {
+  connection_id: string;
+  database: string;
+  table: string;
+  primary_key_columns: string[];
+  rows: DatabaseTableDeleteRow[];
 }
 
 export interface UpdateDatabaseTableRowsRequest {

@@ -172,6 +172,14 @@ p {
   border: 0;
 }
 
+.app-icon {
+  display: block;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  color: currentColor;
+}
+
 .app-shell {
   display: grid;
   grid-template-rows: 34px minmax(0, 1fr) 24px;
@@ -240,15 +248,18 @@ p {
   width: 28px;
   padding: 0;
   border-color: transparent;
+  border-radius: 6px;
   background: transparent;
+  transition: background 120ms ease, color 120ms ease;
 }
 
-.command-palette__icon-button:hover {
+.command-palette__icon-button:hover,
+.command-palette__icon-button:focus-visible {
   border-color: transparent;
-  background: var(--button-hover);
+  background: color-mix(in srgb, var(--button-hover) 72%, transparent);
 }
 
-.command-palette__icon-button img {
+.command-palette__icon-button .app-icon {
   width: 16px;
   height: 16px;
   opacity: 0.82;
@@ -837,6 +848,7 @@ p {
   padding: 8px;
   border-radius: 6px;
   cursor: default;
+  user-select: none;
 }
 
 .connection-list li:hover {
@@ -1028,7 +1040,7 @@ p {
 .database-object-tree__icon {
   width: 16px;
   height: 16px;
-  object-fit: contain;
+  color: var(--muted);
   opacity: 0.72;
 }
 
@@ -1107,17 +1119,35 @@ p {
   width: 28px;
   height: 28px;
   padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  transition: background 120ms ease, color 120ms ease;
 }
 
-.database-icon-button img,
-.database-query-panel__icon-label img {
+.database-icon-button:hover:not(:disabled),
+.database-icon-button:focus-visible:not(:disabled) {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--button-hover) 72%, transparent);
+}
+
+.command-palette__icon-button:active,
+.database-icon-button:active:not(:disabled) {
+  background: color-mix(in srgb, var(--button-active) 78%, transparent);
+}
+
+.database-icon-button--ghost {
+  color: var(--muted);
+}
+
+.database-icon-button .app-icon,
+.database-query-panel__icon-label .app-icon {
   width: 16px;
   height: 16px;
-  object-fit: contain;
   opacity: 0.78;
 }
 
-.database-icon-button:disabled img {
+.database-icon-button:disabled .app-icon {
   opacity: 0.36;
 }
 
@@ -1371,6 +1401,11 @@ p {
   white-space: nowrap;
 }
 
+.database-result__cell-placeholder {
+  color: color-mix(in srgb, var(--muted) 72%, transparent);
+  font-style: italic;
+}
+
 .database-result tbody tr:hover {
   background: var(--hover);
 }
@@ -1509,10 +1544,9 @@ p {
   background: var(--hover);
 }
 
-.database-table-browser__page-size img {
+.database-table-browser__page-size .app-icon {
   width: 16px;
   height: 16px;
-  object-fit: contain;
   opacity: 0.72;
 }
 
@@ -1576,6 +1610,7 @@ p {
 .database-table-browser__table-wrap {
   height: 100%;
   padding-bottom: 68px;
+  user-select: none;
 }
 
 .database-table-browser__table-shell {
@@ -1659,6 +1694,14 @@ th.database-table-browser__row-number {
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 82%, transparent);
 }
 
+.database-table-browser__row--new td {
+  background: color-mix(in srgb, var(--success) 18%, var(--panel));
+}
+
+.database-table-browser__row--new .database-table-browser__row-number {
+  background: color-mix(in srgb, var(--success) 22%, var(--panel-raised));
+}
+
 .database-table-browser__row--selected td {
   background: color-mix(in srgb, var(--accent) 7%, var(--panel));
 }
@@ -1674,6 +1717,14 @@ th.database-table-browser__row-number {
   outline-offset: -1px;
 }
 
+.database-table-browser__cell--range-selected {
+  background: color-mix(in srgb, var(--accent) 24%, var(--panel)) !important;
+}
+
+.database-table-browser__cell--number {
+  text-align: right;
+}
+
 .database-table-browser__cell--editing {
   padding: 0 !important;
   background: color-mix(in srgb, var(--accent) 16%, var(--panel)) !important;
@@ -1687,6 +1738,15 @@ th.database-table-browser__row-number {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.database-table-browser__cell-placeholder {
+  color: color-mix(in srgb, var(--muted) 72%, transparent);
+  font-style: italic;
+}
+
+.database-table-browser__cell--null .database-table-browser__cell-placeholder {
+  color: color-mix(in srgb, var(--muted) 64%, transparent);
 }
 
 .database-table-browser td input {

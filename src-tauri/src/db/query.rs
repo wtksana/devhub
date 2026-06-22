@@ -4,6 +4,7 @@ use std::time::Instant;
 use sqlx::mysql::{MySqlArguments, MySqlRow};
 use sqlx::postgres::{PgArguments, PgRow};
 use sqlx::types::chrono::{DateTime, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime, Utc};
+use sqlx::types::BigDecimal;
 use sqlx::{Column, MySql, MySqlConnection, PgConnection, Postgres, Row, TypeInfo, ValueRef};
 
 use crate::db::connection::{DatabaseConnectionManager, DatabasePool};
@@ -11,7 +12,8 @@ use crate::db::metadata::MetadataQuery;
 use crate::models::database::{
     DatabaseCellValue, DatabaseQueryResult, DatabaseResultColumn, DatabaseTableDdlResult,
     DatabaseTablePageResult, DatabaseTableUpdateResult, ExecuteDatabaseQueryRequest,
-    GetDatabaseTableDdlRequest, LoadDatabaseTablePageRequest, UpdateDatabaseTableRowsRequest,
+    GetDatabaseTableDdlRequest, InsertDatabaseTableRowsRequest, DeleteDatabaseTableRowsRequest,
+    LoadDatabaseTablePageRequest, UpdateDatabaseTableRowsRequest,
 };
 use crate::models::settings::DatabaseConnectionSettings;
 
@@ -54,9 +56,41 @@ pub struct NormalizedTableUpdateRow {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct NormalizedTableInsertRequest {
+    pub connection_id: String,
+    pub database: String,
+    pub table: String,
+    pub rows: Vec<NormalizedTableInsertRow>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct NormalizedTableInsertRow {
+    pub values: BTreeMap<String, DatabaseCellValue>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct NormalizedTableDeleteRequest {
+    pub connection_id: String,
+    pub database: String,
+    pub table: String,
+    pub primary_key_columns: Vec<String>,
+    pub rows: Vec<NormalizedTableDeleteRow>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct NormalizedTableDeleteRow {
+    pub primary_key_values: BTreeMap<String, DatabaseCellValue>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct TableUpdateQuery {
     pub sql: String,
     pub values: Vec<DatabaseCellValue>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MysqlColumnMetadata {
+    column: DatabaseResultColumn,
 }
 
 pub async fn execute_database_query(
@@ -156,6 +190,13 @@ pub fn mysql_table_ddl_query(table: &str) -> Result<String, String> {
         "SHOW CREATE TABLE {}",
         quote_identifier("mysql", table)?
     ))
+}
+
+pub fn mysql_table_column_metadata_query(database: &str, table: &str) -> Result<MetadataQuery, String> {
+    Ok(MetadataQuery {
+        sql: "select column_name, data_type, is_nullable, column_default, extra from information_schema.columns where table_schema = ? and table_name = ? order by ordinal_position".to_string(),
+        binds: vec![database.to_string(), table.to_string()],
+    })
 }
 
 pub fn mysql_table_ddl_from_values(
@@ -387,6 +428,139 @@ pub fn build_table_update_queries(
         .collect()
 }
 
+pub fn normalize_table_insert_request(
+    request: InsertDatabaseTableRowsRequest,
+) -> Result<NormalizedTableInsertRequest, String> {
+    let database = request.database.trim();
+    if database.is_empty() {
+        return Err("database is required".to_string());
+    }
+    let table = request.table.trim();
+    if table.is_empty() {
+        return Err("table is required".to_string());
+    }
+    if request.rows.is_empty() {
+        return Err("rows are required".to_string());
+    }
+    let mut rows = Vec::with_capacity(request.rows.len());
+    for row in request.rows {
+        rows.push(NormalizedTableInsertRow { values: row.values });
+    }
+
+    Ok(NormalizedTableInsertRequest {
+        connection_id: request.connection_id,
+        database: database.to_string(),
+        table: table.to_string(),
+        rows,
+    })
+}
+
+pub fn build_table_insert_queries(
+    kind: &str,
+    request: &NormalizedTableInsertRequest,
+) -> Result<Vec<TableUpdateQuery>, String> {
+    let table = table_identifier(kind, &request.database, &request.table)?;
+    request
+        .rows
+        .iter()
+        .map(|row| {
+            if row.values.is_empty() {
+                return Ok(TableUpdateQuery {
+                    sql: match kind {
+                        "mysql" => format!("INSERT INTO {table} () VALUES ()"),
+                        "postgresql" => format!("INSERT INTO {table} DEFAULT VALUES"),
+                        kind => return Err(format!("unsupported database connection kind: {kind}")),
+                    },
+                    values: Vec::new(),
+                });
+            }
+            let columns = row
+                .values
+                .keys()
+                .map(|column| quote_identifier(kind, column))
+                .collect::<Result<Vec<_>, _>>()?;
+            let values = row.values.values().cloned().collect::<Vec<_>>();
+            let placeholders = (1..=values.len())
+                .map(|index| parameter_placeholder(kind, index))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(TableUpdateQuery {
+                sql: format!(
+                    "INSERT INTO {table} ({}) VALUES ({})",
+                    columns.join(", "),
+                    placeholders.join(", ")
+                ),
+                values,
+            })
+        })
+        .collect()
+}
+
+pub fn normalize_table_delete_request(
+    request: DeleteDatabaseTableRowsRequest,
+    actual_primary_key_columns: &[String],
+) -> Result<NormalizedTableDeleteRequest, String> {
+    let database = request.database.trim();
+    if database.is_empty() {
+        return Err("database is required".to_string());
+    }
+    let table = request.table.trim();
+    if table.is_empty() {
+        return Err("table is required".to_string());
+    }
+    if actual_primary_key_columns.is_empty() {
+        return Err("table has no primary key".to_string());
+    }
+    if request.rows.is_empty() {
+        return Err("rows are required".to_string());
+    }
+    let mut rows = Vec::with_capacity(request.rows.len());
+    for row in request.rows {
+        for key in actual_primary_key_columns {
+            if !row.primary_key_values.contains_key(key) {
+                return Err(format!("primary key value is required: {key}"));
+            }
+        }
+        rows.push(NormalizedTableDeleteRow {
+            primary_key_values: row.primary_key_values,
+        });
+    }
+
+    Ok(NormalizedTableDeleteRequest {
+        connection_id: request.connection_id,
+        database: database.to_string(),
+        table: table.to_string(),
+        primary_key_columns: actual_primary_key_columns.to_vec(),
+        rows,
+    })
+}
+
+pub fn build_table_delete_queries(
+    kind: &str,
+    request: &NormalizedTableDeleteRequest,
+) -> Result<Vec<TableUpdateQuery>, String> {
+    let table = table_identifier(kind, &request.database, &request.table)?;
+    request
+        .rows
+        .iter()
+        .map(|row| {
+            let mut values = Vec::new();
+            let mut where_parts = Vec::new();
+            for (index, column) in request.primary_key_columns.iter().enumerate() {
+                where_parts.push(format!(
+                    "{} = {}",
+                    quote_identifier(kind, column)?,
+                    parameter_placeholder(kind, index + 1)?
+                ));
+                values.push(row.primary_key_values[column].clone());
+            }
+            Ok(TableUpdateQuery {
+                sql: format!("DELETE FROM {table} WHERE {}", where_parts.join(" AND ")),
+                values,
+            })
+        })
+        .collect()
+}
+
 fn table_identifier(kind: &str, database: &str, table: &str) -> Result<String, String> {
     match kind {
         "mysql" => quote_identifier(kind, table),
@@ -465,6 +639,40 @@ pub async fn update_database_table_rows(
             };
             update_postgresql_table_rows(&pool, request).await
         }
+        kind => Err(format!("unsupported database connection kind: {kind}")),
+    }
+}
+
+pub async fn insert_database_table_rows(
+    manager: &DatabaseConnectionManager,
+    connection: &DatabaseConnectionSettings,
+    request: &InsertDatabaseTableRowsRequest,
+) -> Result<DatabaseTableUpdateResult, String> {
+    match connection.kind.as_str() {
+        "mysql" => {
+            let DatabasePool::Mysql(pool) = manager.pool(connection, Some(&request.database)).await? else {
+                return Err("database pool kind mismatch".to_string());
+            };
+            insert_mysql_table_rows(&pool, request).await
+        }
+        "postgresql" => Err("postgresql table insert is not supported yet".to_string()),
+        kind => Err(format!("unsupported database connection kind: {kind}")),
+    }
+}
+
+pub async fn delete_database_table_rows(
+    manager: &DatabaseConnectionManager,
+    connection: &DatabaseConnectionSettings,
+    request: &DeleteDatabaseTableRowsRequest,
+) -> Result<DatabaseTableUpdateResult, String> {
+    match connection.kind.as_str() {
+        "mysql" => {
+            let DatabasePool::Mysql(pool) = manager.pool(connection, Some(&request.database)).await? else {
+                return Err("database pool kind mismatch".to_string());
+            };
+            delete_mysql_table_rows(&pool, request).await
+        }
+        "postgresql" => Err("postgresql table delete is not supported yet".to_string()),
         kind => Err(format!("unsupported database connection kind: {kind}")),
     }
 }
@@ -572,13 +780,16 @@ async fn load_mysql_table_page(
     let primary_key_columns =
         load_mysql_primary_key_columns(&mut *connection, &request.database, &request.table).await?;
     let editable = !primary_key_columns.is_empty();
+    let column_metadata =
+        load_mysql_table_column_metadata(&mut *connection, &request.database, &request.table).await?;
     let rows = sqlx::query(&queries.page_sql)
         .fetch_all(&mut *connection)
         .await
         .map_err(|error| error.to_string())?;
     let result = rows_to_mysql_result(rows, started_at.elapsed().as_millis(), false);
+    let columns = merge_mysql_result_columns(result.columns, column_metadata);
     Ok(DatabaseTablePageResult {
-        columns: result.columns,
+        columns,
         rows: result.rows,
         total_rows,
         page: request.page,
@@ -637,6 +848,60 @@ async fn load_mysql_primary_key_columns(
     Ok(rows.into_iter().map(|row| row.get("column_name")).collect())
 }
 
+async fn load_mysql_table_column_metadata(
+    connection: &mut MySqlConnection,
+    database: &str,
+    table: &str,
+) -> Result<Vec<MysqlColumnMetadata>, String> {
+    let query = mysql_table_column_metadata_query(database, table)?;
+    let rows = sqlx::query(&query.sql)
+        .bind(&query.binds[0])
+        .bind(&query.binds[1])
+        .fetch_all(connection)
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(rows
+        .into_iter()
+        .map(|row| {
+            let extra = row
+                .try_get::<String, _>("extra")
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            MysqlColumnMetadata {
+                column: DatabaseResultColumn {
+                    name: row.get("column_name"),
+                    data_type: row.get("data_type"),
+                    nullable: Some(row.get::<String, _>("is_nullable").eq_ignore_ascii_case("YES")),
+                    has_default: Some(row.try_get_raw("column_default").is_ok_and(|value| !value.is_null())),
+                    generated: Some(extra.contains("auto_increment") || extra.contains("generated")),
+                },
+            }
+        })
+        .collect())
+}
+
+fn merge_mysql_result_columns(
+    result_columns: Vec<DatabaseResultColumn>,
+    metadata: Vec<MysqlColumnMetadata>,
+) -> Vec<DatabaseResultColumn> {
+    if result_columns.is_empty() {
+        return metadata.into_iter().map(|metadata| metadata.column).collect();
+    }
+    let metadata_by_name = metadata
+        .into_iter()
+        .map(|metadata| (metadata.column.name.clone(), metadata.column))
+        .collect::<BTreeMap<_, _>>();
+    result_columns
+        .into_iter()
+        .map(|column| {
+            metadata_by_name
+                .get(&column.name)
+                .cloned()
+                .unwrap_or(column)
+        })
+        .collect()
+}
+
 async fn load_postgresql_primary_key_columns(
     connection: &mut PgConnection,
     database: &str,
@@ -687,6 +952,80 @@ async fn update_mysql_table_rows(
     Ok(DatabaseTableUpdateResult {
         updated_rows,
         updated_fields,
+        duration_ms: started_at.elapsed().as_millis(),
+    })
+}
+
+async fn insert_mysql_table_rows(
+    pool: &sqlx::MySqlPool,
+    request: &InsertDatabaseTableRowsRequest,
+) -> Result<DatabaseTableUpdateResult, String> {
+    let mut connection = pool.acquire().await.map_err(|error| error.to_string())?;
+    let normalized = normalize_table_insert_request(request.clone())?;
+    let queries = build_table_insert_queries("mysql", &normalized)?;
+    let started_at = Instant::now();
+    let mut updated_rows = 0;
+    let mut updated_fields = 0;
+
+    for (row, query) in normalized.rows.iter().zip(queries) {
+        let mut sql = sqlx::query(&query.sql);
+        for value in &query.values {
+            sql = bind_mysql_value(sql, value);
+        }
+        let result = sql
+            .execute(&mut *connection)
+            .await
+            .map_err(|error| error.to_string())?;
+        if result.rows_affected() != 1 {
+            return Err(format!(
+                "expected to insert 1 row, inserted {}",
+                result.rows_affected()
+            ));
+        }
+        updated_rows += 1;
+        updated_fields += row.values.len() as u64;
+    }
+
+    Ok(DatabaseTableUpdateResult {
+        updated_rows,
+        updated_fields,
+        duration_ms: started_at.elapsed().as_millis(),
+    })
+}
+
+async fn delete_mysql_table_rows(
+    pool: &sqlx::MySqlPool,
+    request: &DeleteDatabaseTableRowsRequest,
+) -> Result<DatabaseTableUpdateResult, String> {
+    let mut connection = pool.acquire().await.map_err(|error| error.to_string())?;
+    let primary_key_columns =
+        load_mysql_primary_key_columns(&mut *connection, &request.database, &request.table).await?;
+    let normalized = normalize_table_delete_request(request.clone(), &primary_key_columns)?;
+    let queries = build_table_delete_queries("mysql", &normalized)?;
+    let started_at = Instant::now();
+    let mut updated_rows = 0;
+
+    for query in queries {
+        let mut sql = sqlx::query(&query.sql);
+        for value in &query.values {
+            sql = bind_mysql_value(sql, value);
+        }
+        let result = sql
+            .execute(&mut *connection)
+            .await
+            .map_err(|error| error.to_string())?;
+        if result.rows_affected() != 1 {
+            return Err(format!(
+                "expected to delete 1 row, deleted {}",
+                result.rows_affected()
+            ));
+        }
+        updated_rows += 1;
+    }
+
+    Ok(DatabaseTableUpdateResult {
+        updated_rows,
+        updated_fields: 0,
         duration_ms: started_at.elapsed().as_millis(),
     })
 }
@@ -847,6 +1186,9 @@ fn rows_to_mysql_result(
                 .map(|column| DatabaseResultColumn {
                     name: column.name().to_string(),
                     data_type: column.type_info().name().to_string(),
+                    nullable: None,
+                    has_default: None,
+                    generated: None,
                 })
                 .collect()
         })
@@ -883,6 +1225,9 @@ fn rows_to_postgresql_result(
                 .map(|column| DatabaseResultColumn {
                     name: column.name().to_string(),
                     data_type: column.type_info().name().to_string(),
+                    nullable: None,
+                    has_default: None,
+                    generated: None,
                 })
                 .collect()
         })
@@ -916,6 +1261,16 @@ fn mysql_cell_value(row: &MySqlRow, column_name: &str, type_name: &str) -> Datab
     if mysql_prefers_bool_decode(type_name) {
         if let Ok(value) = row.try_get::<bool, _>(column_name) {
             return DatabaseCellValue::Bool { value };
+        }
+    }
+    if mysql_prefers_text_decode(type_name) {
+        if let Ok(value) = row.try_get::<BigDecimal, _>(column_name) {
+            return DatabaseCellValue::Number {
+                value: value.to_string(),
+            };
+        }
+        if let Ok(value) = row.try_get::<String, _>(column_name) {
+            return DatabaseCellValue::Number { value };
         }
     }
     if mysql_prefers_numeric_decode(type_name) {
@@ -1004,6 +1359,13 @@ pub(crate) fn mysql_prefers_numeric_decode(type_name: &str) -> bool {
             | "DECIMAL"
             | "NUMERIC"
             | "YEAR"
+    )
+}
+
+pub(crate) fn mysql_prefers_text_decode(type_name: &str) -> bool {
+    matches!(
+        type_name.to_ascii_uppercase().as_str(),
+        "DECIMAL" | "NEWDECIMAL" | "NUMERIC"
     )
 }
 
