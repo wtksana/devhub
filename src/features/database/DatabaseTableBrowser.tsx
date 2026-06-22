@@ -3,7 +3,7 @@ import { useI18n } from "../../i18n/useI18n";
 import { callBackend } from "../../lib/tauri";
 import { ContextMenu, type ContextMenuState } from "../../app/ContextMenu";
 import { AppIcon } from "../../app/AppIcon";
-import { writeClipboardText } from "../../lib/clipboard";
+import { readClipboardText, writeClipboardText } from "../../lib/clipboard";
 import FirstPageIcon from "../../assets/icons/material-symbols--first-page-rounded.svg?react";
 import LastPageIcon from "../../assets/icons/material-symbols--last-page-rounded.svg?react";
 import NextPageIcon from "../../assets/icons/material-symbols--chevron-right-rounded.svg?react";
@@ -354,6 +354,62 @@ export function DatabaseTableBrowser({ connectionId, target }: DatabaseTableBrow
     }));
   }
 
+  async function pasteClipboardIntoSelectedCells() {
+    if (!result || !selectedCell) return;
+    const startPosition = selectedPosition();
+    if (!startPosition) return;
+    const text = await readClipboardText();
+    const values = parseClipboardTable(text);
+    if (values.length === 0) return;
+    const rowCount = displayedRows().length;
+    const updates: DirtyRows = {};
+    const removals: Array<{ rowIndex: number; columnName: string }> = [];
+    const nextNewRows = [...newRows];
+    let hasNewRowUpdates = false;
+
+    values.forEach((rowValues, rowOffset) => {
+      const rowIndex = startPosition.rowIndex + rowOffset;
+      if (rowIndex >= rowCount) return;
+      rowValues.forEach((value, columnOffset) => {
+        const columnIndex = startPosition.columnIndex + columnOffset;
+        const column = result.columns[columnIndex];
+        if (!column) return;
+        if (!editableCell(column.name) && !isNewRow(rowIndex)) return;
+        const newIndex = newRowIndex(rowIndex);
+        if (newIndex >= 0) {
+          nextNewRows[newIndex] = {
+            ...nextNewRows[newIndex],
+            values: {
+              ...nextNewRows[newIndex].values,
+              [column.name]: { kind: "text", value },
+            },
+          };
+          hasNewRowUpdates = true;
+          return;
+        }
+        const original = result.rows[rowIndex]?.[columnIndex];
+        if (!original) return;
+        if (value === cellText(original)) {
+          removals.push({ rowIndex, columnName: column.name });
+          return;
+        }
+        updates[rowIndex] = {
+          ...(updates[rowIndex] ?? {}),
+          [column.name]: { kind: "text", value },
+        };
+      });
+    });
+
+    if (Object.keys(updates).length === 0 && removals.length === 0 && !hasNewRowUpdates) return;
+    setDirtyRows((current) => {
+      const cleaned = removals.reduce((next, removal) => removeDirtyCell(next, removal.rowIndex, removal.columnName), current);
+      return mergeDirtyRows(cleaned, updates);
+    });
+    if (hasNewRowUpdates) {
+      setNewRows(nextNewRows);
+    }
+  }
+
   function moveSelectedCell(rowDelta: number, columnDelta: number) {
     const position = selectedPosition();
     if (!position) return;
@@ -367,6 +423,11 @@ export function DatabaseTableBrowser({ connectionId, target }: DatabaseTableBrow
       if (!selectionRange) return;
       event.preventDefault();
       copySelectedRange();
+      return;
+    }
+    if (event.key.toLowerCase() === "v" && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault();
+      void pasteClipboardIntoSelectedCells();
       return;
     }
     if (event.ctrlKey || event.metaKey || event.altKey) return;
@@ -1014,6 +1075,22 @@ function isTextInputEventTarget(target: EventTarget | null) {
 
 function cellKey(rowIndex: number, columnIndex: number) {
   return `${rowIndex}:${columnIndex}`;
+}
+
+function parseClipboardTable(text: string) {
+  const normalized = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").replace(/\n$/, "");
+  if (normalized.length === 0) return [];
+  return normalized.split("\n").map((line) => line.split("\t"));
+}
+
+function mergeDirtyRows(current: DirtyRows, updates: DirtyRows) {
+  return Object.entries(updates).reduce<DirtyRows>((next, [rowIndex, rowUpdates]) => ({
+    ...next,
+    [Number(rowIndex)]: {
+      ...(next[Number(rowIndex)] ?? {}),
+      ...rowUpdates,
+    },
+  }), current);
 }
 
 function removeDirtyCell(dirtyRows: DirtyRows, rowIndex: number, columnName: string) {

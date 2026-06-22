@@ -1225,6 +1225,57 @@ describe("DatabaseWorkspace", () => {
     expect(screen.getByLabelText("第 1 行 id")).not.toHaveClass("database-table-browser__cell--dirty");
   });
 
+  it("pastes tabular clipboard text into editable cells from the selected cell", async () => {
+    readClipboardTextMock.mockResolvedValue("Carol\t90.5\nDave\t91.5");
+    callBackendMock.mockImplementation((command, payload) => {
+      if (command === "list_database_objects") {
+        const request = (payload as { request: { parent_kind?: string } }).request;
+        if (!request.parent_kind) {
+          return Promise.resolve([{ id: "database:app", name: "app", kind: "database", has_children: true }]);
+        }
+        return Promise.resolve([{ id: "table:app.users", name: "users", kind: "table", has_children: true }]);
+      }
+      if (command === "load_database_table_page") {
+        return Promise.resolve({
+          columns: [
+            { name: "id", data_type: "INT" },
+            { name: "name", data_type: "VARCHAR" },
+            { name: "amount", data_type: "DECIMAL" },
+          ],
+          rows: [
+            [{ kind: "number", value: "1" }, { kind: "text", value: "Alice" }, { kind: "number", value: "12.34" }],
+            [{ kind: "number", value: "2" }, { kind: "text", value: "Bob" }, { kind: "number", value: "56.78" }],
+          ],
+          total_rows: 2,
+          page: 1,
+          page_size: 200,
+          duration_ms: 9,
+          primary_key_columns: ["id"],
+          editable: true,
+        });
+      }
+      return Promise.resolve([]);
+    });
+
+    renderDatabaseWorkspace("app");
+    await userEvent.dblClick(await screen.findByText("users"));
+    await screen.findByLabelText("表数据");
+
+    await userEvent.click(screen.getByText("Alice"));
+    fireEvent.keyDown(window, { key: "v", code: "KeyV", ctrlKey: true });
+
+    await waitFor(() => {
+      expect(readClipboardTextMock).toHaveBeenCalledTimes(1);
+      expect(screen.getByText("未保存 2 行 / 4 字段")).toBeInTheDocument();
+    });
+    expect(screen.getByLabelText("第 1 行 name")).toHaveTextContent("Carol");
+    expect(screen.getByLabelText("第 1 行 amount")).toHaveTextContent("90.5");
+    expect(screen.getByLabelText("第 2 行 name")).toHaveTextContent("Dave");
+    expect(screen.getByLabelText("第 2 行 amount")).toHaveTextContent("91.5");
+    expect(screen.getByLabelText("第 1 行 id")).toHaveTextContent("1");
+    expect(screen.getByLabelText("第 1 行 id")).not.toHaveClass("database-table-browser__cell--dirty");
+  });
+
   it("adds a table row and saves it through the table browser toolbar", async () => {
     callBackendMock.mockImplementation((command, payload) => {
       if (command === "list_database_objects") {
