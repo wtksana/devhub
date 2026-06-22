@@ -61,7 +61,7 @@ pub fn run() {
             app.manage(SettingsStore::new_for_dir(app_dir.clone()));
             app.manage(DatabaseSqlFileStore::new_for_dir(app_dir));
             app.manage(CredentialStore::new("devhub"));
-            app.manage(DatabaseConnectionManager);
+            app.manage(DatabaseConnectionManager::default());
             app.manage(RedisConnectionManager::default());
             app.manage(SessionManager::default());
             app.manage(SftpSessionManager::default());
@@ -80,6 +80,7 @@ pub fn run() {
             commands::database::execute_database_query,
             commands::database::load_database_table_page,
             commands::database::update_database_table_rows,
+            commands::database::get_database_table_ddl,
             commands::database::list_database_sql_files,
             commands::database::save_database_sql_file,
             commands::redis::test_redis_connection,

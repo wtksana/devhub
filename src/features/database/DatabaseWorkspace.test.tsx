@@ -430,6 +430,12 @@ describe("DatabaseWorkspace", () => {
         }
         return Promise.resolve([{ id: "table:app.users", name: "users", kind: "table", has_children: true }]);
       }
+      if (command === "get_database_table_ddl") {
+        return Promise.resolve({
+          ddl: "CREATE TABLE `users` (\n  `id` int NOT NULL\n)",
+          duration_ms: 6,
+        });
+      }
       if (command === "load_database_table_page") {
         return Promise.resolve({
           columns: [{ name: "id", data_type: "INT" }],
@@ -459,7 +465,6 @@ describe("DatabaseWorkspace", () => {
       "编辑",
       "DDL",
     ]);
-    expect(screen.getByRole("menuitem", { name: "DDL" })).toBeDisabled();
 
     await userEvent.click(screen.getByRole("menuitem", { name: "复制表名" }));
     expect(writeClipboardTextMock).toHaveBeenCalledWith("users");
@@ -490,6 +495,24 @@ describe("DatabaseWorkspace", () => {
 
     await userEvent.keyboard("{Escape}");
     expect(screen.queryByRole("dialog", { name: "编辑表 users" })).not.toBeInTheDocument();
+
+    fireEvent.contextMenu(tableRow!, { clientX: 10, clientY: 20 });
+    await userEvent.click(screen.getByRole("menuitem", { name: "DDL" }));
+
+    const ddlDialog = await screen.findByRole("dialog", { name: "表 users DDL" });
+    expect(ddlDialog).toBeInTheDocument();
+    expect(ddlDialog.querySelector("pre")?.textContent).toContain("CREATE TABLE `users` (");
+    expect(within(ddlDialog).getByText("耗时 6 ms")).toBeInTheDocument();
+    expect(callBackendMock).toHaveBeenCalledWith("get_database_table_ddl", {
+      request: {
+        connection_id: "mysql-dev",
+        database: "app",
+        table: "users",
+      },
+    });
+
+    await userEvent.click(within(ddlDialog).getByRole("button", { name: "复制 DDL" }));
+    expect(writeClipboardTextMock).toHaveBeenCalledWith("CREATE TABLE `users` (\n  `id` int NOT NULL\n)");
   });
 
   it("shows table column types only in tooltip and constrains long cell values", async () => {

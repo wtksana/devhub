@@ -1,18 +1,17 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Instant;
 
-use sqlx::types::chrono::{DateTime, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use sqlx::mysql::{MySqlArguments, MySqlRow};
 use sqlx::postgres::{PgArguments, PgRow};
-use sqlx::{Column, Connection, MySql, MySqlConnection, PgConnection, Postgres, Row, TypeInfo, ValueRef};
+use sqlx::types::chrono::{DateTime, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime, Utc};
+use sqlx::{Column, MySql, MySqlConnection, PgConnection, Postgres, Row, TypeInfo, ValueRef};
 
-use crate::db::connection::database_connection_url;
-use crate::db::connection::DatabaseConnectionManager;
+use crate::db::connection::{DatabaseConnectionManager, DatabasePool};
 use crate::db::metadata::MetadataQuery;
 use crate::models::database::{
-    DatabaseCellValue, DatabaseQueryResult, DatabaseResultColumn, DatabaseTablePageResult,
-    DatabaseTableUpdateResult, ExecuteDatabaseQueryRequest, LoadDatabaseTablePageRequest,
-    UpdateDatabaseTableRowsRequest,
+    DatabaseCellValue, DatabaseQueryResult, DatabaseResultColumn, DatabaseTableDdlResult,
+    DatabaseTablePageResult, DatabaseTableUpdateResult, ExecuteDatabaseQueryRequest,
+    GetDatabaseTableDdlRequest, LoadDatabaseTablePageRequest, UpdateDatabaseTableRowsRequest,
 };
 use crate::models::settings::DatabaseConnectionSettings;
 
@@ -61,7 +60,7 @@ pub struct TableUpdateQuery {
 }
 
 pub async fn execute_database_query(
-    _manager: &DatabaseConnectionManager,
+    manager: &DatabaseConnectionManager,
     connection: &DatabaseConnectionSettings,
     request: &ExecuteDatabaseQueryRequest,
 ) -> Result<DatabaseQueryResult, String> {
@@ -83,8 +82,19 @@ pub async fn execute_database_query(
     let limited = is_select && sql != normalized_sql;
 
     match connection.kind.as_str() {
-        "mysql" => execute_mysql_query(connection, &sql, is_select, limited).await,
-        "postgresql" => execute_postgresql_query(connection, &sql, is_select, limited).await,
+        "mysql" => {
+            let database = request.database.as_deref();
+            let DatabasePool::Mysql(pool) = manager.pool(connection, database).await? else {
+                return Err("database pool kind mismatch".to_string());
+            };
+            execute_mysql_query(&pool, &sql, is_select, limited).await
+        }
+        "postgresql" => {
+            let DatabasePool::Postgresql(pool) = manager.pool(connection, None).await? else {
+                return Err("database pool kind mismatch".to_string());
+            };
+            execute_postgresql_query(&pool, &sql, is_select, limited).await
+        }
         kind => Err(format!("unsupported database connection kind: {kind}")),
     }
 }
@@ -139,6 +149,68 @@ pub fn primary_key_query_for_table(
         }),
         kind => Err(format!("unsupported database connection kind: {kind}")),
     }
+}
+
+pub fn mysql_table_ddl_query(table: &str) -> Result<String, String> {
+    Ok(format!(
+        "SHOW CREATE TABLE {}",
+        quote_identifier("mysql", table)?
+    ))
+}
+
+pub fn mysql_table_ddl_from_values(
+    indexed_value: Result<String, String>,
+    named_value: Result<String, String>,
+) -> Result<String, String> {
+    indexed_value.or(named_value)
+}
+
+pub fn postgresql_table_ddl_query(schema: &str, table: &str) -> Result<MetadataQuery, String> {
+    Ok(MetadataQuery {
+        sql: format!(
+            "select format(
+                'create table {}.%s (' || chr(10) || %s || chr(10) || ');',
+                quote_ident(c.table_name),
+                string_agg(
+                    format('  %s %s%s',
+                        quote_ident(c.column_name),
+                        c.data_type,
+                        case when c.is_nullable = 'NO' then ' not null' else '' end
+                    ),
+                    ',' || chr(10)
+                    order by c.ordinal_position
+                )
+            ) as ddl
+            from information_schema.columns c
+            where c.table_schema = $1 and c.table_name = $2
+            group by c.table_name",
+            quote_identifier("postgresql", schema)?,
+        ),
+        binds: vec![schema.to_string(), table.to_string()],
+    })
+}
+
+pub fn postgresql_index_query_for_table(schema: &str, table: &str) -> Result<MetadataQuery, String> {
+    Ok(MetadataQuery {
+        sql: "select indexdef from pg_indexes where schemaname = $1 and tablename = $2 order by indexname".to_string(),
+        binds: vec![schema.to_string(), table.to_string()],
+    })
+}
+
+pub fn append_postgresql_indexes_to_ddl(ddl: &str, indexes: Vec<String>) -> String {
+    let mut script = ddl.trim_end_matches(';').trim_end().to_string();
+    script.push(';');
+    if !indexes.is_empty() {
+        script.push_str("\n\n");
+    }
+    for (index_position, index) in indexes.into_iter().enumerate() {
+        if index_position > 0 {
+            script.push('\n');
+        }
+        script.push_str(index.trim_end_matches(';').trim_end());
+        script.push(';');
+    }
+    script
 }
 
 pub fn normalize_table_page_request(
@@ -351,7 +423,7 @@ fn table_page_table_identifier(
 }
 
 pub async fn load_database_table_page(
-    _manager: &DatabaseConnectionManager,
+    manager: &DatabaseConnectionManager,
     connection: &DatabaseConnectionSettings,
     request: &LoadDatabaseTablePageRequest,
 ) -> Result<DatabaseTablePageResult, String> {
@@ -359,54 +431,152 @@ pub async fn load_database_table_page(
     let queries = build_table_page_queries(&connection.kind, &normalized)?;
 
     match connection.kind.as_str() {
-        "mysql" => load_mysql_table_page(connection, &normalized, &queries).await,
-        "postgresql" => load_postgresql_table_page(connection, &normalized, &queries).await,
+        "mysql" => {
+            let DatabasePool::Mysql(pool) = manager.pool(connection, Some(&normalized.database)).await? else {
+                return Err("database pool kind mismatch".to_string());
+            };
+            load_mysql_table_page(&pool, &normalized, &queries).await
+        }
+        "postgresql" => {
+            let DatabasePool::Postgresql(pool) = manager.pool(connection, None).await? else {
+                return Err("database pool kind mismatch".to_string());
+            };
+            load_postgresql_table_page(&pool, &normalized, &queries).await
+        }
         kind => Err(format!("unsupported database connection kind: {kind}")),
     }
 }
 
 pub async fn update_database_table_rows(
-    _manager: &DatabaseConnectionManager,
+    manager: &DatabaseConnectionManager,
     connection: &DatabaseConnectionSettings,
     request: &UpdateDatabaseTableRowsRequest,
 ) -> Result<DatabaseTableUpdateResult, String> {
     match connection.kind.as_str() {
-        "mysql" => update_mysql_table_rows(connection, request).await,
-        "postgresql" => update_postgresql_table_rows(connection, request).await,
+        "mysql" => {
+            let DatabasePool::Mysql(pool) = manager.pool(connection, Some(&request.database)).await? else {
+                return Err("database pool kind mismatch".to_string());
+            };
+            update_mysql_table_rows(&pool, request).await
+        }
+        "postgresql" => {
+            let DatabasePool::Postgresql(pool) = manager.pool(connection, None).await? else {
+                return Err("database pool kind mismatch".to_string());
+            };
+            update_postgresql_table_rows(&pool, request).await
+        }
         kind => Err(format!("unsupported database connection kind: {kind}")),
     }
 }
 
-async fn load_mysql_table_page(
+pub async fn get_database_table_ddl(
+    manager: &DatabaseConnectionManager,
     connection: &DatabaseConnectionSettings,
+    request: &GetDatabaseTableDdlRequest,
+) -> Result<DatabaseTableDdlResult, String> {
+    let database = request.database.trim();
+    if database.is_empty() {
+        return Err("database is required".to_string());
+    }
+    let table = request.table.trim();
+    if table.is_empty() {
+        return Err("table is required".to_string());
+    }
+
+    match connection.kind.as_str() {
+        "mysql" => {
+            let DatabasePool::Mysql(pool) = manager.pool(connection, Some(database)).await? else {
+                return Err("database pool kind mismatch".to_string());
+            };
+            get_mysql_table_ddl(&pool, table).await
+        }
+        "postgresql" => {
+            let DatabasePool::Postgresql(pool) = manager.pool(connection, None).await? else {
+                return Err("database pool kind mismatch".to_string());
+            };
+            get_postgresql_table_ddl(&pool, database, table).await
+        }
+        kind => Err(format!("unsupported database connection kind: {kind}")),
+    }
+}
+
+async fn get_mysql_table_ddl(
+    pool: &sqlx::MySqlPool,
+    table: &str,
+) -> Result<DatabaseTableDdlResult, String> {
+    let mut connection = pool.acquire().await.map_err(|error| error.to_string())?;
+    let started_at = Instant::now();
+    let row = sqlx::query(&mysql_table_ddl_query(table)?)
+        .fetch_one(&mut *connection)
+        .await
+        .map_err(|error| error.to_string())?;
+    let ddl = mysql_table_ddl_from_values(
+        row.try_get::<String, _>(1)
+            .map_err(|error| error.to_string()),
+        row.try_get::<String, _>("Create Table")
+            .map_err(|error| error.to_string()),
+    )?;
+
+    Ok(DatabaseTableDdlResult {
+        ddl,
+        duration_ms: started_at.elapsed().as_millis(),
+    })
+}
+
+async fn get_postgresql_table_ddl(
+    pool: &sqlx::PgPool,
+    schema: &str,
+    table: &str,
+) -> Result<DatabaseTableDdlResult, String> {
+    let mut connection = pool.acquire().await.map_err(|error| error.to_string())?;
+    let started_at = Instant::now();
+    let ddl_query = postgresql_table_ddl_query(schema, table)?;
+    let ddl_row = sqlx::query(&ddl_query.sql)
+        .bind(&ddl_query.binds[0])
+        .bind(&ddl_query.binds[1])
+        .fetch_one(&mut *connection)
+        .await
+        .map_err(|error| error.to_string())?;
+    let ddl: String = ddl_row.try_get("ddl").map_err(|error| error.to_string())?;
+
+    let index_query = postgresql_index_query_for_table(schema, table)?;
+    let index_rows = sqlx::query(&index_query.sql)
+        .bind(&index_query.binds[0])
+        .bind(&index_query.binds[1])
+        .fetch_all(&mut *connection)
+        .await
+        .map_err(|error| error.to_string())?;
+    let indexes = index_rows
+        .into_iter()
+        .map(|row| row.try_get("indexdef").map_err(|error| error.to_string()))
+        .collect::<Result<Vec<String>, String>>()?;
+
+    Ok(DatabaseTableDdlResult {
+        ddl: append_postgresql_indexes_to_ddl(&ddl, indexes),
+        duration_ms: started_at.elapsed().as_millis(),
+    })
+}
+
+async fn load_mysql_table_page(
+    pool: &sqlx::MySqlPool,
     request: &NormalizedTablePageRequest,
     queries: &TablePageQueries,
 ) -> Result<DatabaseTablePageResult, String> {
-    let url = database_connection_url(&DatabaseConnectionSettings {
-        database: Some(request.database.clone()),
-        ..connection.clone()
-    })?;
-    let mut connection = MySqlConnection::connect(&url)
-        .await
-        .map_err(|error| error.to_string())?;
+    let mut connection = pool.acquire().await.map_err(|error| error.to_string())?;
     let started_at = Instant::now();
     let count_row = sqlx::query(&queries.count_sql)
-        .fetch_one(&mut connection)
+        .fetch_one(&mut *connection)
         .await
         .map_err(|error| error.to_string())?;
     let total_rows = mysql_count_value(&count_row, "total")?;
     let primary_key_columns =
-        load_mysql_primary_key_columns(&mut connection, &request.database, &request.table).await?;
+        load_mysql_primary_key_columns(&mut *connection, &request.database, &request.table).await?;
     let editable = !primary_key_columns.is_empty();
     let rows = sqlx::query(&queries.page_sql)
-        .fetch_all(&mut connection)
+        .fetch_all(&mut *connection)
         .await
         .map_err(|error| error.to_string())?;
     let result = rows_to_mysql_result(rows, started_at.elapsed().as_millis(), false);
-    connection
-        .close()
-        .await
-        .map_err(|error| error.to_string())?;
     Ok(DatabaseTablePageResult {
         columns: result.columns,
         rows: result.rows,
@@ -420,33 +590,26 @@ async fn load_mysql_table_page(
 }
 
 async fn load_postgresql_table_page(
-    connection: &DatabaseConnectionSettings,
+    pool: &sqlx::PgPool,
     request: &NormalizedTablePageRequest,
     queries: &TablePageQueries,
 ) -> Result<DatabaseTablePageResult, String> {
-    let url = database_connection_url(connection)?;
-    let mut connection = PgConnection::connect(&url)
-        .await
-        .map_err(|error| error.to_string())?;
+    let mut connection = pool.acquire().await.map_err(|error| error.to_string())?;
     let started_at = Instant::now();
     let count_row = sqlx::query(&queries.count_sql)
-        .fetch_one(&mut connection)
+        .fetch_one(&mut *connection)
         .await
         .map_err(|error| error.to_string())?;
     let total_rows = postgresql_count_value(&count_row, "total")?;
     let primary_key_columns =
-        load_postgresql_primary_key_columns(&mut connection, &request.database, &request.table)
+        load_postgresql_primary_key_columns(&mut *connection, &request.database, &request.table)
             .await?;
     let editable = !primary_key_columns.is_empty();
     let rows = sqlx::query(&queries.page_sql)
-        .fetch_all(&mut connection)
+        .fetch_all(&mut *connection)
         .await
         .map_err(|error| error.to_string())?;
     let result = rows_to_postgresql_result(rows, started_at.elapsed().as_millis(), false);
-    connection
-        .close()
-        .await
-        .map_err(|error| error.to_string())?;
     Ok(DatabaseTablePageResult {
         columns: result.columns,
         rows: result.rows,
@@ -490,18 +653,12 @@ async fn load_postgresql_primary_key_columns(
 }
 
 async fn update_mysql_table_rows(
-    connection: &DatabaseConnectionSettings,
+    pool: &sqlx::MySqlPool,
     request: &UpdateDatabaseTableRowsRequest,
 ) -> Result<DatabaseTableUpdateResult, String> {
-    let url = database_connection_url(&DatabaseConnectionSettings {
-        database: Some(request.database.clone()),
-        ..connection.clone()
-    })?;
-    let mut connection = MySqlConnection::connect(&url)
-        .await
-        .map_err(|error| error.to_string())?;
+    let mut connection = pool.acquire().await.map_err(|error| error.to_string())?;
     let primary_key_columns =
-        load_mysql_primary_key_columns(&mut connection, &request.database, &request.table).await?;
+        load_mysql_primary_key_columns(&mut *connection, &request.database, &request.table).await?;
     let normalized = normalize_table_update_request(request.clone(), &primary_key_columns)?;
     let queries = build_table_update_queries("mysql", &normalized)?;
     let started_at = Instant::now();
@@ -514,7 +671,7 @@ async fn update_mysql_table_rows(
             sql = bind_mysql_value(sql, value);
         }
         let result = sql
-            .execute(&mut connection)
+            .execute(&mut *connection)
             .await
             .map_err(|error| error.to_string())?;
         if result.rows_affected() != 1 {
@@ -527,10 +684,6 @@ async fn update_mysql_table_rows(
         updated_fields += row.changes.len() as u64;
     }
 
-    connection
-        .close()
-        .await
-        .map_err(|error| error.to_string())?;
     Ok(DatabaseTableUpdateResult {
         updated_rows,
         updated_fields,
@@ -539,15 +692,12 @@ async fn update_mysql_table_rows(
 }
 
 async fn update_postgresql_table_rows(
-    connection: &DatabaseConnectionSettings,
+    pool: &sqlx::PgPool,
     request: &UpdateDatabaseTableRowsRequest,
 ) -> Result<DatabaseTableUpdateResult, String> {
-    let url = database_connection_url(connection)?;
-    let mut connection = PgConnection::connect(&url)
-        .await
-        .map_err(|error| error.to_string())?;
+    let mut connection = pool.acquire().await.map_err(|error| error.to_string())?;
     let primary_key_columns =
-        load_postgresql_primary_key_columns(&mut connection, &request.database, &request.table)
+        load_postgresql_primary_key_columns(&mut *connection, &request.database, &request.table)
             .await?;
     let normalized = normalize_table_update_request(request.clone(), &primary_key_columns)?;
     let queries = build_table_update_queries("postgresql", &normalized)?;
@@ -561,7 +711,7 @@ async fn update_postgresql_table_rows(
             sql = bind_postgresql_value(sql, value);
         }
         let result = sql
-            .execute(&mut connection)
+            .execute(&mut *connection)
             .await
             .map_err(|error| error.to_string())?;
         if result.rows_affected() != 1 {
@@ -574,10 +724,6 @@ async fn update_postgresql_table_rows(
         updated_fields += row.changes.len() as u64;
     }
 
-    connection
-        .close()
-        .await
-        .map_err(|error| error.to_string())?;
     Ok(DatabaseTableUpdateResult {
         updated_rows,
         updated_fields,
@@ -629,25 +775,22 @@ fn postgresql_count_value(row: &PgRow, column_name: &str) -> Result<u64, String>
 }
 
 async fn execute_mysql_query(
-    connection: &DatabaseConnectionSettings,
+    pool: &sqlx::MySqlPool,
     sql: &str,
     is_select: bool,
     limited: bool,
 ) -> Result<DatabaseQueryResult, String> {
-    let url = database_connection_url(connection)?;
-    let mut connection = MySqlConnection::connect(&url)
-        .await
-        .map_err(|error| error.to_string())?;
+    let mut connection = pool.acquire().await.map_err(|error| error.to_string())?;
     let started_at = Instant::now();
     let result = if is_select {
         let rows = sqlx::query(sql)
-            .fetch_all(&mut connection)
+            .fetch_all(&mut *connection)
             .await
             .map_err(|error| error.to_string())?;
         rows_to_mysql_result(rows, started_at.elapsed().as_millis(), limited)
     } else {
         let result = sqlx::query(sql)
-            .execute(&mut connection)
+            .execute(&mut *connection)
             .await
             .map_err(|error| error.to_string())?;
         DatabaseQueryResult {
@@ -658,33 +801,26 @@ async fn execute_mysql_query(
             limited: false,
         }
     };
-    connection
-        .close()
-        .await
-        .map_err(|error| error.to_string())?;
     Ok(result)
 }
 
 async fn execute_postgresql_query(
-    connection: &DatabaseConnectionSettings,
+    pool: &sqlx::PgPool,
     sql: &str,
     is_select: bool,
     limited: bool,
 ) -> Result<DatabaseQueryResult, String> {
-    let url = database_connection_url(connection)?;
-    let mut connection = PgConnection::connect(&url)
-        .await
-        .map_err(|error| error.to_string())?;
+    let mut connection = pool.acquire().await.map_err(|error| error.to_string())?;
     let started_at = Instant::now();
     let result = if is_select {
         let rows = sqlx::query(sql)
-            .fetch_all(&mut connection)
+            .fetch_all(&mut *connection)
             .await
             .map_err(|error| error.to_string())?;
         rows_to_postgresql_result(rows, started_at.elapsed().as_millis(), limited)
     } else {
         let result = sqlx::query(sql)
-            .execute(&mut connection)
+            .execute(&mut *connection)
             .await
             .map_err(|error| error.to_string())?;
         DatabaseQueryResult {
@@ -695,10 +831,6 @@ async fn execute_postgresql_query(
             limited: false,
         }
     };
-    connection
-        .close()
-        .await
-        .map_err(|error| error.to_string())?;
     Ok(result)
 }
 

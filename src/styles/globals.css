@@ -1217,7 +1217,17 @@ p {
   width: min(620px, calc(100vw - 48px));
 }
 
+.database-table-ddl-dialog {
+  width: min(760px, calc(100vw - 48px));
+}
+
 .database-table-structure-dialog__body {
+  min-width: 0;
+  overflow: auto;
+  padding: 12px;
+}
+
+.database-table-ddl-dialog__body {
   min-width: 0;
   overflow: auto;
   padding: 12px;
@@ -1250,6 +1260,13 @@ p {
   padding: 10px 12px 12px;
 }
 
+.database-dialog__meta {
+  align-self: center;
+  margin-right: auto;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .database-create-sql-file__field {
   display: grid;
   gap: 6px;
@@ -1277,6 +1294,19 @@ p {
   color: var(--text);
   white-space: pre-wrap;
   background: var(--panel);
+  border: 1px solid var(--border-subtle);
+}
+
+.database-table-ddl-dialog pre {
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  color: var(--text);
+  font-family: var(--terminal-font-family);
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre;
+  background: var(--workspace);
   border: 1px solid var(--border-subtle);
 }
 

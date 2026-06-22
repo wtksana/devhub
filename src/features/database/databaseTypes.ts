@@ -36,6 +36,11 @@ export interface DatabaseSqlFile {
   content: string;
 }
 
+export interface DatabaseTableDdlResult {
+  ddl: string;
+  duration_ms: number;
+}
+
 export type DatabaseSortDirection = "asc" | "desc";
 
 export interface DatabaseTablePageResult {

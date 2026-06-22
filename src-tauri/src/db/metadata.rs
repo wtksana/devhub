@@ -1,7 +1,6 @@
-use sqlx::{Connection, MySqlConnection, PgConnection, Row};
+use sqlx::{MySqlConnection, PgConnection, Row};
 
-use crate::db::connection::database_connection_url;
-use crate::db::connection::DatabaseConnectionManager;
+use crate::db::connection::{DatabaseConnectionManager, DatabasePool};
 use crate::models::database::{DatabaseTreeNode, ListDatabaseObjectsRequest};
 use crate::models::settings::DatabaseConnectionSettings;
 
@@ -12,13 +11,23 @@ pub struct MetadataQuery {
 }
 
 pub async fn list_database_objects(
-    _manager: &DatabaseConnectionManager,
+    manager: &DatabaseConnectionManager,
     connection: &DatabaseConnectionSettings,
     request: &ListDatabaseObjectsRequest,
 ) -> Result<Vec<DatabaseTreeNode>, String> {
     match connection.kind.as_str() {
-        "mysql" => list_mysql_objects(connection, request).await,
-        "postgresql" => list_postgresql_objects(connection, request).await,
+        "mysql" => {
+            let DatabasePool::Mysql(pool) = manager.pool(connection, None).await? else {
+                return Err("database pool kind mismatch".to_string());
+            };
+            list_mysql_objects(&pool, request).await
+        }
+        "postgresql" => {
+            let DatabasePool::Postgresql(pool) = manager.pool(connection, None).await? else {
+                return Err("database pool kind mismatch".to_string());
+            };
+            list_postgresql_objects(&pool, request).await
+        }
         kind => Err(format!("unsupported database connection kind: {kind}")),
     }
 }
@@ -72,19 +81,16 @@ pub fn metadata_query_for_columns(
 }
 
 async fn list_mysql_objects(
-    connection: &DatabaseConnectionSettings,
+    pool: &sqlx::MySqlPool,
     request: &ListDatabaseObjectsRequest,
 ) -> Result<Vec<DatabaseTreeNode>, String> {
-    let url = database_connection_url(connection)?;
-    let mut connection = MySqlConnection::connect(&url)
-        .await
-        .map_err(|error| error.to_string())?;
+    let mut connection = pool.acquire().await.map_err(|error| error.to_string())?;
     let nodes = match request.parent_kind.as_deref() {
         None => {
             let rows = sqlx::query(
                 "select schema_name from information_schema.schemata order by schema_name",
             )
-            .fetch_all(&mut connection)
+            .fetch_all(&mut *connection)
             .await
             .map_err(|error| error.to_string())?;
             rows.into_iter()
@@ -109,7 +115,7 @@ async fn list_mysql_objects(
             let query = metadata_query_for_tables("mysql", schema, None)?;
             let rows = sqlx::query(&query.sql)
                 .bind(&query.binds[0])
-                .fetch_all(&mut connection)
+                .fetch_all(&mut *connection)
                 .await
                 .map_err(|error| error.to_string())?;
             rows.into_iter()
@@ -137,29 +143,22 @@ async fn list_mysql_objects(
                 .table
                 .as_deref()
                 .ok_or_else(|| "table is required".to_string())?;
-            list_mysql_columns(&mut connection, schema, table).await?
+            list_mysql_columns(&mut *connection, schema, table).await?
         }
         Some(kind) => return Err(format!("unsupported database object kind: {kind}")),
     };
-    connection
-        .close()
-        .await
-        .map_err(|error| error.to_string())?;
     Ok(nodes)
 }
 
 async fn list_postgresql_objects(
-    connection: &DatabaseConnectionSettings,
+    pool: &sqlx::PgPool,
     request: &ListDatabaseObjectsRequest,
 ) -> Result<Vec<DatabaseTreeNode>, String> {
-    let url = database_connection_url(connection)?;
-    let mut connection = PgConnection::connect(&url)
-        .await
-        .map_err(|error| error.to_string())?;
+    let mut connection = pool.acquire().await.map_err(|error| error.to_string())?;
     let nodes = match request.parent_kind.as_deref() {
         None => {
             let rows = sqlx::query("select schema_name from information_schema.schemata where schema_name not in ('information_schema', 'pg_catalog') order by schema_name")
-                .fetch_all(&mut connection)
+                .fetch_all(&mut *connection)
                 .await
                 .map_err(|error| error.to_string())?;
             rows.into_iter()
@@ -184,7 +183,7 @@ async fn list_postgresql_objects(
             let query = metadata_query_for_tables("postgresql", schema, None)?;
             let rows = sqlx::query(&query.sql)
                 .bind(&query.binds[0])
-                .fetch_all(&mut connection)
+                .fetch_all(&mut *connection)
                 .await
                 .map_err(|error| error.to_string())?;
             rows.into_iter()
@@ -212,14 +211,10 @@ async fn list_postgresql_objects(
                 .table
                 .as_deref()
                 .ok_or_else(|| "table is required".to_string())?;
-            list_postgresql_columns(&mut connection, schema, table).await?
+            list_postgresql_columns(&mut *connection, schema, table).await?
         }
         Some(kind) => return Err(format!("unsupported database object kind: {kind}")),
     };
-    connection
-        .close()
-        .await
-        .map_err(|error| error.to_string())?;
     Ok(nodes)
 }
 

@@ -55,6 +55,19 @@ pub struct LoadDatabaseTablePageRequest {
     pub filter: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct GetDatabaseTableDdlRequest {
+    pub connection_id: String,
+    pub database: String,
+    pub table: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct DatabaseTableDdlResult {
+    pub ddl: String,
+    pub duration_ms: u128,
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct DatabaseSqlFile {
     pub name: String,

@@ -1,12 +1,14 @@
 use std::collections::BTreeMap;
 
-use crate::db::connection::database_connection_url;
+use crate::db::connection::{database_connection_url, database_pool_key};
 use crate::db::metadata::{metadata_query_for_columns, metadata_query_for_tables};
 use crate::db::query::{
-    apply_select_limit, build_table_page_queries, build_table_update_queries, is_dangerous_sql,
-    mysql_prefers_datetime_decode, mysql_prefers_numeric_decode,
-    normalize_table_page_request, normalize_table_update_request, postgresql_prefers_datetime_decode,
-    primary_key_query_for_table, quote_identifier,
+    append_postgresql_indexes_to_ddl, apply_select_limit, build_table_page_queries,
+    build_table_update_queries, is_dangerous_sql, mysql_prefers_datetime_decode,
+    mysql_prefers_numeric_decode, mysql_table_ddl_from_values, mysql_table_ddl_query,
+    normalize_table_page_request, normalize_table_update_request, postgresql_index_query_for_table,
+    postgresql_prefers_datetime_decode, postgresql_table_ddl_query, primary_key_query_for_table,
+    quote_identifier,
 };
 use crate::models::database::{
     DatabaseCellValue, DatabaseTableUpdateRow, LoadDatabaseTablePageRequest,
@@ -52,6 +54,28 @@ fn builds_postgresql_connection_url_without_database() {
         database_connection_url(&connection).unwrap(),
         "postgresql://postgres:secret@127.0.0.1:5432"
     );
+}
+
+#[test]
+fn builds_database_pool_key_with_database_override() {
+    let connection = DatabaseConnectionSettings {
+        kind: "mysql".to_string(),
+        id: "mysql-dev".to_string(),
+        name: "dev".to_string(),
+        group: None,
+        host: "127.0.0.1".to_string(),
+        port: 3306,
+        username: "root".to_string(),
+        password: "secret".to_string(),
+        database: Some("defaultdb".to_string()),
+    };
+
+    let default_key = database_pool_key(&connection, None).unwrap();
+    let app_key = database_pool_key(&connection, Some("app")).unwrap();
+
+    assert_ne!(default_key, app_key);
+    assert!(default_key.ends_with("/defaultdb"));
+    assert!(app_key.ends_with("/app"));
 }
 
 #[test]
@@ -103,7 +127,9 @@ fn treats_mysql_date_and_time_types_as_datetime_types() {
 fn treats_postgresql_date_and_time_types_as_datetime_types() {
     assert!(postgresql_prefers_datetime_decode("DATE"));
     assert!(postgresql_prefers_datetime_decode("TIMESTAMP"));
-    assert!(postgresql_prefers_datetime_decode("TIMESTAMP WITH TIME ZONE"));
+    assert!(postgresql_prefers_datetime_decode(
+        "TIMESTAMP WITH TIME ZONE"
+    ));
     assert!(postgresql_prefers_datetime_decode("TIME"));
 }
 
@@ -171,8 +197,14 @@ fn builds_postgresql_table_page_queries_without_optional_clauses() {
     let normalized = normalize_table_page_request(request).unwrap();
     let queries = build_table_page_queries("postgresql", &normalized).unwrap();
 
-    assert_eq!(queries.count_sql, "SELECT COUNT(*) AS total FROM \"public\".\"orders\"");
-    assert_eq!(queries.page_sql, "SELECT * FROM \"public\".\"orders\" LIMIT 200 OFFSET 0");
+    assert_eq!(
+        queries.count_sql,
+        "SELECT COUNT(*) AS total FROM \"public\".\"orders\""
+    );
+    assert_eq!(
+        queries.page_sql,
+        "SELECT * FROM \"public\".\"orders\" LIMIT 200 OFFSET 0"
+    );
 }
 
 #[test]
@@ -266,12 +298,68 @@ fn builds_mysql_primary_key_query() {
 }
 
 #[test]
+fn builds_mysql_table_ddl_query_with_escaped_identifier() {
+    assert_eq!(
+        mysql_table_ddl_query("user`log").unwrap(),
+        "SHOW CREATE TABLE `user``log`"
+    );
+}
+
+#[test]
+fn reads_mysql_table_ddl_from_second_column_before_named_column() {
+    assert_eq!(
+        mysql_table_ddl_from_values(
+            Ok("CREATE TABLE `users` (`id` int)".to_string()),
+            Err("no column found for name: Create Table".to_string()),
+        )
+        .unwrap(),
+        "CREATE TABLE `users` (`id` int)"
+    );
+}
+
+#[test]
 fn builds_postgresql_primary_key_query() {
     let query = primary_key_query_for_table("postgresql", "public", "users").unwrap();
 
     assert!(query.sql.contains("information_schema.table_constraints"));
     assert!(query.sql.contains("PRIMARY KEY"));
     assert_eq!(query.binds, vec!["public".to_string(), "users".to_string()]);
+}
+
+#[test]
+fn builds_postgresql_table_ddl_query_with_escaped_identifiers() {
+    let query = postgresql_table_ddl_query("public\"schema", "user\"log").unwrap();
+
+    assert!(query.sql.contains("create table \"public\"\"schema\".%s"));
+    assert!(query.sql.contains("quote_ident(c.table_name)"));
+    assert!(query.sql.contains("information_schema.columns"));
+    assert_eq!(query.binds, vec!["public\"schema".to_string(), "user\"log".to_string()]);
+}
+
+#[test]
+fn builds_postgresql_index_query_for_table() {
+    let query = postgresql_index_query_for_table("public", "users").unwrap();
+
+    assert!(query.sql.contains("from pg_indexes"));
+    assert!(query.sql.contains("schemaname = $1"));
+    assert!(query.sql.contains("tablename = $2"));
+    assert_eq!(query.binds, vec!["public".to_string(), "users".to_string()]);
+}
+
+#[test]
+fn appends_postgresql_indexes_after_table_ddl() {
+    let ddl = append_postgresql_indexes_to_ddl(
+        "create table \"public\".\"users\" (\n  \"id\" integer\n);",
+        vec![
+            "CREATE INDEX idx_users_name ON public.users USING btree (name)".to_string(),
+            "CREATE UNIQUE INDEX users_pkey ON public.users USING btree (id)".to_string(),
+        ],
+    );
+
+    assert_eq!(
+        ddl,
+        "create table \"public\".\"users\" (\n  \"id\" integer\n);\n\nCREATE INDEX idx_users_name ON public.users USING btree (name);\nCREATE UNIQUE INDEX users_pkey ON public.users USING btree (id);"
+    );
 }
 
 #[test]
@@ -342,11 +430,9 @@ fn builds_postgresql_table_update_query_with_composite_primary_key() {
             ),
         ],
     );
-    let normalized = normalize_table_update_request(
-        request,
-        &["order_id".to_string(), "item_id".to_string()],
-    )
-    .unwrap();
+    let normalized =
+        normalize_table_update_request(request, &["order_id".to_string(), "item_id".to_string()])
+            .unwrap();
     let queries = build_table_update_queries("postgresql", &normalized).unwrap();
 
     assert_eq!(
@@ -438,7 +524,10 @@ fn table_update_request(
         connection_id: connection_id.to_string(),
         database: database.to_string(),
         table: table.to_string(),
-        primary_key_columns: primary_key_columns.into_iter().map(str::to_string).collect(),
+        primary_key_columns: primary_key_columns
+            .into_iter()
+            .map(str::to_string)
+            .collect(),
         rows: vec![DatabaseTableUpdateRow {
             primary_key_values: primary_key_values
                 .into_iter()

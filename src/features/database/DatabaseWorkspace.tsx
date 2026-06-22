@@ -7,6 +7,7 @@ import type {
   DatabaseQueryResult,
   DatabaseSqlFile,
   DatabaseTableBrowserTarget,
+  DatabaseTableDdlResult,
   DatabaseTreeNode,
   DatabaseWorkspaceProps,
 } from "./databaseTypes";
@@ -59,6 +60,7 @@ export function DatabaseWorkspace({ connectionId, initialDatabase, theme, fontFa
   const [editorContextMenu, setEditorContextMenu] = useState<ContextMenuState | null>(null);
   const [tableContextMenu, setTableContextMenu] = useState<ContextMenuState | null>(null);
   const [tableStructureDialog, setTableStructureDialog] = useState<{ table: DatabaseTreeNode; columns: DatabaseTreeNode[]; error: string | null } | null>(null);
+  const [tableDdlDialog, setTableDdlDialog] = useState<{ table: DatabaseTreeNode; ddl: string; durationMs: number | null; error: string | null } | null>(null);
   const objectTreeResizeRef = useRef({ startX: 0, startWidth: DEFAULT_OBJECT_TREE_WIDTH });
   const latestSqlFileKeyRef = useRef("");
   const monacoEditorRef = useRef<Parameters<OnMount>[0] | null>(null);
@@ -147,11 +149,12 @@ export function DatabaseWorkspace({ connectionId, initialDatabase, theme, fontFa
   }, [isResizingObjectTree]);
 
   useEffect(() => {
-    if (!tableStructureDialog) return;
+    if (!tableStructureDialog && !tableDdlDialog) return;
 
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
-        requestCloseTableStructureDialog();
+        if (tableStructureDialog) requestCloseTableStructureDialog();
+        if (tableDdlDialog) setTableDdlDialog(null);
       }
     }
 
@@ -159,7 +162,7 @@ export function DatabaseWorkspace({ connectionId, initialDatabase, theme, fontFa
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [tableStructureDialog]);
+  }, [tableDdlDialog, tableStructureDialog]);
 
   function startObjectTreeResize(event: React.MouseEvent) {
     event.preventDefault();
@@ -229,8 +232,7 @@ export function DatabaseWorkspace({ connectionId, initialDatabase, theme, fontFa
         },
         {
           label: t("database.ddl"),
-          disabled: true,
-          onSelect: () => {},
+          onSelect: () => void openTableDdlDialog(node),
         },
       ],
     });
@@ -262,6 +264,33 @@ export function DatabaseWorkspace({ connectionId, initialDatabase, theme, fontFa
   function requestCloseTableStructureDialog() {
     // 后续表结构支持编辑后，在这里检查 dirty 状态并弹二次确认。
     setTableStructureDialog(null);
+  }
+
+  async function openTableDdlDialog(node: DatabaseTreeNode) {
+    if (!currentDatabase) return;
+    setTableDdlDialog({ table: node, ddl: "", durationMs: null, error: null });
+    try {
+      const result = await callBackend<DatabaseTableDdlResult>("get_database_table_ddl", {
+        request: {
+          connection_id: connectionId,
+          database: currentDatabase,
+          table: node.name,
+        },
+      });
+      setTableDdlDialog({
+        table: node,
+        ddl: result.ddl,
+        durationMs: result.duration_ms,
+        error: null,
+      });
+    } catch (caught) {
+      setTableDdlDialog({
+        table: node,
+        ddl: "",
+        durationMs: null,
+        error: caught instanceof Error ? caught.message : String(caught),
+      });
+    }
   }
 
   function switchSqlFile(nextName: string) {
@@ -569,6 +598,42 @@ export function DatabaseWorkspace({ connectionId, initialDatabase, theme, fontFa
             <div className="database-dialog__actions">
               <button type="button" onClick={requestCloseTableStructureDialog}>
                 {t("database.cancel")}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {tableDdlDialog ? (
+        <div className="connection-dialog__backdrop">
+          <div
+            className="connection-dialog database-dialog database-table-ddl-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-label={t("database.table_ddl_title", { table: tableDdlDialog.table.name })}
+          >
+            <header className="database-dialog__header">
+              <h2>{t("database.table_ddl_title", { table: tableDdlDialog.table.name })}</h2>
+            </header>
+            <div className="database-table-ddl-dialog__body">
+              {tableDdlDialog.error ? <p role="alert">{tableDdlDialog.error}</p> : null}
+              {!tableDdlDialog.error && !tableDdlDialog.ddl ? <p>{t("database.ddl_loading")}</p> : null}
+              {tableDdlDialog.ddl ? <pre>{tableDdlDialog.ddl}</pre> : null}
+            </div>
+            <div className="database-dialog__actions">
+              {tableDdlDialog.durationMs !== null ? (
+                <span className="database-dialog__meta">
+                  {t("database.ddl_duration", { duration: tableDdlDialog.durationMs })}
+                </span>
+              ) : null}
+              <button
+                type="button"
+                disabled={!tableDdlDialog.ddl}
+                onClick={() => void writeClipboardText(tableDdlDialog.ddl)}
+              >
+                {t("database.copy_ddl")}
+              </button>
+              <button type="button" onClick={() => setTableDdlDialog(null)}>
+                {t("database.close")}
               </button>
             </div>
           </div>
