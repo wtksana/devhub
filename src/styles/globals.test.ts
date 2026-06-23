@@ -85,7 +85,10 @@ describe("global style defaults", () => {
     const globalsCss = readCssSource();
 
     expect(globalsCss).toContain(".workspace-root {\n  position: relative;");
-    expect(globalsCss).toContain(".workspace-pane {\n  position: absolute;");
+    expect(globalsCss).toContain(".workspace-pane {\n  position: absolute;\n  display: grid;\n  z-index: 3;");
+    expect(globalsCss).toContain("  background: transparent;\n  pointer-events: none;");
+    expect(globalsCss).toContain(".workspace-tab-panel {\n  position: absolute;\n  z-index: 2;");
+    expect(globalsCss).toContain("  pointer-events: auto;\n  scrollbar-width: none;");
     expect(globalsCss).not.toContain("--workspace-pane-column-sizes");
     expect(globalsCss).not.toContain("--workspace-pane-row-sizes");
     expect(globalsCss).not.toContain(".workspace-root[data-direction=");

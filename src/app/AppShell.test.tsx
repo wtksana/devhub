@@ -13,6 +13,12 @@ const listenBackendMock = vi.mocked(listenBackend);
 type TerminalOutputPayload = { session_id: string; data: string; status?: string };
 let terminalOutputHandler: ((payload: TerminalOutputPayload) => void) | null = null;
 
+function waitForEffects() {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, 0);
+  });
+}
+
 function createSettings(): DevHubSettings {
   return {
     appearance: {
@@ -1208,6 +1214,236 @@ describe("AppShell", () => {
     await waitFor(() => {
       expect(callBackendMock.mock.calls.filter(([command]) => command === "open_terminal")).toHaveLength(1);
     });
+  });
+
+  it("moves a terminal tab to another workspace pane without reconnecting", async () => {
+    settings = {
+      ...createSettings(),
+      connections: [remoteConnection],
+    };
+
+    render(<AppShell />);
+
+    await userEvent.dblClick(screen.getByText("生产 Web").closest("li") as HTMLElement);
+    await userEvent.pointer({
+      keys: "[MouseRight]",
+      target: within(screen.getAllByLabelText("工作区标签")[0]).getByRole("button", { name: "生产 Web" }),
+    });
+    await userEvent.click(screen.getByRole("menuitem", { name: "向右拆分" }));
+
+    await waitFor(() => {
+      expect(callBackendMock.mock.calls.filter(([command]) => command === "open_terminal")).toHaveLength(2);
+    });
+
+    const sourceTabList = screen.getAllByLabelText("工作区标签")[0];
+    const targetTabList = screen.getAllByLabelText("工作区标签")[1];
+    const movedTabButton = within(sourceTabList).getByRole("button", { name: "生产 Web" });
+    Object.defineProperty(document, "elementFromPoint", {
+      configurable: true,
+      value: vi.fn().mockReturnValue(targetTabList),
+    });
+    callBackendMock.mockClear();
+
+    fireEvent.pointerDown(movedTabButton, { clientX: 12, clientY: 12, pointerId: 1, button: 0 });
+    fireEvent.pointerMove(window, { clientX: 72, clientY: 12, pointerId: 1 });
+    fireEvent.pointerUp(window, { clientX: 720, clientY: 12, pointerId: 1 });
+
+    expect(within(sourceTabList).queryByRole("button", { name: "生产 Web" })).not.toBeInTheDocument();
+    expect(within(targetTabList).getByRole("button", { name: "生产 Web" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getAllByLabelText(/^工作区面板/)).toHaveLength(1);
+    expect(callBackendMock.mock.calls.filter(([command]) => command === "open_terminal")).toHaveLength(0);
+    expect(callBackendMock.mock.calls.filter(([command]) => command === "close_terminal")).toHaveLength(0);
+  });
+
+  it("reorders tabs inside the same workspace pane by dropping before another tab", async () => {
+    settings = {
+      ...createSettings(),
+      connections: [remoteConnection],
+    };
+
+    render(<AppShell />);
+
+    await userEvent.pointer({ keys: "[MouseRight]", target: getConnectionItem("生产 Web") });
+    await userEvent.click(screen.getByRole("menuitem", { name: "连接" }));
+    await userEvent.pointer({ keys: "[MouseRight]", target: getConnectionItem("生产 Web") });
+    await userEvent.click(screen.getByRole("menuitem", { name: "新标签连接" }));
+    await userEvent.pointer({ keys: "[MouseRight]", target: getConnectionItem("生产 Web") });
+    await userEvent.click(screen.getByRole("menuitem", { name: "新标签连接" }));
+
+    const tabList = screen.getByLabelText("工作区标签");
+    const firstTab = within(tabList).getByRole("button", { name: "生产 Web" }).closest(".workspace-tab") as HTMLElement;
+    const thirdTabButton = within(tabList).getByRole("button", { name: "生产 Web 3" });
+    firstTab.getBoundingClientRect = () => ({ left: 10, right: 110, top: 0, bottom: 36, width: 100, height: 36, x: 10, y: 0, toJSON: () => ({}) });
+    Object.defineProperty(document, "elementFromPoint", {
+      configurable: true,
+      value: vi.fn().mockReturnValue(firstTab),
+    });
+
+    fireEvent.pointerDown(thirdTabButton, { clientX: 260, clientY: 12, pointerId: 1, button: 0 });
+    fireEvent.pointerMove(window, { clientX: 40, clientY: 12, pointerId: 1 });
+    expect(document.querySelector(".workspace-tab-drag-preview")).toHaveTextContent("生产 Web 3");
+    expect(document.querySelector(".workspace-tab-drop-indicator")).toBeInTheDocument();
+    fireEvent.pointerUp(window, { clientX: 40, clientY: 12, pointerId: 1 });
+
+    expect(within(tabList).getAllByRole("button", { name: /^生产 Web/ }).map((button) => button.textContent)).toEqual([
+      "生产 Web 3",
+      "生产 Web",
+      "生产 Web 2",
+    ]);
+    expect(document.querySelector(".workspace-tab-drag-preview")).not.toBeInTheDocument();
+  });
+
+  it("keeps tab order unchanged when dropping a dragged tab outside tab bars", async () => {
+    settings = {
+      ...createSettings(),
+      connections: [remoteConnection],
+    };
+
+    render(<AppShell />);
+
+    await userEvent.pointer({ keys: "[MouseRight]", target: getConnectionItem("生产 Web") });
+    await userEvent.click(screen.getByRole("menuitem", { name: "连接" }));
+    await userEvent.pointer({ keys: "[MouseRight]", target: getConnectionItem("生产 Web") });
+    await userEvent.click(screen.getByRole("menuitem", { name: "新标签连接" }));
+
+    const tabList = screen.getByLabelText("工作区标签");
+    const secondTabButton = within(tabList).getByRole("button", { name: "生产 Web 2" });
+    Object.defineProperty(document, "elementFromPoint", {
+      configurable: true,
+      value: vi.fn().mockReturnValue(screen.getByLabelText("工作区")),
+    });
+
+    fireEvent.pointerDown(secondTabButton, { clientX: 160, clientY: 12, pointerId: 1, button: 0 });
+    fireEvent.pointerMove(window, { clientX: 500, clientY: 500, pointerId: 1 });
+    fireEvent.pointerUp(window, { clientX: 500, clientY: 500, pointerId: 1 });
+
+    expect(within(tabList).getAllByRole("button", { name: /^生产 Web/ }).map((button) => button.textContent)).toEqual([
+      "生产 Web",
+      "生产 Web 2",
+    ]);
+    expect(document.querySelector(".workspace-tab-drop-indicator")).not.toBeInTheDocument();
+  });
+
+  it("inserts a dragged tab before a target tab in another workspace pane", async () => {
+    settings = {
+      ...createSettings(),
+      connections: [remoteConnection],
+    };
+
+    render(<AppShell />);
+
+    await userEvent.dblClick(screen.getByText("生产 Web").closest("li") as HTMLElement);
+    await userEvent.pointer({
+      keys: "[MouseRight]",
+      target: within(screen.getAllByLabelText("工作区标签")[0]).getByRole("button", { name: "生产 Web" }),
+    });
+    await userEvent.click(screen.getByRole("menuitem", { name: "向右拆分" }));
+    await userEvent.pointer({ keys: "[MouseRight]", target: getConnectionItem("生产 Web") });
+    await userEvent.click(screen.getByRole("menuitem", { name: "新标签连接" }));
+
+    const sourceTabList = screen.getAllByLabelText("工作区标签")[0];
+    const targetTabList = screen.getAllByLabelText("工作区标签")[1];
+    const targetFirstTab = within(targetTabList).getByRole("button", { name: "生产 Web 2" }).closest(".workspace-tab") as HTMLElement;
+    const movedTabButton = within(sourceTabList).getByRole("button", { name: "生产 Web" });
+    targetFirstTab.getBoundingClientRect = () => ({ left: 410, right: 510, top: 0, bottom: 36, width: 100, height: 36, x: 410, y: 0, toJSON: () => ({}) });
+    Object.defineProperty(document, "elementFromPoint", {
+      configurable: true,
+      value: vi.fn().mockReturnValue(targetFirstTab),
+    });
+
+    fireEvent.pointerDown(movedTabButton, { clientX: 12, clientY: 12, pointerId: 1, button: 0 });
+    fireEvent.pointerMove(window, { clientX: 430, clientY: 12, pointerId: 1 });
+    fireEvent.pointerUp(window, { clientX: 430, clientY: 12, pointerId: 1 });
+
+    expect(within(targetTabList).getAllByRole("button", { name: /^生产 Web/ }).map((button) => button.textContent)).toEqual([
+      "生产 Web",
+      "生产 Web 2",
+      "生产 Web 3",
+    ]);
+  });
+
+  it("does not reconnect terminal tabs when moving them between populated split panes", async () => {
+    settings = {
+      ...createSettings(),
+      connections: [remoteConnection],
+    };
+
+    render(<AppShell />);
+
+    await userEvent.pointer({ keys: "[MouseRight]", target: getConnectionItem("生产 Web") });
+    await userEvent.click(screen.getByRole("menuitem", { name: "连接" }));
+    await userEvent.pointer({
+      keys: "[MouseRight]",
+      target: within(screen.getAllByLabelText("工作区标签")[0]).getByRole("button", { name: "生产 Web" }),
+    });
+    await userEvent.click(screen.getByRole("menuitem", { name: "向右拆分" }));
+    await userEvent.pointer({
+      keys: "[MouseRight]",
+      target: within(screen.getAllByLabelText("工作区标签")[0]).getByRole("button", { name: "生产 Web" }),
+    });
+    await userEvent.click(screen.getByRole("menuitem", { name: "向右拆分" }));
+
+    await waitFor(() => {
+      expect(callBackendMock.mock.calls.filter(([command]) => command === "open_terminal")).toHaveLength(3);
+    });
+    const initialPanelOrder = Array.from(document.querySelectorAll("[data-workspace-tab-panel-id]")).map((element) =>
+      element.getAttribute("data-workspace-tab-panel-id"),
+    );
+    callBackendMock.mockClear();
+
+    const tabListWith = (title: string) => {
+      const tabList = screen.getAllByLabelText("工作区标签").find((item) => within(item).queryByRole("button", { name: title }));
+      if (!tabList) throw new Error(`missing tab list for ${title}`);
+      return tabList;
+    };
+
+    const secondTabList = tabListWith("生产 Web 2");
+    const thirdTabList = tabListWith("生产 Web 3");
+    const secondTabButton = within(secondTabList).getByRole("button", { name: "生产 Web 2" });
+    Object.defineProperty(document, "elementFromPoint", {
+      configurable: true,
+      value: vi.fn().mockReturnValue(thirdTabList),
+    });
+
+    fireEvent.pointerDown(secondTabButton, { clientX: 310, clientY: 12, pointerId: 1, button: 0 });
+    fireEvent.pointerMove(window, { clientX: 720, clientY: 12, pointerId: 1 });
+    fireEvent.pointerUp(window, { clientX: 720, clientY: 12, pointerId: 1 });
+    await waitForEffects();
+
+    expect(callBackendMock.mock.calls.filter(([command]) => command === "open_terminal")).toHaveLength(0);
+    expect(callBackendMock.mock.calls.filter(([command]) => command === "close_terminal")).toHaveLength(0);
+    expect(Array.from(document.querySelectorAll("[data-workspace-tab-panel-id]")).map((element) =>
+      element.getAttribute("data-workspace-tab-panel-id"),
+    )).toEqual(initialPanelOrder);
+
+    const movedSecondTabButton = within(tabListWith("生产 Web 2")).getByRole("button", { name: "生产 Web 2" });
+    const firstPaneFirstTab = within(tabListWith("生产 Web")).getByRole("button", { name: "生产 Web" }).closest(".workspace-tab") as HTMLElement;
+    firstPaneFirstTab.getBoundingClientRect = () => ({
+      left: 10,
+      right: 120,
+      top: 0,
+      bottom: 36,
+      width: 110,
+      height: 36,
+      x: 10,
+      y: 0,
+      toJSON: () => ({}),
+    });
+    Object.defineProperty(document, "elementFromPoint", {
+      configurable: true,
+      value: vi.fn().mockReturnValue(firstPaneFirstTab),
+    });
+
+    fireEvent.pointerDown(movedSecondTabButton, { clientX: 710, clientY: 12, pointerId: 2, button: 0 });
+    fireEvent.pointerMove(window, { clientX: 30, clientY: 12, pointerId: 2 });
+    fireEvent.pointerUp(window, { clientX: 30, clientY: 12, pointerId: 2 });
+    await waitForEffects();
+
+    expect(callBackendMock.mock.calls.filter(([command]) => command === "open_terminal")).toHaveLength(0);
+    expect(callBackendMock.mock.calls.filter(([command]) => command === "close_terminal")).toHaveLength(0);
+    expect(Array.from(document.querySelectorAll("[data-workspace-tab-panel-id]")).map((element) =>
+      element.getAttribute("data-workspace-tab-panel-id"),
+    )).toEqual(initialPanelOrder);
   });
 
   it("uses unique title numbers when splitting the same terminal multiple times", async () => {

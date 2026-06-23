@@ -74,6 +74,26 @@ interface WorkspaceResizeState {
   startSizes: number[];
 }
 
+interface WorkspaceTabDragState {
+  sourcePaneId: string;
+  tabId: string;
+  title: string;
+  status?: WorkspaceTabItem["status"];
+  clientX: number;
+  clientY: number;
+  target: WorkspaceTabDropTarget | null;
+}
+
+interface WorkspaceTabDropTarget {
+  paneId: string;
+  index: number;
+  indicator: {
+    left: number;
+    top: number;
+    height: number;
+  };
+}
+
 interface WorkspaceLayoutBounds {
   left: number;
   top: number;
@@ -220,6 +240,10 @@ function updateWorkspaceSplitSizes(node: WorkspaceLayoutNode, splitId: string, s
   };
 }
 
+function findWorkspacePaneGeometry(geometry: WorkspacePaneGeometry[], paneId: string) {
+  return geometry.find((pane) => pane.paneId === paneId) ?? null;
+}
+
 function buildWorkspaceLayoutGeometry(
   node: WorkspaceLayoutNode,
   bounds: WorkspaceLayoutBounds = { left: 0, top: 0, width: 100, height: 100 },
@@ -297,7 +321,10 @@ function AppShellContent({ settingsState }: { settingsState: ReturnType<typeof u
   const [connectionSidebarWidth, setConnectionSidebarWidth] = useState(settings.layout.connection_sidebar_width);
   const [isResizingConnectionPanel, setIsResizingConnectionPanel] = useState(false);
   const [workspaceResizeState, setWorkspaceResizeState] = useState<WorkspaceResizeState | null>(null);
+  const [workspaceTabDragState, setWorkspaceTabDragState] = useState<WorkspaceTabDragState | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+  const workspaceTabDragStateRef = useRef<WorkspaceTabDragState | null>(null);
+  const workspaceTabPanelOrderRef = useRef<string[]>([]);
   const nextWorkspaceTabSerialRef = useRef(1);
   const nextWorkspacePaneSerialRef = useRef(2);
   const nextWorkspaceSplitSerialRef = useRef(1);
@@ -605,6 +632,131 @@ function AppShellContent({ settingsState }: { settingsState: ReturnType<typeof u
     closeTabsInPane(paneId, tabIds);
   }
 
+  function setCurrentWorkspaceTabDragState(dragState: WorkspaceTabDragState | null) {
+    workspaceTabDragStateRef.current = dragState;
+    setWorkspaceTabDragState(dragState);
+  }
+
+  function moveWorkspaceTab(sourcePaneId: string, targetPaneId: string, tabId: string, targetIndex: number) {
+    if (sourcePaneId === targetPaneId) {
+      setFocusedPaneId(targetPaneId);
+      setWorkspacePanes((panes) => panes.map((pane) => {
+        if (pane.id !== targetPaneId) return pane;
+        const movingTab = pane.tabs.find((tab) => tab.id === tabId);
+        if (!movingTab) return { ...pane, activeTabId: tabId };
+        const withoutMovingTab = pane.tabs.filter((tab) => tab.id !== tabId);
+        const adjustedTargetIndex = clamp(targetIndex, 0, withoutMovingTab.length);
+        return {
+          ...pane,
+          tabs: [
+            ...withoutMovingTab.slice(0, adjustedTargetIndex),
+            movingTab,
+            ...withoutMovingTab.slice(adjustedTargetIndex),
+          ],
+          activeTabId: tabId,
+        };
+      }));
+      return;
+    }
+
+    setWorkspacePanes((panes) => {
+      const sourcePane = panes.find((pane) => pane.id === sourcePaneId);
+      const targetPane = panes.find((pane) => pane.id === targetPaneId);
+      const movingTab = sourcePane?.tabs.find((tab) => tab.id === tabId);
+      if (!sourcePane || !targetPane || !movingTab) return panes;
+
+      const nextPanes = panes.flatMap((pane) => {
+        if (pane.id === sourcePaneId) {
+          const nextTabs = pane.tabs.filter((tab) => tab.id !== tabId);
+          if (nextTabs.length === 0 && panes.length > 1) {
+            return [];
+          }
+          const activeStillOpen = pane.activeTabId ? nextTabs.some((tab) => tab.id === pane.activeTabId) : false;
+          return [{
+            ...pane,
+            tabs: nextTabs,
+            activeTabId: activeStillOpen ? pane.activeTabId : nextTabs[nextTabs.length - 1]?.id ?? null,
+          }];
+        }
+
+        if (pane.id === targetPaneId) {
+          const insertIndex = clamp(targetIndex, 0, pane.tabs.length);
+          return [{
+            ...pane,
+            tabs: pane.tabs.some((tab) => tab.id === tabId)
+              ? pane.tabs
+              : [...pane.tabs.slice(0, insertIndex), movingTab, ...pane.tabs.slice(insertIndex)],
+            activeTabId: tabId,
+          }];
+        }
+
+        return [pane];
+      });
+
+      if (sourcePane.tabs.length === 1 && panes.length > 1) {
+        setWorkspaceLayout((layout) => removePaneFromWorkspaceLayout(layout, sourcePaneId) ?? createWorkspaceLayout(targetPaneId));
+      }
+      setFocusedPaneId(targetPaneId);
+      return nextPanes;
+    });
+  }
+
+  function workspaceTabDropTargetFromPointer(event: PointerEvent): WorkspaceTabDropTarget | null {
+    const target = document.elementFromPoint(event.clientX, event.clientY);
+    const tabListElement = target?.closest<HTMLElement>("[data-workspace-tabs-pane-id]");
+    if (!tabListElement) return null;
+
+    const paneId = tabListElement.dataset.workspaceTabsPaneId;
+    if (!paneId) return null;
+
+    const tabElements = Array.from(tabListElement.querySelectorAll<HTMLElement>("[data-tab-id]"));
+    if (tabElements.length === 0) {
+      const listRect = tabListElement.getBoundingClientRect();
+      return {
+        paneId,
+        index: 0,
+        indicator: {
+          left: listRect.left + 8,
+          top: listRect.top + 6,
+          height: Math.max(16, listRect.height - 12),
+        },
+      };
+    }
+
+    let index = tabElements.length;
+    let indicatorLeft = tabElements[tabElements.length - 1].getBoundingClientRect().right;
+    for (const [tabIndex, tabElement] of tabElements.entries()) {
+      const rect = tabElement.getBoundingClientRect();
+      const middle = rect.left + rect.width / 2;
+      if (event.clientX < middle) {
+        index = tabIndex;
+        indicatorLeft = rect.left;
+        break;
+      }
+      indicatorLeft = rect.right;
+    }
+    const tabListRect = tabListElement.getBoundingClientRect();
+    return {
+      paneId,
+      index,
+      indicator: {
+        left: indicatorLeft,
+        top: tabListRect.top + 6,
+        height: Math.max(16, tabListRect.height - 12),
+      },
+    };
+  }
+
+  function finishWorkspaceTabDrag(event: PointerEvent) {
+    const dragState = workspaceTabDragStateRef.current;
+    if (!dragState) return;
+    const target = workspaceTabDropTargetFromPointer(event) ?? dragState.target;
+    if (target) {
+      moveWorkspaceTab(dragState.sourcePaneId, target.paneId, dragState.tabId, target.index);
+    }
+    setCurrentWorkspaceTabDragState(null);
+  }
+
   function cloneTabForSplit(tab: AppWorkspaceTab) {
     if (tab.kind === "terminal") {
       const count = tabDuplicateCount("terminal", tab.connectionId);
@@ -705,14 +857,22 @@ function AppShellContent({ settingsState }: { settingsState: ReturnType<typeof u
     });
   }
 
-  function renderTabPanel(pane: WorkspacePane, tab: AppWorkspaceTab, effectiveActiveTabId: string | null, layoutPath: string) {
-    const paneLayoutVersion = `${workspaceLayoutVersion}:${layoutPath}`;
+  function renderTabPanel(pane: WorkspacePane, tab: AppWorkspaceTab, effectiveActiveTabId: string | null, geometry: WorkspacePaneGeometry | null) {
+    const paneLayoutVersion = `${workspaceLayoutVersion}:${geometry?.path ?? "detached"}`;
+    const isActiveTab = effectiveActiveTabId === tab.id;
     return (
       <div
         key={tab.id}
-        aria-hidden={effectiveActiveTabId !== tab.id}
-        data-active={effectiveActiveTabId === tab.id}
+        aria-hidden={!isActiveTab}
+        data-active={isActiveTab}
+        data-workspace-tab-panel-id={tab.id}
         className="workspace-tab-panel"
+        style={geometry ? {
+          left: `${geometry.left}%`,
+          top: `calc(${geometry.top}% + var(--workspace-tab-height))`,
+          width: `${geometry.width}%`,
+          height: `calc(${geometry.height}% - var(--workspace-tab-height))`,
+        } : undefined}
       >
         {tab.kind === "terminal" ? (
           <TerminalWorkspace
@@ -720,8 +880,8 @@ function AppShellContent({ settingsState }: { settingsState: ReturnType<typeof u
             fontFamily={settings.appearance.terminal_font_family}
             fontSize={settings.appearance.terminal_font_size}
             theme={theme}
-            isActive={focusedPaneId === pane.id && effectiveActiveTabId === tab.id}
-            isVisible={effectiveActiveTabId === tab.id}
+            isActive={focusedPaneId === pane.id && isActiveTab}
+            isVisible={isActiveTab}
             layoutVersion={paneLayoutVersion}
             terminalSettings={settings.terminal}
             onStatusChange={(status) => updateTerminalStatus(tab.id, status)}
@@ -761,6 +921,7 @@ function AppShellContent({ settingsState }: { settingsState: ReturnType<typeof u
         key={paneId}
         className="workspace-pane"
         data-focused={focusedPaneId === paneId}
+        data-workspace-pane-id={paneId}
         aria-label={t("app.workspace_pane", { index: paneIndex })}
         onMouseDown={() => setFocusedPaneId(paneId)}
         style={{
@@ -771,6 +932,7 @@ function AppShellContent({ settingsState }: { settingsState: ReturnType<typeof u
         }}
       >
         <WorkspaceTabs
+          paneId={paneId}
           tabs={pane.tabs}
           activeTabId={effectiveActiveTabId}
           onSelect={(tabId) => {
@@ -781,8 +943,29 @@ function AppShellContent({ settingsState }: { settingsState: ReturnType<typeof u
           }}
           onClose={(tabId) => closeTab(paneId, tabId)}
           onContextMenu={(event, tabId) => openTabContextMenu(event, paneId, tabId)}
+          onTabDragStart={(tabId, event) => {
+            const tab = pane.tabs.find((item) => item.id === tabId);
+            if (!tab) return;
+            setCurrentWorkspaceTabDragState({
+              sourcePaneId: paneId,
+              tabId,
+              title: tab.title,
+              status: tab.status,
+              clientX: event.clientX,
+              clientY: event.clientY,
+              target: workspaceTabDropTargetFromPointer(event),
+            });
+          }}
+          onTabDragMove={(event) => {
+            const target = workspaceTabDropTargetFromPointer(event);
+            setCurrentWorkspaceTabDragState(
+              workspaceTabDragStateRef.current
+                ? { ...workspaceTabDragStateRef.current, clientX: event.clientX, clientY: event.clientY, target }
+                : null,
+            );
+          }}
+          onTabDragEnd={finishWorkspaceTabDrag}
         />
-        {pane.tabs.map((tab) => renderTabPanel(pane, tab, effectiveActiveTabId, geometry.path))}
         {!activePaneTab ? (
           <section className="workspace-empty" onContextMenu={openEmptyWorkspaceContextMenu}>
             <h2>{t("app.no_tabs")}</h2>
@@ -790,6 +973,62 @@ function AppShellContent({ settingsState }: { settingsState: ReturnType<typeof u
           </section>
         ) : null}
       </section>
+    );
+  }
+
+  function renderWorkspaceTabPanels() {
+    const tabPanelEntries = workspacePanes.flatMap((pane) => {
+      const activePaneTab = paneActiveTab(pane);
+      const effectiveActiveTabId = activePaneTab?.id ?? null;
+      const geometry = findWorkspacePaneGeometry(workspaceLayoutGeometry.panes, pane.id);
+      return pane.tabs.map((tab) => ({
+        id: tab.id,
+        pane,
+        tab,
+        effectiveActiveTabId,
+        geometry,
+      }));
+    });
+    const tabPanelEntryMap = new Map(tabPanelEntries.map((entry) => [entry.id, entry]));
+    const activeTabIds = new Set(tabPanelEntries.map((entry) => entry.id));
+    workspaceTabPanelOrderRef.current = [
+      ...workspaceTabPanelOrderRef.current.filter((tabId) => activeTabIds.has(tabId)),
+      ...tabPanelEntries.map((entry) => entry.id).filter((tabId) => !workspaceTabPanelOrderRef.current.includes(tabId)),
+    ];
+
+    return workspaceTabPanelOrderRef.current.flatMap((tabId) => {
+      const entry = tabPanelEntryMap.get(tabId);
+      return entry ? [renderTabPanel(entry.pane, entry.tab, entry.effectiveActiveTabId, entry.geometry)] : [];
+    });
+  }
+
+  function renderWorkspaceTabDragOverlay() {
+    if (!workspaceTabDragState) return null;
+    return (
+      <>
+        {workspaceTabDragState.target ? (
+          <div
+            className="workspace-tab-drop-indicator"
+            style={{
+              left: workspaceTabDragState.target.indicator.left,
+              top: workspaceTabDragState.target.indicator.top,
+              height: workspaceTabDragState.target.indicator.height,
+            }}
+          />
+        ) : null}
+        <div
+          className="workspace-tab-drag-preview"
+          style={{
+            left: workspaceTabDragState.clientX,
+            top: workspaceTabDragState.clientY,
+          }}
+        >
+          {workspaceTabDragState.status ? (
+            <span className="workspace-tab__status" data-status={workspaceTabDragState.status} />
+          ) : null}
+          <span className="workspace-tab-drag-preview__title">{workspaceTabDragState.title}</span>
+        </div>
+      </>
     );
   }
 
@@ -887,7 +1126,9 @@ function AppShellContent({ settingsState }: { settingsState: ReturnType<typeof u
         <section className="workspace" aria-label={t("app.workspace")}>
           <div className="workspace-root">
             {workspaceLayoutGeometry.panes.map((pane) => renderWorkspacePane(pane))}
+            {renderWorkspaceTabPanels()}
             {workspaceLayoutGeometry.handles.map((handle) => renderWorkspaceResizeHandle(handle))}
+            {renderWorkspaceTabDragOverlay()}
           </div>
         </section>
       </div>
