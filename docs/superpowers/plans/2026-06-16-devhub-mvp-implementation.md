@@ -260,8 +260,8 @@
 ### 任务 30：开源文档和许可证
 
 - 补充项目 `README.md`，覆盖当前功能、技术栈、开发命令、验证命令、配置位置、安全说明和路线图。
-- 补充 Apache License 2.0 的 `LICENSE` 文件。
-- 在 `package.json` 和 `src-tauri/Cargo.toml` 中声明 `Apache-2.0`。
+- 补充 MIT License 的 `LICENSE` 文件。
+- 在 `package.json` 和 `src-tauri/Cargo.toml` 中声明 `MIT`。
 
 ## 待完成任务
 

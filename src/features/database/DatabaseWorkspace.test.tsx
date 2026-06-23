@@ -277,7 +277,16 @@ describe("DatabaseWorkspace", () => {
     expect(screen.getByRole("columnheader", { name: "id INT" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "name VARCHAR" })).toBeInTheDocument();
     expect(screen.getByText("Alice")).toBeInTheDocument();
-    expect(screen.getByText("null")).toHaveClass("database-result__cell-placeholder");
+    expect(screen.getByText("null")).toHaveClass("database-table-browser__cell-placeholder");
+    expect(screen.getByLabelText("第 1 行 id")).toHaveClass("database-table-browser__cell--number");
+    await userEvent.click(screen.getByLabelText("第 1 行 name"));
+    expect(screen.getByLabelText("第 1 行 name")).toHaveClass("database-table-browser__cell--selected");
+    fireEvent.contextMenu(screen.getByLabelText("第 1 行 name"), { clientX: 10, clientY: 20 });
+    expect(within(screen.getByRole("menu")).getAllByRole("menuitem").map((item) => item.textContent)).toEqual([
+      "复制单元格",
+      "复制选中",
+      "复制列名",
+    ]);
     expect(screen.getByText("true")).toBeInTheDocument();
   });
 
@@ -1703,6 +1712,43 @@ describe("DatabaseWorkspace", () => {
     await userEvent.selectOptions(screen.getByLabelText("SQL 文件"), "report");
 
     expect(screen.getByLabelText("SQL 编辑器")).toHaveValue("select count(*) from users");
+  });
+
+  it("keeps edited SQL file content when switching files before debounce save", async () => {
+    callBackendMock.mockImplementation((command) => {
+      if (command === "list_database_sql_files") {
+        return Promise.resolve([
+          { name: "default", content: "select 1" },
+          { name: "report", content: "select 2" },
+        ]);
+      }
+      return Promise.resolve([]);
+    });
+
+    renderDatabaseWorkspace("app");
+
+    const editor = await screen.findByLabelText("SQL 编辑器");
+    expect(editor).toHaveValue("select 1");
+
+    await userEvent.clear(editor);
+    await userEvent.type(editor, "select 1 modified");
+    await userEvent.selectOptions(screen.getByLabelText("SQL 文件"), "report");
+
+    expect(screen.getByLabelText("SQL 编辑器")).toHaveValue("select 2");
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("save_database_sql_file", {
+        request: {
+          connection_id: "mysql-dev",
+          database: "app",
+          name: "default",
+          content: "select 1 modified",
+        },
+      });
+    });
+
+    await userEvent.selectOptions(screen.getByLabelText("SQL 文件"), "default");
+
+    expect(screen.getByLabelText("SQL 编辑器")).toHaveValue("select 1 modified");
   });
 
   it("creates a SQL file from the selector dialog and cancels it with Escape", async () => {

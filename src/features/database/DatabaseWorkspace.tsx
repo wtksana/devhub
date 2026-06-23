@@ -3,7 +3,6 @@ import Editor from "@monaco-editor/react";
 import type { OnMount } from "@monaco-editor/react";
 import { callBackend } from "../../lib/tauri";
 import type {
-  DatabaseCellValue,
   DatabaseQueryResult,
   DatabaseSqlFile,
   DatabaseTableBrowserTarget,
@@ -18,6 +17,7 @@ import { ContextMenu } from "../../app/ContextMenu";
 import type { ContextMenuState } from "../../app/ContextMenu";
 import { AppIcon } from "../../app/AppIcon";
 import { readClipboardText, writeClipboardText } from "../../lib/clipboard";
+import { DatabaseDataGrid } from "./DatabaseDataGrid";
 import CollapseEditorIcon from "../../assets/icons/oi--collapse-up.svg?react";
 import ExpandEditorIcon from "../../assets/icons/oi--expand-down.svg?react";
 import SqlFileIcon from "../../assets/icons/ph--file-sql-light.svg?react";
@@ -117,14 +117,7 @@ export function DatabaseWorkspace({ connectionId, initialDatabase, theme, fontFa
     latestSqlFileKeyRef.current = key;
     const timer = window.setTimeout(() => {
       if (latestSqlFileKeyRef.current !== key) return;
-      void callBackend("save_database_sql_file", {
-        request: {
-          connection_id: connectionId,
-          database: currentDatabase,
-          name: selectedSqlFileName,
-          content: sql,
-        },
-      });
+      void saveSqlFileContent(currentDatabase, selectedSqlFileName, sql);
     }, 500);
     return () => window.clearTimeout(timer);
   }, [connectionId, currentDatabase, isSqlFileLoaded, selectedSqlFileName, sql]);
@@ -302,8 +295,30 @@ export function DatabaseWorkspace({ connectionId, initialDatabase, theme, fontFa
     }
     const nextFile = sqlFiles.find((file) => file.name === nextName);
     if (!nextFile) return;
+    if (isSqlFileLoaded && currentDatabase && selectedSqlFileName) {
+      void saveSqlFileContent(currentDatabase, selectedSqlFileName, sql);
+    }
     setSelectedSqlFileName(nextFile.name);
     setSql(nextFile.content);
+  }
+
+  function updateSql(nextSql: string) {
+    setSql(nextSql);
+    if (!isSqlFileLoaded || !selectedSqlFileName) return;
+    setSqlFiles((files) => files.map((file) => (
+      file.name === selectedSqlFileName ? { ...file, content: nextSql } : file
+    )));
+  }
+
+  function saveSqlFileContent(database: string, name: string, content: string) {
+    return callBackend("save_database_sql_file", {
+      request: {
+        connection_id: connectionId,
+        database,
+        name,
+        content,
+      },
+    });
   }
 
   function getSelectedSql() {
@@ -462,7 +477,7 @@ export function DatabaseWorkspace({ connectionId, initialDatabase, theme, fontFa
                 theme={theme === "dark" ? "vs-dark" : "light"}
                 wrapperProps={{ "aria-label": t("database.sql_editor") }}
                 onMount={handleEditorMount}
-                onChange={(value) => setSql(value ?? "")}
+                onChange={(value) => updateSql(value ?? "")}
                 options={{
                   automaticLayout: true,
                   contextmenu: false,
@@ -661,55 +676,13 @@ function DatabaseResultView({ result }: { result: DatabaseQueryResult }) {
     <section className="database-result" aria-label={t("database.query_result")}>
       <header>{summary}</header>
       {result.columns.length > 0 ? (
-        <div className="database-result__table-wrap">
-          <table>
-            <thead>
-              <tr>
-                {result.columns.map((column) => (
-                  <th key={column.name} scope="col" aria-label={`${column.name} ${column.data_type}`} title={columnTooltip(column.name, column.data_type)}>
-                    <span>{column.name}</span>
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {result.rows.length > 0 ? result.rows.map((row, rowIndex) => (
-                <tr key={rowIndex}>
-                  {row.map((cell, cellIndex) => (
-                    <td key={cellIndex}>
-                      <span
-                        className={[
-                          "database-result__cell-content",
-                          cell.kind === "null" ? "database-result__cell-placeholder" : "",
-                        ].filter(Boolean).join(" ")}
-                        title={formatCellValue(cell)}
-                      >
-                        {formatCellValue(cell)}
-                      </span>
-                    </td>
-                  ))}
-                </tr>
-              )) : (
-                <tr>
-                  <td colSpan={result.columns.length}>{t("database.query_result_empty")}</td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+        <DatabaseDataGrid
+          columns={result.columns}
+          rows={result.rows}
+        />
       ) : null}
     </section>
   );
-}
-
-function formatCellValue(cell: DatabaseCellValue) {
-  if (cell.kind === "null") return "null";
-  if (cell.kind === "bool") return String(cell.value);
-  return cell.value;
-}
-
-function columnTooltip(columnName: string, dataType: string) {
-  return dataType ? `${columnName}: ${dataType}` : columnName;
 }
 
 function isDangerousSql(sql: string) {

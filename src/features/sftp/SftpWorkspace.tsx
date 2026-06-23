@@ -8,6 +8,10 @@ import {
 } from "react";
 import { ContextMenu, type ContextMenuState } from "../../app/ContextMenu";
 import type { ContextMenuItem } from "../../app/ContextMenu";
+import { AppIcon } from "../../app/AppIcon";
+import BackIcon from "../../assets/icons/material-symbols--chevron-left-rounded.svg?react";
+import ForwardIcon from "../../assets/icons/material-symbols--chevron-right-rounded.svg?react";
+import RefreshIcon from "../../assets/icons/solar--refresh-bold.svg?react";
 import { writeClipboardText } from "../../lib/clipboard";
 import {
   pickDownloadDirectory,
@@ -1307,17 +1311,23 @@ export function SftpWorkspace({
         <h2>SFTP</h2>
         <button
           type="button"
+          className="workspace-icon-button"
+          aria-label={t("sftp.back")}
+          title={t("sftp.back")}
           onClick={() => void goBack()}
           disabled={!backStack.length}
         >
-          {t("sftp.back")}
+          <AppIcon icon={BackIcon} decorative />
         </button>
         <button
           type="button"
+          className="workspace-icon-button"
+          aria-label={t("sftp.forward")}
+          title={t("sftp.forward")}
           onClick={() => void goForward()}
           disabled={!forwardStack.length}
         >
-          {t("sftp.forward")}
+          <AppIcon icon={ForwardIcon} decorative />
         </button>
         <input
           value={addressPath}
@@ -1330,20 +1340,14 @@ export function SftpWorkspace({
           }}
           aria-label={t("sftp.remote_path")}
         />
-        <button type="button" onClick={() => void refresh()}>
-          {t("sftp.refresh")}
-        </button>
         <button
           type="button"
-          onClick={() =>
-            openDialog({
-              kind: "create-directory",
-              title: t("sftp.create_directory"),
-              initialValue: "",
-            })
-          }
+          className="workspace-icon-button"
+          aria-label={t("sftp.refresh")}
+          title={t("sftp.refresh")}
+          onClick={() => void refresh()}
         >
-          {t("sftp.new_directory")}
+          <AppIcon icon={RefreshIcon} decorative />
         </button>
       </header>
       {error ? <p role="alert">{error}</p> : null}

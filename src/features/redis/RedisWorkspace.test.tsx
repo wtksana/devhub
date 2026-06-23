@@ -95,6 +95,30 @@ describe("RedisWorkspace", () => {
     expect(screen.getByText("共 320 条数据，已加载 1 条")).toBeInTheDocument();
   });
 
+  it("renders toolbar commands and folder toggles as icon buttons while keeping accessible names", async () => {
+    callBackendMock.mockResolvedValueOnce({
+      total_count: 1,
+      entries: [
+        { key: "session:1", key_type: "string", ttl: -1 },
+      ],
+    });
+
+    renderRedisWorkspace({ connectionId: "redis-local", initialDatabase: 0 });
+
+    const createButton = screen.getByRole("button", { name: "新建 key" });
+    const refreshButton = screen.getByRole("button", { name: "刷新" });
+    expect(createButton.textContent).toBe("");
+    expect(createButton.querySelector(".app-icon")).toBeInTheDocument();
+    expect(refreshButton.textContent).toBe("");
+    expect(refreshButton.querySelector(".app-icon")).toBeInTheDocument();
+
+    const folderButton = await screen.findByRole("button", { name: "展开 session" });
+    expect(folderButton.querySelector(".app-icon")).toBeInTheDocument();
+    expect(folderButton).not.toHaveTextContent(">");
+    await userEvent.click(folderButton);
+    expect(screen.getByRole("button", { name: "折叠 session" }).querySelector(".app-icon")).toBeInTheDocument();
+  });
+
   it("refreshes Redis keys when pressing Enter in the keyword input", async () => {
     callBackendMock.mockResolvedValueOnce({ total_count: 0, entries: [] });
     callBackendMock.mockResolvedValueOnce({
@@ -1139,9 +1163,10 @@ describe("RedisWorkspace", () => {
     renderRedisWorkspace({ connectionId: "redis-local", initialDatabase: 0 });
 
     await waitFor(() => expect(callBackendMock).toHaveBeenCalledTimes(1));
-    const toolbarButtons = screen.getAllByRole("button").map((button) => button.textContent);
-    expect(toolbarButtons.indexOf("新建 key")).toBeLessThan(toolbarButtons.indexOf("刷新"));
-    await userEvent.click(screen.getByRole("button", { name: "新建 key" }));
+    const createKeyButton = screen.getByRole("button", { name: "新建 key" });
+    const refreshButton = screen.getByRole("button", { name: "刷新" });
+    expect(createKeyButton.compareDocumentPosition(refreshButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    await userEvent.click(createKeyButton);
     const dialog = screen.getByRole("dialog", { name: "新建 Redis key" });
     await userEvent.type(within(dialog).getByLabelText("Key 名称"), "user:1");
     await userEvent.selectOptions(within(dialog).getByLabelText("类型"), "hash");

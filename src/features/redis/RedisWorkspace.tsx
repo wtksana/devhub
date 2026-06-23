@@ -1,6 +1,11 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { ContextMenu, type ContextMenuState } from "../../app/ContextMenu";
+import { AppIcon } from "../../app/AppIcon";
+import AddIcon from "../../assets/icons/material-symbols--add-rounded.svg?react";
+import CollapseIcon from "../../assets/icons/material-symbols--chevron-right-rounded.svg?react";
+import ExpandIcon from "../../assets/icons/material-symbols--keyboard-arrow-down-rounded.svg?react";
+import RefreshIcon from "../../assets/icons/solar--refresh-bold.svg?react";
 import { useI18n } from "../../i18n/useI18n";
 import { callBackend } from "../../lib/tauri";
 import type { RedisKeyEntry, RedisKeyListResponse, RedisKeyValueResponse } from "./redisTypes";
@@ -995,8 +1000,14 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
           />
           <span>{t("redis.load_limit_suffix")}</span>
         </label>
-        <button type="button" onClick={openCreateDialog}>
-          {t("redis.create_key")}
+        <button
+          type="button"
+          className="workspace-icon-button"
+          aria-label={t("redis.create_key")}
+          title={t("redis.create_key")}
+          onClick={openCreateDialog}
+        >
+          <AppIcon icon={AddIcon} decorative />
         </button>
         <label className="redis-toolbar__keyword">
           <input
@@ -1011,8 +1022,14 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
             }}
           />
         </label>
-        <button type="button" onClick={() => void loadKeys()}>
-          {t("redis.refresh")}
+        <button
+          type="button"
+          className="workspace-icon-button"
+          aria-label={t("redis.refresh")}
+          title={t("redis.refresh")}
+          onClick={() => void loadKeys()}
+        >
+          <AppIcon icon={RefreshIcon} decorative />
         </button>
       </header>
       {error ? <p role="alert">{error}</p> : null}
@@ -1081,7 +1098,11 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
                         }
                         onClick={() => toggleFolder(row.path)}
                       >
-                        <span aria-hidden="true">{expandedFolders.has(row.path) ? "v" : ">"}</span>
+                        <AppIcon
+                          icon={expandedFolders.has(row.path) ? ExpandIcon : CollapseIcon}
+                          decorative
+                          className="redis-folder-button__icon"
+                        />
                         <span>{row.name}</span>
                       </button>
                     </td>

@@ -1,7 +1,6 @@
-import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { useI18n } from "../../i18n/useI18n";
 import { callBackend } from "../../lib/tauri";
-import { ContextMenu, type ContextMenuState } from "../../app/ContextMenu";
 import { AppIcon } from "../../app/AppIcon";
 import { readClipboardText, writeClipboardText } from "../../lib/clipboard";
 import FirstPageIcon from "../../assets/icons/material-symbols--first-page-rounded.svg?react";
@@ -23,14 +22,16 @@ import type {
   DatabaseTablePageResult,
   DatabaseTableUpdateResult,
 } from "./databaseTypes";
+import {
+  cellText,
+  DatabaseDataGrid,
+  formatCellValue,
+  type DatabaseDataGridContextMenuItem,
+  type DatabaseDataGridNewRowState,
+} from "./DatabaseDataGrid";
 
 const DEFAULT_PAGE_SIZE = 200;
 const PAGE_SIZE_OPTIONS = [10, 100, 200, 400, 500, 1000];
-const MIN_DATA_COLUMN_WIDTH = 96;
-const MAX_DATA_COLUMN_WIDTH = 240;
-const CHARACTER_WIDTH = 9;
-const CELL_HORIZONTAL_PADDING = 24;
-
 interface DatabaseTableBrowserProps {
   connectionId: string;
   target: DatabaseTableBrowserTarget;
@@ -38,9 +39,6 @@ interface DatabaseTableBrowserProps {
 
 type DirtyRows = Record<number, Record<string, DatabaseCellValue>>;
 type EditingCell = { rowIndex: number; columnName: string; value: string } | null;
-type SelectedCell = { rowIndex: number; columnName: string } | null;
-type CellPosition = { rowIndex: number; columnIndex: number };
-type SelectionRange = { anchor: CellPosition; focus: CellPosition } | null;
 type NewRow = { id: string; values: Record<string, DatabaseCellValue> };
 type DeleteTarget = { rowIndex: number } | null;
 
@@ -58,20 +56,15 @@ export function DatabaseTableBrowser({ connectionId, target }: DatabaseTableBrow
   const [dirtyRows, setDirtyRows] = useState<DirtyRows>({});
   const [newRows, setNewRows] = useState<NewRow[]>([]);
   const [editingCell, setEditingCell] = useState<EditingCell>(null);
-  const [selectedCell, setSelectedCell] = useState<SelectedCell>(null);
-  const [selectionRange, setSelectionRange] = useState<SelectionRange>(null);
-  const [isSelectingRange, setIsSelectingRange] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState<"save" | "discard" | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget>(null);
   const [pendingAction, setPendingAction] = useState<(() => void) | null>(null);
   const [isPageSizeMenuOpen, setIsPageSizeMenuOpen] = useState(false);
-  const [cellContextMenu, setCellContextMenu] = useState<ContextMenuState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const editingCellRef = useRef<EditingCell>(null);
   const editingInputRef = useRef<HTMLInputElement | null>(null);
-  const tableCellRefs = useRef<Record<string, HTMLTableCellElement | null>>({});
 
   useEffect(() => {
     setPage(1);
@@ -85,9 +78,6 @@ export function DatabaseTableBrowser({ connectionId, target }: DatabaseTableBrow
     setDirtyRows({});
     setNewRows([]);
     setActiveEditingCell(null);
-    setSelectedCell(null);
-    setSelectionRange(null);
-    setIsSelectingRange(false);
     setIsPageSizeMenuOpen(false);
   }, [target.database, target.table]);
 
@@ -117,24 +107,6 @@ export function DatabaseTableBrowser({ connectionId, target }: DatabaseTableBrow
     editingInputRef.current?.select();
   }, [editingCell?.rowIndex, editingCell?.columnName]);
 
-  useEffect(() => {
-    function handleMouseUp() {
-      setIsSelectingRange(false);
-    }
-
-    window.addEventListener("mouseup", handleMouseUp);
-    return () => window.removeEventListener("mouseup", handleMouseUp);
-  }, []);
-
-  useEffect(() => {
-    function handleKeyDown(event: KeyboardEvent) {
-      handleTableKeyDown(event);
-    }
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [dirtyRows, editingCell, newRows, result, selectedCell, selectionRange]);
-
   async function loadPage() {
     setIsLoading(true);
     setError(null);
@@ -154,10 +126,7 @@ export function DatabaseTableBrowser({ connectionId, target }: DatabaseTableBrow
       });
       setResult(nextResult);
       setActiveEditingCell(null);
-      setSelectedCell(null);
       setNewRows([]);
-      setSelectionRange(null);
-      setIsSelectingRange(false);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
@@ -223,18 +192,6 @@ export function DatabaseTableBrowser({ connectionId, target }: DatabaseTableBrow
     });
   }
 
-  function cellText(cell: DatabaseCellValue) {
-    if (cell.kind === "null") return "";
-    if (cell.kind === "bool") return String(cell.value);
-    return cell.value;
-  }
-
-  function displayRowNumber(rowIndex: number) {
-    if (!result) return rowIndex + 1;
-    if (rowIndex < result.rows.length) return (result.page - 1) * result.page_size + rowIndex + 1;
-    return result.total_rows + rowIndex - result.rows.length + 1;
-  }
-
   function newRowIndex(rowIndex: number) {
     if (!result || rowIndex < result.rows.length) return -1;
     return rowIndex - result.rows.length;
@@ -255,216 +212,12 @@ export function DatabaseTableBrowser({ connectionId, target }: DatabaseTableBrow
   function addRow() {
     if (!result) return;
     const values = Object.fromEntries(result.columns.map((column) => [column.name, { kind: "text", value: "" } as DatabaseCellValue]));
-    const rowIndex = result.rows.length + newRows.length;
     setNewRows((current) => [...current, { id: `new-${Date.now()}-${current.length}`, values }]);
-    setSelectedCell({ rowIndex, columnName: result.columns[0]?.name ?? "" });
-    setSelectionRange(result.columns[0] ? { anchor: { rowIndex, columnIndex: 0 }, focus: { rowIndex, columnIndex: 0 } } : null);
-  }
-
-  function startCellSelection(event: ReactMouseEvent, rowIndex: number, columnIndex: number) {
-    if (event.button !== 0) return;
-    if (event.target instanceof Element && event.target.closest("input, textarea, select, [contenteditable='true']")) return;
-    event.preventDefault();
-    const columnName = result?.columns[columnIndex]?.name;
-    if (!columnName) return;
-    const currentEditingCell = editingCellRef.current;
-    if (currentEditingCell) commitEditingCell(editingInputRef.current?.value ?? currentEditingCell.value);
-    selectCell(rowIndex, columnIndex);
-    setIsSelectingRange(true);
-  }
-
-  function extendCellSelection(rowIndex: number, columnIndex: number) {
-    if (!isSelectingRange) return;
-    setSelectionRange((current) => current ? { ...current, focus: { rowIndex, columnIndex } } : current);
   }
 
   function setActiveEditingCell(nextEditingCell: EditingCell) {
     editingCellRef.current = nextEditingCell;
     setEditingCell(nextEditingCell);
-  }
-
-  function copySelectedRange() {
-    if (!result || !selectionRange) return;
-    void writeClipboardText(formatSelectedRange(result, displayedRows(), dirtyRows, selectionRange));
-  }
-
-  function selectCell(rowIndex: number, columnIndex: number) {
-    if (!result) return;
-    const rows = displayedRows();
-    if (rows.length === 0) return;
-    const normalizedRowIndex = Math.max(0, Math.min(rowIndex, rows.length - 1));
-    const normalizedColumnIndex = Math.max(0, Math.min(columnIndex, result.columns.length - 1));
-    const columnName = result.columns[normalizedColumnIndex]?.name;
-    if (!columnName) return;
-    setSelectedCell({ rowIndex: normalizedRowIndex, columnName });
-    setSelectionRange({
-      anchor: { rowIndex: normalizedRowIndex, columnIndex: normalizedColumnIndex },
-      focus: { rowIndex: normalizedRowIndex, columnIndex: normalizedColumnIndex },
-    });
-    tableCellRefs.current[cellKey(normalizedRowIndex, normalizedColumnIndex)]?.focus();
-  }
-
-  function selectedPosition() {
-    if (!result || !selectedCell) return null;
-    const columnIndex = result.columns.findIndex((column) => column.name === selectedCell.columnName);
-    if (columnIndex < 0) return null;
-    return { rowIndex: selectedCell.rowIndex, columnIndex };
-  }
-
-  function startEditingSelectedCell() {
-    if (!result || !selectedCell) return;
-    if (!editableCell(selectedCell.columnName) && !isNewRow(selectedCell.rowIndex)) return;
-    const columnIndex = result.columns.findIndex((column) => column.name === selectedCell.columnName);
-    const original = displayedRows()[selectedCell.rowIndex]?.[columnIndex];
-    if (!original) return;
-    const displayed = displayedCell(selectedCell.rowIndex, selectedCell.columnName, original);
-    setActiveEditingCell({ rowIndex: selectedCell.rowIndex, columnName: selectedCell.columnName, value: cellText(displayed) });
-  }
-
-  function clearSelectedCell() {
-    if (!result || !selectedCell) return;
-    if (!editableCell(selectedCell.columnName) && !isNewRow(selectedCell.rowIndex)) return;
-    const newIndex = newRowIndex(selectedCell.rowIndex);
-    if (newIndex >= 0) {
-      setNewRows((current) => current.map((row, index) => {
-        if (index !== newIndex) return row;
-        return {
-          ...row,
-          values: {
-            ...row.values,
-            [selectedCell.columnName]: { kind: "text", value: "" },
-          },
-        };
-      }));
-      return;
-    }
-    const columnIndex = result.columns.findIndex((column) => column.name === selectedCell.columnName);
-    const original = result.rows[selectedCell.rowIndex]?.[columnIndex];
-    if (!original) return;
-    if (cellText(original) === "") {
-      setDirtyRows((current) => removeDirtyCell(current, selectedCell.rowIndex, selectedCell.columnName));
-      return;
-    }
-    setDirtyRows((current) => ({
-      ...current,
-      [selectedCell.rowIndex]: {
-        ...(current[selectedCell.rowIndex] ?? {}),
-        [selectedCell.columnName]: { kind: "text", value: "" },
-      },
-    }));
-  }
-
-  async function pasteClipboardIntoSelectedCells() {
-    if (!result || !selectedCell) return;
-    const startPosition = selectedPosition();
-    if (!startPosition) return;
-    const text = await readClipboardText();
-    const values = parseClipboardTable(text);
-    if (values.length === 0) return;
-    const rowCount = displayedRows().length;
-    const updates: DirtyRows = {};
-    const removals: Array<{ rowIndex: number; columnName: string }> = [];
-    const nextNewRows = [...newRows];
-    let hasNewRowUpdates = false;
-
-    values.forEach((rowValues, rowOffset) => {
-      const rowIndex = startPosition.rowIndex + rowOffset;
-      if (rowIndex >= rowCount) return;
-      rowValues.forEach((value, columnOffset) => {
-        const columnIndex = startPosition.columnIndex + columnOffset;
-        const column = result.columns[columnIndex];
-        if (!column) return;
-        if (!editableCell(column.name) && !isNewRow(rowIndex)) return;
-        const newIndex = newRowIndex(rowIndex);
-        if (newIndex >= 0) {
-          nextNewRows[newIndex] = {
-            ...nextNewRows[newIndex],
-            values: {
-              ...nextNewRows[newIndex].values,
-              [column.name]: { kind: "text", value },
-            },
-          };
-          hasNewRowUpdates = true;
-          return;
-        }
-        const original = result.rows[rowIndex]?.[columnIndex];
-        if (!original) return;
-        if (value === cellText(original)) {
-          removals.push({ rowIndex, columnName: column.name });
-          return;
-        }
-        updates[rowIndex] = {
-          ...(updates[rowIndex] ?? {}),
-          [column.name]: { kind: "text", value },
-        };
-      });
-    });
-
-    if (Object.keys(updates).length === 0 && removals.length === 0 && !hasNewRowUpdates) return;
-    setDirtyRows((current) => {
-      const cleaned = removals.reduce((next, removal) => removeDirtyCell(next, removal.rowIndex, removal.columnName), current);
-      return mergeDirtyRows(cleaned, updates);
-    });
-    if (hasNewRowUpdates) {
-      setNewRows(nextNewRows);
-    }
-  }
-
-  function moveSelectedCell(rowDelta: number, columnDelta: number) {
-    const position = selectedPosition();
-    if (!position) return;
-    selectCell(position.rowIndex + rowDelta, position.columnIndex + columnDelta);
-  }
-
-  function handleTableKeyDown(event: KeyboardEvent) {
-    if (editingCell || !result || !selectedCell) return;
-    if (isTextInputEventTarget(event.target)) return;
-    if (event.key.toLowerCase() === "c" && (event.ctrlKey || event.metaKey)) {
-      if (!selectionRange) return;
-      event.preventDefault();
-      copySelectedRange();
-      return;
-    }
-    if (event.key.toLowerCase() === "v" && (event.ctrlKey || event.metaKey)) {
-      event.preventDefault();
-      void pasteClipboardIntoSelectedCells();
-      return;
-    }
-    if (event.ctrlKey || event.metaKey || event.altKey) return;
-    if (event.key === "ArrowUp") {
-      event.preventDefault();
-      moveSelectedCell(-1, 0);
-      return;
-    }
-    if (event.key === "ArrowDown") {
-      event.preventDefault();
-      moveSelectedCell(1, 0);
-      return;
-    }
-    if (event.key === "ArrowLeft") {
-      event.preventDefault();
-      moveSelectedCell(0, -1);
-      return;
-    }
-    if (event.key === "ArrowRight") {
-      event.preventDefault();
-      moveSelectedCell(0, 1);
-      return;
-    }
-    if (event.key === "Tab") {
-      event.preventDefault();
-      moveSelectedCell(0, event.shiftKey ? -1 : 1);
-      return;
-    }
-    if (event.key === "Enter" || event.key === "F2") {
-      event.preventDefault();
-      startEditingSelectedCell();
-      return;
-    }
-    if (event.key === "Delete" || event.key === "Backspace") {
-      event.preventDefault();
-      clearSelectedCell();
-    }
   }
 
   function commitEditingBeforeOutsidePointerDown(event: ReactMouseEvent) {
@@ -474,45 +227,36 @@ export function DatabaseTableBrowser({ connectionId, target }: DatabaseTableBrow
     commitEditingCell(editingInputRef.current?.value ?? currentEditingCell.value);
   }
 
-  function openCellContextMenu(event: ReactMouseEvent, rowIndex: number, columnName: string) {
-    if (!result) return;
-    event.preventDefault();
-    const columnIndex = result.columns.findIndex((column) => column.name === columnName);
-    const rows = displayedRows();
-    const row = rows[rowIndex];
-    const cell = row?.[columnIndex];
-    if (!row || !cell) return;
-    const displayed = displayedCell(rowIndex, columnName, cell);
-    setSelectedCell({ rowIndex, columnName });
-    setCellContextMenu({
-      x: event.clientX,
-      y: event.clientY,
-      items: [
-        {
-          label: t("database.copy_cell"),
-          onSelect: () => void writeClipboardText(formatCellValue(displayed)),
-        },
-        {
-          label: t("database.copy_selected_cells"),
-          disabled: !selectionRange,
-          onSelect: copySelectedRange,
-        },
-        {
-          label: t("database.copy_row"),
-          onSelect: () => void writeClipboardText(formatTableRow(result, rowIndex, dirtyRows, newRows)),
-        },
-        {
-          label: t("database.copy_column_name"),
-          onSelect: () => void writeClipboardText(columnName),
-        },
-        { type: "separator" },
-        {
-          label: t("database.delete_row"),
-          disabled: !result.editable,
-          onSelect: () => requestDeleteRow(rowIndex),
-        },
-      ],
-    });
+  function cellContextMenuItems(
+    rowIndex: number,
+    column: DatabaseResultColumn,
+    displayed: DatabaseCellValue,
+    copySelectedRange: () => void,
+  ): DatabaseDataGridContextMenuItem[] {
+    if (!result) return [];
+    return [
+      {
+        label: t("database.copy_cell"),
+        onSelect: () => void writeClipboardText(formatCellValue(displayed)),
+      },
+      {
+        label: t("database.copy_selected_cells"),
+        onSelect: copySelectedRange,
+      },
+      {
+        label: t("database.copy_row"),
+        onSelect: () => void writeClipboardText(formatTableRow(result, rowIndex, dirtyRows, newRows)),
+      },
+      {
+        label: t("database.copy_column_name"),
+        onSelect: () => void writeClipboardText(column.name),
+      },
+      {
+        label: t("database.delete_row"),
+        disabled: !result.editable,
+        onSelect: () => requestDeleteRow(rowIndex),
+      },
+    ];
   }
 
   function isPrimaryKeyColumn(columnName: string) {
@@ -529,13 +273,96 @@ export function DatabaseTableBrowser({ connectionId, target }: DatabaseTableBrow
     return dirtyRows[rowIndex]?.[columnName] ?? original;
   }
 
-  function isCellInSelectionRange(rowIndex: number, columnIndex: number) {
-    if (!selectionRange) return false;
-    const startRow = Math.min(selectionRange.anchor.rowIndex, selectionRange.focus.rowIndex);
-    const endRow = Math.max(selectionRange.anchor.rowIndex, selectionRange.focus.rowIndex);
-    const startColumn = Math.min(selectionRange.anchor.columnIndex, selectionRange.focus.columnIndex);
-    const endColumn = Math.max(selectionRange.anchor.columnIndex, selectionRange.focus.columnIndex);
-    return rowIndex >= startRow && rowIndex <= endRow && columnIndex >= startColumn && columnIndex <= endColumn;
+  function requestEditCell(rowIndex: number, column: DatabaseResultColumn, displayed: DatabaseCellValue) {
+    if (!editableCell(column.name) && !isNewRow(rowIndex)) return;
+    setActiveEditingCell({ rowIndex, columnName: column.name, value: cellText(displayed) });
+  }
+
+  function clearCell(rowIndex: number, column: DatabaseResultColumn) {
+    if (!result) return;
+    if (!editableCell(column.name) && !isNewRow(rowIndex)) return;
+    const newIndex = newRowIndex(rowIndex);
+    if (newIndex >= 0) {
+      setNewRows((current) => current.map((row, index) => {
+        if (index !== newIndex) return row;
+        return {
+          ...row,
+          values: {
+            ...row.values,
+            [column.name]: { kind: "text", value: "" },
+          },
+        };
+      }));
+      return;
+    }
+    const columnIndex = result.columns.findIndex((currentColumn) => currentColumn.name === column.name);
+    const original = result.rows[rowIndex]?.[columnIndex];
+    if (!original) return;
+    if (cellText(original) === "") {
+      setDirtyRows((current) => removeDirtyCell(current, rowIndex, column.name));
+      return;
+    }
+    setDirtyRows((current) => ({
+      ...current,
+      [rowIndex]: {
+        ...(current[rowIndex] ?? {}),
+        [column.name]: { kind: "text", value: "" },
+      },
+    }));
+  }
+
+  async function pasteClipboardIntoCells(rowIndex: number, columnIndex: number) {
+    if (!result) return;
+    const text = await readClipboardText();
+    const values = parseClipboardTable(text);
+    if (values.length === 0) return;
+    const rowCount = displayedRows().length;
+    const updates: DirtyRows = {};
+    const removals: Array<{ rowIndex: number; columnName: string }> = [];
+    const nextNewRows = [...newRows];
+    let hasNewRowUpdates = false;
+
+    values.forEach((rowValues, rowOffset) => {
+      const nextRowIndex = rowIndex + rowOffset;
+      if (nextRowIndex >= rowCount) return;
+      rowValues.forEach((value, columnOffset) => {
+        const nextColumnIndex = columnIndex + columnOffset;
+        const column = result.columns[nextColumnIndex];
+        if (!column) return;
+        if (!editableCell(column.name) && !isNewRow(nextRowIndex)) return;
+        const newIndex = newRowIndex(nextRowIndex);
+        if (newIndex >= 0) {
+          nextNewRows[newIndex] = {
+            ...nextNewRows[newIndex],
+            values: {
+              ...nextNewRows[newIndex].values,
+              [column.name]: { kind: "text", value },
+            },
+          };
+          hasNewRowUpdates = true;
+          return;
+        }
+        const original = result.rows[nextRowIndex]?.[nextColumnIndex];
+        if (!original) return;
+        if (value === cellText(original)) {
+          removals.push({ rowIndex: nextRowIndex, columnName: column.name });
+          return;
+        }
+        updates[nextRowIndex] = {
+          ...(updates[nextRowIndex] ?? {}),
+          [column.name]: { kind: "text", value },
+        };
+      });
+    });
+
+    if (Object.keys(updates).length === 0 && removals.length === 0 && !hasNewRowUpdates) return;
+    setDirtyRows((current) => {
+      const cleaned = removals.reduce((next, removal) => removeDirtyCell(next, removal.rowIndex, removal.columnName), current);
+      return mergeDirtyRows(cleaned, updates);
+    });
+    if (hasNewRowUpdates) {
+      setNewRows(nextNewRows);
+    }
   }
 
   function commitEditingCell(nextValue = editingCellRef.current?.value ?? "") {
@@ -666,7 +493,6 @@ export function DatabaseTableBrowser({ connectionId, target }: DatabaseTableBrow
     if (isNewRow(rowIndex)) {
       const nextNewRows = newRows.filter((_, index) => index !== newRowIndex(rowIndex));
       setNewRows(nextNewRows);
-      setSelectedCell(null);
       return;
     }
     setDeleteTarget({ rowIndex });
@@ -699,8 +525,6 @@ export function DatabaseTableBrowser({ connectionId, target }: DatabaseTableBrow
   const dirtyFieldCount = Object.values(dirtyRows).reduce((total, row) => total + Object.keys(row).length, 0);
   const changedRowCount = dirtyRowCount + newRows.length;
   const changedFieldCount = dirtyFieldCount + newRows.reduce((total, row) => total + Object.keys(row.values).length, 0);
-  const columnWidths = useMemo(() => calculateColumnWidths(result), [result]);
-  const tableWidth = result ? 52 + result.columns.reduce((total, column) => total + (columnWidths[column.name] ?? MIN_DATA_COLUMN_WIDTH), 0) : undefined;
 
   return (
     <section
@@ -789,118 +613,48 @@ export function DatabaseTableBrowser({ connectionId, target }: DatabaseTableBrow
       </div>
       {error ? <p className="database-table-browser__error" role="alert">{error}</p> : null}
       {result ? (
-        <div className="database-table-browser__table-shell">
-          <div className="database-result__table-wrap database-table-browser__table-wrap">
-            <table style={tableWidth ? { width: `${tableWidth}px` } : undefined}>
-              <colgroup>
-                <col className="database-table-browser__row-number-column" />
-                {result.columns.map((column) => (
-                  <col
-                    key={column.name}
-                    className="database-table-browser__data-column"
-                    style={{ width: `${columnWidths[column.name] ?? MIN_DATA_COLUMN_WIDTH}px` }}
-                  />
-                ))}
-              </colgroup>
-              <thead>
-                <tr>
-                  <th className="database-table-browser__row-number" scope="col" aria-label={t("database.row_number")}></th>
-                  {result.columns.map((column) => (
-                    <th key={column.name} scope="col" aria-label={`${column.name} ${column.data_type}`} title={columnTooltip(column.name, column.data_type)}>
-                      <button type="button" aria-label={sortButtonLabel(column.name, column.data_type, sortColumn === column.name ? sortDirection : null)} onClick={() => toggleSort(column.name)}>
-                        <span>{column.name}</span>
-                        {sortColumn === column.name && sortDirection ? <span>{sortDirection === "asc" ? "↑" : "↓"}</span> : null}
-                      </button>
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {displayedRows().length > 0 ? displayedRows().map((row, rowIndex) => (
-                  <tr
-                    key={rowIndex}
-                    className={[
-                      selectedCell?.rowIndex === rowIndex ? "database-table-browser__row--selected" : "",
-                      isNewRow(rowIndex) ? "database-table-browser__row--new" : "",
-                    ].filter(Boolean).join(" ") || undefined}
-                  >
-                    <td className="database-table-browser__row-number">{displayRowNumber(rowIndex)}</td>
-                    {row.map((cell, cellIndex) => {
-                      const column = result.columns[cellIndex];
-                      const displayed = displayedCell(rowIndex, column.name, cell);
-                      const isDirty = Boolean(dirtyRows[rowIndex]?.[column.name]);
-                      const isEditing = editingCell?.rowIndex === rowIndex && editingCell.columnName === column.name;
-                      const isSelected = selectedCell?.rowIndex === rowIndex && selectedCell.columnName === column.name;
-                      const isRangeSelected = isCellInSelectionRange(rowIndex, cellIndex);
-                      const display = displayCellValue(displayed, column, isNewRow(rowIndex));
-                      const className = [
-                        display.placeholder && displayed.kind === "null" ? "database-table-browser__cell--null" : "",
-                        displayed.kind === "number" ? "database-table-browser__cell--number" : "",
-                        isDirty ? "database-table-browser__cell--dirty" : "",
-                        isRangeSelected ? "database-table-browser__cell--range-selected" : "",
-                        isSelected ? "database-table-browser__cell--selected" : "",
-                        isEditing ? "database-table-browser__cell--editing" : "",
-                      ].filter(Boolean).join(" ") || undefined;
-                      return (
-                        <td
-                          key={cellIndex}
-                          ref={(element) => {
-                            tableCellRefs.current[cellKey(rowIndex, cellIndex)] = element;
-                          }}
-                          tabIndex={0}
-                          aria-label={`第 ${displayRowNumber(rowIndex)} 行 ${column.name}`}
-                          className={className}
-                          onMouseDown={(event) => startCellSelection(event, rowIndex, cellIndex)}
-                          onMouseEnter={() => extendCellSelection(rowIndex, cellIndex)}
-                          onMouseUp={() => setIsSelectingRange(false)}
-                          onClick={(event) => {
-                            if (isTextInputEventTarget(event.target)) return;
-                            selectCell(rowIndex, cellIndex);
-                          }}
-                          onContextMenu={(event) => openCellContextMenu(event, rowIndex, column.name)}
-                          onDoubleClick={() => {
-                            if (!editableCell(column.name) && !isNewRow(rowIndex)) return;
-                            selectCell(rowIndex, cellIndex);
-                            setActiveEditingCell({ rowIndex, columnName: column.name, value: cellText(displayed) });
-                          }}
-                        >
-                          {isEditing ? (
-                            <input
-                              ref={editingInputRef}
-                              aria-label={`编辑 ${column.name}`}
-                              autoFocus
-                              value={editingCell.value}
-                              onBlur={(event) => commitEditingCell(event.currentTarget.value)}
-                              onChange={(event) => setActiveEditingCell({ ...editingCell, value: event.target.value })}
-                              onKeyDown={(event) => {
-                                if (event.key === "Enter") commitEditingCell(event.currentTarget.value);
-                                if (event.key === "Escape") setActiveEditingCell(null);
-                              }}
-                            />
-                          ) : (
-                            <span
-                              className={[
-                                "database-table-browser__cell-content",
-                                display.placeholder ? "database-table-browser__cell-placeholder" : "",
-                              ].filter(Boolean).join(" ")}
-                              title={display.text}
-                            >
-                              {display.text}
-                            </span>
-                          )}
-                        </td>
-                      );
-                    })}
-                  </tr>
-                )) : (
-                  <tr>
-                    <td colSpan={result.columns.length + 1}>{t("database.query_result_empty")}</td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-          <div className="database-table-browser__pagination" aria-label={t("database.pagination")}>
+        <DatabaseDataGrid
+          columns={result.columns}
+          rows={displayedRows()}
+          dirtyRows={dirtyRows}
+          page={result.page}
+          pageSize={result.page_size}
+          sortColumn={sortColumn}
+          sortDirection={sortDirection}
+          onSortColumn={toggleSort}
+          getRowState={(rowIndex): DatabaseDataGridNewRowState => isNewRow(rowIndex) ? "new" : "none"}
+          getCellState={(rowIndex, column, original) => {
+            const displayed = displayedCell(rowIndex, column.name, original);
+            const isEditing = editingCell?.rowIndex === rowIndex && editingCell.columnName === column.name;
+            return {
+              value: displayed,
+              dirty: Boolean(dirtyRows[rowIndex]?.[column.name]),
+              editing: isEditing,
+              editable: editableCell(column.name) || isNewRow(rowIndex),
+              newRow: isNewRow(rowIndex) ? "new" : "none",
+              editor: isEditing ? (
+                <input
+                  ref={editingInputRef}
+                  aria-label={`编辑 ${column.name}`}
+                  autoFocus
+                  value={editingCell.value}
+                  onBlur={(event) => commitEditingCell(event.currentTarget.value)}
+                  onChange={(event) => setActiveEditingCell({ ...editingCell, value: event.target.value })}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") commitEditingCell(event.currentTarget.value);
+                    if (event.key === "Escape") setActiveEditingCell(null);
+                  }}
+                />
+              ) : null,
+            };
+          }}
+          onCellDoubleClick={requestEditCell}
+          onEditCellRequest={requestEditCell}
+          onClearCellRequest={clearCell}
+          onPasteCellsRequest={(rowIndex, columnIndex) => void pasteClipboardIntoCells(rowIndex, columnIndex)}
+          getContextMenuItems={cellContextMenuItems}
+          footer={(
+            <div className="database-table-browser__pagination" aria-label={t("database.pagination")}>
           <button
             type="button"
             className="database-icon-button"
@@ -972,8 +726,9 @@ export function DatabaseTableBrowser({ connectionId, target }: DatabaseTableBrow
           >
             <AppIcon icon={LastPageIcon} decorative />
           </button>
-          </div>
-        </div>
+            </div>
+          )}
+        />
       ) : (
         <div className="database-workspace__empty">{t("database.loading")}</div>
       )}
@@ -1038,7 +793,6 @@ export function DatabaseTableBrowser({ connectionId, target }: DatabaseTableBrow
           </div>
         </div>
       ) : null}
-      <ContextMenu menu={cellContextMenu} onClose={() => setCellContextMenu(null)} />
     </section>
   );
 }
@@ -1049,32 +803,8 @@ function normalizePage(value: string) {
   return parsed;
 }
 
-function formatCellValue(cell: DatabaseCellValue) {
-  if (cell.kind === "null") return "null";
-  if (cell.kind === "bool") return String(cell.value);
-  return cell.value;
-}
-
-function displayCellValue(cell: DatabaseCellValue, column: DatabaseResultColumn, isNewRow: boolean) {
-  if (isNewRow && cell.kind === "text" && cell.value === "") {
-    if (column.generated) return { text: "<generated>", placeholder: true };
-    if (column.has_default) return { text: "<default>", placeholder: true };
-    if (column.nullable) return { text: "<null>", placeholder: true };
-  }
-  if (cell.kind === "null") return { text: "null", placeholder: true };
-  return { text: formatCellValue(cell), placeholder: false };
-}
-
 function isEmptyInsertCell(cell: DatabaseCellValue) {
   return cell.kind === "text" && cell.value === "";
-}
-
-function isTextInputEventTarget(target: EventTarget | null) {
-  return target instanceof Element && Boolean(target.closest("input, textarea, select, [contenteditable='true']"));
-}
-
-function cellKey(rowIndex: number, columnIndex: number) {
-  return `${rowIndex}:${columnIndex}`;
 }
 
 function parseClipboardTable(text: string) {
@@ -1117,59 +847,4 @@ function formatTableRow(result: DatabaseTablePageResult, rowIndex: number, dirty
     if (!columnName) return formatCellValue(cell);
     return formatCellValue(dirtyRows[rowIndex]?.[columnName] ?? cell);
   }).join("\t");
-}
-
-function formatSelectedRange(
-  result: DatabaseTablePageResult,
-  rows: DatabaseCellValue[][],
-  dirtyRows: DirtyRows,
-  selection: NonNullable<SelectionRange>,
-) {
-  const startRow = Math.min(selection.anchor.rowIndex, selection.focus.rowIndex);
-  const endRow = Math.max(selection.anchor.rowIndex, selection.focus.rowIndex);
-  const startColumn = Math.min(selection.anchor.columnIndex, selection.focus.columnIndex);
-  const endColumn = Math.max(selection.anchor.columnIndex, selection.focus.columnIndex);
-  const lines: string[] = [];
-
-  for (let rowIndex = startRow; rowIndex <= endRow; rowIndex += 1) {
-    const row = rows[rowIndex];
-    if (!row) continue;
-    const values: string[] = [];
-    for (let columnIndex = startColumn; columnIndex <= endColumn; columnIndex += 1) {
-      const columnName = result.columns[columnIndex]?.name;
-      const cell = row[columnIndex];
-      if (!columnName || !cell) {
-        values.push("");
-        continue;
-      }
-      values.push(formatCellValue(dirtyRows[rowIndex]?.[columnName] ?? cell));
-    }
-    lines.push(values.join("\t"));
-  }
-
-  return lines.join("\n");
-}
-
-function sortButtonLabel(columnName: string, dataType: string, direction: DatabaseSortDirection | null) {
-  const suffix = direction === "asc" ? " ↑" : direction === "desc" ? " ↓" : "";
-  return `${columnName} ${dataType}${suffix}`;
-}
-
-function columnTooltip(columnName: string, dataType: string) {
-  return dataType ? `${columnName}: ${dataType}` : columnName;
-}
-
-function calculateColumnWidths(result: DatabaseTablePageResult | null) {
-  if (!result) return {};
-  return Object.fromEntries(result.columns.map((column, columnIndex) => {
-    const maxLength = result.rows.reduce((currentMax, row) => {
-      const cell = row[columnIndex];
-      return Math.max(currentMax, cell ? formatCellValue(cell).length : 0);
-    }, column.name.length);
-    const width = Math.min(
-      MAX_DATA_COLUMN_WIDTH,
-      Math.max(MIN_DATA_COLUMN_WIDTH, Math.ceil(maxLength * CHARACTER_WIDTH + CELL_HORIZONTAL_PADDING)),
-    );
-    return [column.name, width];
-  }));
 }

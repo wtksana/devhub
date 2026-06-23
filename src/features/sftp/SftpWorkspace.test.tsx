@@ -133,9 +133,21 @@ describe("SftpWorkspace", () => {
     renderSftpWorkspace({ connectionId: "prod-web-01" });
 
     expect(screen.getByRole("button", { name: "刷新" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "新建目录" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "新建目录" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "后退" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "前进" })).toBeDisabled();
+  });
+
+  it("renders toolbar commands as icon buttons while keeping accessible names", () => {
+    mockOpenSession();
+
+    renderSftpWorkspace({ connectionId: "prod-web-01" });
+
+    for (const name of ["后退", "前进", "刷新"]) {
+      const button = screen.getByRole("button", { name });
+      expect(button.textContent).toBe("");
+      expect(button.querySelector(".app-icon")).toBeInTheDocument();
+    }
   });
 
   it("loads directory entries from backend", async () => {

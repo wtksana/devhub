@@ -65,6 +65,13 @@ describe("global style defaults", () => {
     expect(globalsCss).toContain("box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 82%, transparent);");
   });
 
+  it("keeps SQL query result grids aligned at the top", () => {
+    const globalsCss = readCssSource();
+
+    expect(globalsCss).toContain(".database-result .database-table-browser__table-shell {\n  grid-row: auto;");
+    expect(globalsCss).toContain(".database-result .database-table-browser__table-wrap {\n  padding-bottom: 0;");
+  });
+
   it("keeps database table rows visibly highlighted on hover", () => {
     const globalsCss = readCssSource();
 
@@ -92,6 +99,21 @@ describe("global style defaults", () => {
     expect(globalsCss).not.toContain("--workspace-pane-column-sizes");
     expect(globalsCss).not.toContain("--workspace-pane-row-sizes");
     expect(globalsCss).not.toContain(".workspace-root[data-direction=");
+  });
+
+  it("keeps dialogs inside split workspace tabs above sibling panels", () => {
+    const globalsCss = readCssSource();
+
+    expect(globalsCss).toContain(".workspace-tab-panel:has(.connection-dialog__backdrop) {\n  z-index: 30;\n}");
+    expect(globalsCss).toContain(".connection-dialog__backdrop {\n  position: fixed;");
+  });
+
+  it("does not let workspace toolbar input widths override dialog form inputs", () => {
+    const globalsCss = readCssSource();
+
+    expect(globalsCss).toContain(".sftp-workspace > header input,\n.redis-workspace > header input {\n  width: min(260px, 50vw);");
+    expect(globalsCss).not.toContain(".sftp-workspace input,\n.redis-workspace input {\n  width: min(260px, 50vw);");
+    expect(globalsCss).toContain(".connection-form input,\n.connection-form select {\n  width: 100%;");
   });
 
   it("renders workspace split resize handles without occupying grid tracks", () => {

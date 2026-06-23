@@ -520,6 +520,10 @@ p {
   overflow: hidden;
 }
 
+.workspace-tab-panel:has(.connection-dialog__backdrop) {
+  z-index: 30;
+}
+
 .workspace-tab-panel[data-active="false"] {
   visibility: hidden;
   pointer-events: none;
@@ -1245,6 +1249,40 @@ p {
   opacity: 0.36;
 }
 
+.workspace-icon-button {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.workspace-icon-button:hover:not(:disabled),
+.workspace-icon-button:focus-visible:not(:disabled) {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--button-hover) 72%, transparent);
+  color: var(--text);
+}
+
+.workspace-icon-button:active:not(:disabled) {
+  background: color-mix(in srgb, var(--button-active) 78%, transparent);
+}
+
+.workspace-icon-button .app-icon {
+  width: 16px;
+  height: 16px;
+  opacity: 0.82;
+}
+
+.workspace-icon-button:disabled .app-icon {
+  opacity: 0.34;
+}
+
 .database-query-panel__icon-label {
   display: inline-grid;
   place-items: center;
@@ -1460,6 +1498,14 @@ p {
   min-width: 0;
   min-height: 0;
   overflow: auto;
+}
+
+.database-result .database-table-browser__table-shell {
+  grid-row: auto;
+}
+
+.database-result .database-table-browser__table-wrap {
+  padding-bottom: 0;
 }
 
 .database-result table {
@@ -2096,8 +2142,8 @@ th.database-table-browser__row-number {
   background: var(--panel);
 }
 
-.sftp-workspace input,
-.redis-workspace input {
+.sftp-workspace > header input,
+.redis-workspace > header input {
   width: min(260px, 50vw);
   height: 26px;
   padding: 0 8px;
@@ -2248,10 +2294,11 @@ th.database-table-browser__row-number {
   cursor: pointer;
 }
 
-.redis-folder-button span:first-child {
+.redis-folder-button__icon {
+  flex: 0 0 auto;
   width: 10px;
+  height: 10px;
   color: var(--muted);
-  font-family: var(--terminal-font-family);
 }
 
 .redis-key-name {
