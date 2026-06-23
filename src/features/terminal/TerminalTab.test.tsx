@@ -33,6 +33,7 @@ interface MockTerminal {
   dispose: ReturnType<typeof vi.fn>;
   focus: ReturnType<typeof vi.fn>;
   refresh: ReturnType<typeof vi.fn>;
+  scrollToBottom: ReturnType<typeof vi.fn>;
   getSelection: ReturnType<typeof vi.fn>;
   clear: ReturnType<typeof vi.fn>;
   buffer?: {
@@ -834,6 +835,7 @@ describe("TerminalTab", () => {
 
     await waitFor(() => {
       expect(fitAddon.fit.mock.calls.length).toBeGreaterThan(fitCountBeforeLayoutChange);
+      expect(terminal.scrollToBottom).toHaveBeenCalled();
       expect(callBackendMock).toHaveBeenCalledWith("resize_terminal", {
         request: { session_id: "session-1", cols: 132, rows: 40 },
       });

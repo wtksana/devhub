@@ -75,17 +75,39 @@ describe("global style defaults", () => {
   it("does not draw focus outlines around split workspace panes", () => {
     const globalsCss = readCssSource();
 
-    expect(globalsCss).toContain(".workspace-pane {\n  display: grid;");
+    expect(globalsCss).toContain(".workspace-pane {\n  position: absolute;");
+    expect(globalsCss).toContain("  display: grid;");
     expect(globalsCss).not.toContain('.workspace-pane[data-focused="true"]');
     expect(globalsCss).not.toContain("outline-color: color-mix(in srgb, var(--accent) 34%, transparent);");
   });
 
-  it("uses grid placement instead of a global split direction for workspace panes", () => {
+  it("uses absolute pane geometry instead of global grid tracks for workspace panes", () => {
     const globalsCss = readCssSource();
 
-    expect(globalsCss).toContain("grid-template-columns: repeat(var(--workspace-pane-columns, 1), minmax(0, 1fr));");
-    expect(globalsCss).toContain("grid-template-rows: repeat(var(--workspace-pane-rows, 1), minmax(0, 1fr));");
+    expect(globalsCss).toContain(".workspace-root {\n  position: relative;");
+    expect(globalsCss).toContain(".workspace-pane {\n  position: absolute;");
+    expect(globalsCss).not.toContain("--workspace-pane-column-sizes");
+    expect(globalsCss).not.toContain("--workspace-pane-row-sizes");
     expect(globalsCss).not.toContain(".workspace-root[data-direction=");
+  });
+
+  it("renders workspace split resize handles without occupying grid tracks", () => {
+    const globalsCss = readCssSource();
+
+    expect(globalsCss).toContain("stroke='%23ffffff'");
+    expect(globalsCss).toContain("stroke='%23000000'");
+    expect(globalsCss).toContain("cursor: var(--cursor-col-resize);");
+    expect(globalsCss).toContain("cursor: var(--cursor-row-resize);");
+    expect(globalsCss).toContain(".workspace-root {\n  position: relative;");
+    expect(globalsCss).toContain(".workspace-resize-handle {\n  position: absolute;");
+    expect(globalsCss).toContain(".workspace-resize-handle--column {\n  width: 7px;");
+    expect(globalsCss).toContain(".workspace-resize-handle--row {\n  height: 7px;");
+    expect(globalsCss).toContain(".panel-resize-handle:hover,\n.panel-resize-handle:active {\n  background: transparent;");
+    expect(globalsCss).not.toContain(".workspace-resize-handle::after");
+    expect(globalsCss).not.toContain(".workspace-resize-handle:hover::after,\n.workspace-resize-handle:focus-visible::after");
+    expect(globalsCss).not.toContain("color-mix(in srgb, var(--accent) 70%, var(--border))");
+    expect(globalsCss).not.toContain("grid-template-columns: var(--workspace-pane-column-sizes, 1fr) 7px");
+    expect(globalsCss).not.toContain("grid-template-rows: var(--workspace-pane-row-sizes, 1fr) 7px");
   });
 
   it("uses the workspace background for database object tree filters", () => {

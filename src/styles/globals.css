@@ -38,6 +38,8 @@
   --status-font-size: 12px;
   --workspace-tab-height: 36px;
   --workspace-tab-font-size: 14px;
+  --cursor-col-resize: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Cpath fill='none' stroke='%23ffffff' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M8%205L3%2012l5%207M16%205l5%207-5%207M3%2012h18'/%3E%3C/svg%3E") 12 12, col-resize;
+  --cursor-row-resize: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Cpath fill='none' stroke='%23ffffff' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M5%208l7-5%207%205M5%2016l7%205%207-5M12%203v18'/%3E%3C/svg%3E") 12 12, row-resize;
 }
 
 * {
@@ -216,6 +218,8 @@ p {
   --scrollbar-thumb: #c8ccd4;
   --scrollbar-thumb-hover: #aeb4bf;
   --settings-sidebar: #f4f5f6;
+  --cursor-col-resize: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Cpath fill='none' stroke='%23000000' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M8%205L3%2012l5%207M16%205l5%207-5%207M3%2012h18'/%3E%3C/svg%3E") 12 12, col-resize;
+  --cursor-row-resize: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Cpath fill='none' stroke='%23000000' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M5%208l7-5%207%205M5%2016l7%205%207-5M12%203v18'/%3E%3C/svg%3E") 12 12, row-resize;
 }
 
 .app-shell[data-theme="light"] button[aria-pressed="true"] {
@@ -407,7 +411,7 @@ p {
   width: 1px;
   min-height: 0;
   background: transparent;
-  cursor: col-resize;
+  cursor: var(--cursor-col-resize);
 }
 
 .panel-resize-handle--connection {
@@ -431,7 +435,7 @@ p {
 
 .panel-resize-handle:hover,
 .panel-resize-handle:active {
-  background: var(--accent);
+  background: transparent;
 }
 
 .dock-panel {
@@ -466,18 +470,42 @@ p {
 }
 
 .workspace-root {
-  display: grid;
-  grid-template-columns: repeat(var(--workspace-pane-columns, 1), minmax(0, 1fr));
-  grid-template-rows: repeat(var(--workspace-pane-rows, 1), minmax(0, 1fr));
-  gap: 1px;
-  background: var(--border);
+  position: relative;
+  background: var(--bg);
 }
 
 .workspace-pane {
+  position: absolute;
   display: grid;
+  z-index: 1;
   grid-template-rows: var(--workspace-tab-height) minmax(0, 1fr);
   grid-template-columns: minmax(0, 1fr);
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
   background: var(--bg);
+}
+
+.workspace-resize-handle {
+  position: absolute;
+  z-index: 5;
+  background: transparent;
+}
+
+.workspace-resize-handle--column {
+  width: 7px;
+  transform: translateX(-4px);
+  cursor: var(--cursor-col-resize);
+}
+
+.workspace-resize-handle--row {
+  height: 7px;
+  transform: translateY(-4px);
+  cursor: var(--cursor-row-resize);
+}
+
+.workspace-resize-handle:hover,
+.workspace-resize-handle:focus-visible {
+  background: transparent;
 }
 
 .workspace-tab-panel {

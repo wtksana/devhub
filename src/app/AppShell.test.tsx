@@ -276,6 +276,346 @@ describe("AppShell", () => {
     expect(saveSettings).not.toHaveBeenCalled();
   });
 
+  it("resizes split workspace columns for the current session", async () => {
+    settings = {
+      ...createSettings(),
+      connections: [remoteConnection],
+    };
+
+    render(<AppShell />);
+
+    await userEvent.dblClick(screen.getByText("生产 Web").closest("li") as HTMLElement);
+    await userEvent.pointer({
+      keys: "[MouseRight]",
+      target: within(screen.getAllByLabelText("工作区标签")[0]).getByRole("button", { name: "生产 Web" }),
+    });
+    await userEvent.click(screen.getByRole("menuitem", { name: "向右拆分" }));
+
+    expect(screen.getByLabelText("工作区面板 1")).toHaveStyle({ left: "0%", width: "50%" });
+    expect(screen.getByLabelText("工作区面板 2")).toHaveStyle({ left: "50%", width: "50%" });
+
+    const handle = screen.getByRole("separator", { name: "调整工作区列 1 宽度" });
+    fireEvent.mouseDown(handle, { clientX: 500 });
+    fireEvent.mouseMove(window, { clientX: 620 });
+    fireEvent.mouseUp(window);
+
+    expect(screen.getByLabelText("工作区面板 1")).toHaveStyle({ left: "0%", width: "62%" });
+    expect(screen.getByLabelText("工作区面板 2")).toHaveStyle({ left: "62%", width: "38%" });
+    expect(saveSettings).not.toHaveBeenCalled();
+  });
+
+  it("resizes visible terminals after dragging a workspace split handle", async () => {
+    settings = {
+      ...createSettings(),
+      connections: [remoteConnection],
+    };
+
+    render(<AppShell />);
+
+    await userEvent.dblClick(screen.getByText("生产 Web").closest("li") as HTMLElement);
+    await userEvent.pointer({
+      keys: "[MouseRight]",
+      target: within(screen.getAllByLabelText("工作区标签")[0]).getByRole("button", { name: "生产 Web" }),
+    });
+    await userEvent.click(screen.getByRole("menuitem", { name: "向右拆分" }));
+
+    await waitFor(() => {
+      expect(callBackendMock.mock.calls.filter(([command]) => command === "open_terminal")).toHaveLength(2);
+    });
+    callBackendMock.mockClear();
+
+    const handle = screen.getByRole("separator", { name: "调整工作区列 1 宽度" });
+    fireEvent.mouseDown(handle, { clientX: 500 });
+    fireEvent.mouseMove(window, { clientX: 620 });
+    fireEvent.mouseUp(window);
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("resize_terminal", {
+        request: { session_id: "session-1", cols: expect.any(Number), rows: expect.any(Number) },
+      });
+    });
+  });
+
+  it("resizes the original terminal after splitting its pane down", async () => {
+    settings = {
+      ...createSettings(),
+      connections: [remoteConnection],
+    };
+
+    let openTerminalCalls = 0;
+    callBackendMock.mockImplementation((command) => {
+      if (command === "open_terminal") {
+        openTerminalCalls += 1;
+        return Promise.resolve({ session_id: `session-${openTerminalCalls}` });
+      }
+      return Promise.resolve({ session_id: "session-1" });
+    });
+
+    render(<AppShell />);
+
+    await userEvent.dblClick(screen.getByText("生产 Web").closest("li") as HTMLElement);
+    await waitFor(() => {
+      expect(callBackendMock.mock.calls.filter(([command]) => command === "open_terminal")).toHaveLength(1);
+    });
+    callBackendMock.mockClear();
+
+    await userEvent.pointer({
+      keys: "[MouseRight]",
+      target: within(screen.getAllByLabelText("工作区标签")[0]).getByRole("button", { name: "生产 Web" }),
+    });
+    await userEvent.click(screen.getByRole("menuitem", { name: "向下拆分" }));
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("resize_terminal", {
+        request: { session_id: "session-1", cols: expect.any(Number), rows: expect.any(Number) },
+      });
+    });
+  });
+
+  it("resizes the original terminal after splitting its pane down beside an existing right pane", async () => {
+    settings = {
+      ...createSettings(),
+      connections: [remoteConnection],
+    };
+
+    let openTerminalCalls = 0;
+    callBackendMock.mockImplementation((command) => {
+      if (command === "open_terminal") {
+        openTerminalCalls += 1;
+        return Promise.resolve({ session_id: `session-${openTerminalCalls}` });
+      }
+      return Promise.resolve({ session_id: "session-1" });
+    });
+
+    render(<AppShell />);
+
+    await userEvent.dblClick(screen.getByText("生产 Web").closest("li") as HTMLElement);
+    await userEvent.pointer({
+      keys: "[MouseRight]",
+      target: within(screen.getAllByLabelText("工作区标签")[0]).getByRole("button", { name: "生产 Web" }),
+    });
+    await userEvent.click(screen.getByRole("menuitem", { name: "向右拆分" }));
+
+    await waitFor(() => {
+      expect(callBackendMock.mock.calls.filter(([command]) => command === "open_terminal")).toHaveLength(2);
+    });
+    callBackendMock.mockClear();
+
+    await userEvent.pointer({
+      keys: "[MouseRight]",
+      target: within(screen.getAllByLabelText(/^工作区面板/)[0]).getByRole("button", { name: "生产 Web" }),
+    });
+    await userEvent.click(screen.getByRole("menuitem", { name: "向下拆分" }));
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("resize_terminal", {
+        request: { session_id: "session-1", cols: expect.any(Number), rows: expect.any(Number) },
+      });
+    });
+  });
+
+  it("keeps workspace columns evenly sized after splitting three panes to the right", async () => {
+    settings = {
+      ...createSettings(),
+      connections: [remoteConnection],
+    };
+
+    render(<AppShell />);
+
+    await userEvent.dblClick(screen.getByText("生产 Web").closest("li") as HTMLElement);
+    await userEvent.pointer({
+      keys: "[MouseRight]",
+      target: within(screen.getAllByLabelText("工作区标签")[0]).getByRole("button", { name: "生产 Web" }),
+    });
+    await userEvent.click(screen.getByRole("menuitem", { name: "向右拆分" }));
+
+    await userEvent.pointer({
+      keys: "[MouseRight]",
+      target: screen.getByRole("button", { name: "生产 Web 2" }),
+    });
+    await userEvent.click(screen.getByRole("menuitem", { name: "向右拆分" }));
+
+    expect(screen.getByLabelText("工作区面板 1")).toHaveStyle({ left: "0%", width: "33.33333333333333%" });
+    expect(screen.getByLabelText("工作区面板 2")).toHaveStyle({
+      left: "33.33333333333333%",
+      width: "33.33333333333333%",
+    });
+    expect(screen.getByLabelText("工作区面板 3")).toHaveStyle({
+      left: "66.66666666666666%",
+      width: "33.33333333333333%",
+    });
+  });
+
+  it("resizes split workspace rows for the current session", async () => {
+    settings = {
+      ...createSettings(),
+      connections: [remoteConnection],
+    };
+
+    render(<AppShell />);
+
+    await userEvent.dblClick(screen.getByText("生产 Web").closest("li") as HTMLElement);
+    await userEvent.pointer({
+      keys: "[MouseRight]",
+      target: within(screen.getAllByLabelText("工作区标签")[0]).getByRole("button", { name: "生产 Web" }),
+    });
+    await userEvent.click(screen.getByRole("menuitem", { name: "向下拆分" }));
+
+    expect(screen.getByLabelText("工作区面板 1")).toHaveStyle({ top: "0%", height: "50%" });
+    expect(screen.getByLabelText("工作区面板 2")).toHaveStyle({ top: "50%", height: "50%" });
+
+    const handle = screen.getByRole("separator", { name: "调整工作区行 1 高度" });
+    fireEvent.mouseDown(handle, { clientY: 360 });
+    fireEvent.mouseMove(window, { clientY: 460 });
+    fireEvent.mouseUp(window);
+
+    expect(screen.getByLabelText("工作区面板 1")).toHaveStyle({ top: "0%", height: "60%" });
+    expect(screen.getByLabelText("工作区面板 2")).toHaveStyle({ top: "60%", height: "40%" });
+    expect(saveSettings).not.toHaveBeenCalled();
+  });
+
+  it("limits row resize handles to the columns that are actually split", async () => {
+    settings = {
+      ...createSettings(),
+      connections: [remoteConnection],
+    };
+
+    render(<AppShell />);
+
+    await userEvent.dblClick(screen.getByText("生产 Web").closest("li") as HTMLElement);
+    await userEvent.pointer({
+      keys: "[MouseRight]",
+      target: within(screen.getAllByLabelText("工作区标签")[0]).getByRole("button", { name: "生产 Web" }),
+    });
+    await userEvent.click(screen.getByRole("menuitem", { name: "向右拆分" }));
+
+    await userEvent.pointer({
+      keys: "[MouseRight]",
+      target: screen.getByRole("button", { name: "生产 Web 2" }),
+    });
+    await userEvent.click(screen.getByRole("menuitem", { name: "向下拆分" }));
+
+    const rowHandle = screen.getAllByRole("separator", { name: "调整工作区行 1 高度" })[0];
+    expect(rowHandle).toHaveStyle({ left: "50%", width: "50%", top: "50%" });
+  });
+
+  it("resizes only the split group that owns the dragged workspace handle", async () => {
+    settings = {
+      ...createSettings(),
+      connections: [remoteConnection],
+    };
+
+    render(<AppShell />);
+
+    await userEvent.dblClick(screen.getByText("生产 Web").closest("li") as HTMLElement);
+    await userEvent.pointer({
+      keys: "[MouseRight]",
+      target: within(screen.getAllByLabelText("工作区标签")[0]).getByRole("button", { name: "生产 Web" }),
+    });
+    await userEvent.click(screen.getByRole("menuitem", { name: "向右拆分" }));
+    await userEvent.pointer({
+      keys: "[MouseRight]",
+      target: screen.getByRole("button", { name: "生产 Web 2" }),
+    });
+    await userEvent.click(screen.getByRole("menuitem", { name: "向右拆分" }));
+
+    await userEvent.pointer({
+      keys: "[MouseRight]",
+      target: within(screen.getAllByLabelText(/^工作区面板/)[0]).getByRole("button", { name: "生产 Web" }),
+    });
+    await userEvent.click(screen.getByRole("menuitem", { name: "向下拆分" }));
+    await userEvent.pointer({
+      keys: "[MouseRight]",
+      target: screen.getByRole("button", { name: "生产 Web 2" }),
+    });
+    await userEvent.click(screen.getByRole("menuitem", { name: "向下拆分" }));
+    await userEvent.pointer({
+      keys: "[MouseRight]",
+      target: screen.getByRole("button", { name: "生产 Web 3" }),
+    });
+    await userEvent.click(screen.getByRole("menuitem", { name: "向下拆分" }));
+
+    expect(screen.getByLabelText("工作区面板 1")).toHaveStyle({ top: "0%", height: "50%" });
+    expect(screen.getByLabelText("工作区面板 2")).toHaveStyle({ top: "0%", height: "50%" });
+    expect(screen.getByLabelText("工作区面板 3")).toHaveStyle({ top: "0%", height: "50%" });
+    expect(screen.getByLabelText("工作区面板 4")).toHaveStyle({ top: "50%", height: "50%" });
+    expect(screen.getByLabelText("工作区面板 5")).toHaveStyle({ top: "50%", height: "50%" });
+    expect(screen.getByLabelText("工作区面板 6")).toHaveStyle({ top: "50%", height: "50%" });
+
+    const middleRowHandle = screen.getAllByRole("separator", { name: "调整工作区行 1 高度" })[1];
+    fireEvent.mouseDown(middleRowHandle, { clientY: 360 });
+    fireEvent.mouseMove(window, { clientY: 460 });
+    fireEvent.mouseUp(window);
+
+    expect(screen.getByLabelText("工作区面板 1")).toHaveStyle({ top: "0%", height: "50%" });
+    expect(screen.getByLabelText("工作区面板 2")).toHaveStyle({ top: "0%", height: "60%" });
+    expect(screen.getByLabelText("工作区面板 3")).toHaveStyle({ top: "0%", height: "50%" });
+    expect(screen.getByLabelText("工作区面板 4")).toHaveStyle({ top: "50%", height: "50%" });
+    expect(screen.getByLabelText("工作区面板 5")).toHaveStyle({ top: "60%", height: "40%" });
+    expect(screen.getByLabelText("工作区面板 6")).toHaveStyle({ top: "50%", height: "50%" });
+  });
+
+  it("removes workspace split handles when the split is removed", async () => {
+    settings = {
+      ...createSettings(),
+      connections: [remoteConnection],
+    };
+
+    render(<AppShell />);
+
+    await userEvent.dblClick(screen.getByText("生产 Web").closest("li") as HTMLElement);
+    await userEvent.pointer({
+      keys: "[MouseRight]",
+      target: within(screen.getAllByLabelText("工作区标签")[0]).getByRole("button", { name: "生产 Web" }),
+    });
+    await userEvent.click(screen.getByRole("menuitem", { name: "向右拆分" }));
+
+    expect(screen.getByRole("separator", { name: "调整工作区列 1 宽度" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /关闭 生产 Web 2/ }));
+
+    expect(screen.queryByRole("separator", { name: "调整工作区列 1 宽度" })).not.toBeInTheDocument();
+  });
+
+  it("resets row sizes after bottom panes are closed and only one row remains", async () => {
+    settings = {
+      ...createSettings(),
+      connections: [remoteConnection],
+    };
+
+    render(<AppShell />);
+
+    await userEvent.dblClick(screen.getByText("生产 Web").closest("li") as HTMLElement);
+    await userEvent.pointer({
+      keys: "[MouseRight]",
+      target: within(screen.getAllByLabelText("工作区标签")[0]).getByRole("button", { name: "生产 Web" }),
+    });
+    await userEvent.click(screen.getByRole("menuitem", { name: "向右拆分" }));
+
+    await userEvent.pointer({
+      keys: "[MouseRight]",
+      target: within(screen.getAllByLabelText(/^工作区面板/)[0]).getByRole("button", { name: "生产 Web" }),
+    });
+    await userEvent.click(screen.getByRole("menuitem", { name: "向下拆分" }));
+
+    await userEvent.pointer({
+      keys: "[MouseRight]",
+      target: screen.getByRole("button", { name: "生产 Web 2" }),
+    });
+    await userEvent.click(screen.getByRole("menuitem", { name: "向下拆分" }));
+
+    const rowHandle = screen.getAllByRole("separator", { name: "调整工作区行 1 高度" })[0];
+    fireEvent.mouseDown(rowHandle, { clientY: 400 });
+    fireEvent.mouseMove(window, { clientY: 500 });
+    fireEvent.mouseUp(window);
+
+    await userEvent.click(screen.getByRole("button", { name: /关闭 生产 Web 3/ }));
+    await userEvent.click(screen.getByRole("button", { name: /关闭 生产 Web 4/ }));
+
+    expect(screen.getByLabelText("工作区面板 1")).toHaveStyle({ top: "0%", height: "100%" });
+    expect(screen.getByLabelText("工作区面板 2")).toHaveStyle({ top: "0%", height: "100%" });
+    expect(screen.queryByRole("separator", { name: "调整工作区行 1 高度" })).not.toBeInTheDocument();
+  });
+
   it("opens terminal tabs named by connection and closes sessions with the tab", async () => {
     settings = {
       ...createSettings(),
@@ -706,9 +1046,9 @@ describe("AppShell", () => {
 
     const panes = screen.getAllByLabelText(/^工作区面板/);
     expect(panes).toHaveLength(3);
-    expect(panes[0]).toHaveStyle({ gridColumn: "1 / span 1", gridRow: "1 / span 1" });
-    expect(panes[1]).toHaveStyle({ gridColumn: "2 / span 1", gridRow: "1 / span 2" });
-    expect(panes[2]).toHaveStyle({ gridColumn: "1 / span 1", gridRow: "2 / span 1" });
+    expect(screen.getByLabelText("工作区面板 1")).toHaveStyle({ left: "0%", top: "0%", width: "50%", height: "50%" });
+    expect(screen.getByLabelText("工作区面板 2")).toHaveStyle({ left: "50%", top: "0%", width: "50%", height: "100%" });
+    expect(screen.getByLabelText("工作区面板 3")).toHaveStyle({ left: "0%", top: "50%", width: "50%", height: "50%" });
   });
 
   it("expands the sibling pane after closing the bottom pane in a split column", async () => {
@@ -734,20 +1074,18 @@ describe("AppShell", () => {
 
     await userEvent.pointer({
       keys: "[MouseRight]",
-      target: within(screen.getAllByLabelText(/^工作区面板/)[1]).getByRole("button", { name: "生产 Web 2" }),
+      target: screen.getByRole("button", { name: "生产 Web 2" }),
     });
     await userEvent.click(screen.getByRole("menuitem", { name: "向下拆分" }));
 
-    let panes = screen.getAllByLabelText(/^工作区面板/);
-    expect(panes).toHaveLength(4);
-    expect(panes[1]).toHaveStyle({ gridColumn: "2 / span 1", gridRow: "1 / span 1" });
-    expect(panes[3]).toHaveStyle({ gridColumn: "2 / span 1", gridRow: "2 / span 1" });
+    expect(screen.getAllByLabelText(/^工作区面板/)).toHaveLength(4);
+    expect(screen.getByLabelText("工作区面板 2")).toHaveStyle({ left: "50%", top: "0%", width: "50%", height: "50%" });
+    expect(screen.getByLabelText("工作区面板 4")).toHaveStyle({ left: "50%", top: "50%", width: "50%", height: "50%" });
 
-    await userEvent.click(within(panes[3]).getByRole("button", { name: /关闭 生产 Web 4/ }));
+    await userEvent.click(screen.getByRole("button", { name: /关闭 生产 Web 4/ }));
 
-    panes = screen.getAllByLabelText(/^工作区面板/);
-    expect(panes).toHaveLength(3);
-    expect(panes[1]).toHaveStyle({ gridColumn: "2 / span 1", gridRow: "1 / span 2" });
+    expect(screen.getAllByLabelText(/^工作区面板/)).toHaveLength(3);
+    expect(screen.getByLabelText("工作区面板 2")).toHaveStyle({ left: "50%", top: "0%", width: "50%", height: "100%" });
   });
 
   it("expands the top-left pane after closing the bottom-left pane", async () => {
@@ -773,17 +1111,15 @@ describe("AppShell", () => {
 
     await userEvent.pointer({
       keys: "[MouseRight]",
-      target: within(screen.getAllByLabelText(/^工作区面板/)[1]).getByRole("button", { name: "生产 Web 2" }),
+      target: screen.getByRole("button", { name: "生产 Web 2" }),
     });
     await userEvent.click(screen.getByRole("menuitem", { name: "向下拆分" }));
 
-    let panes = screen.getAllByLabelText(/^工作区面板/);
-    expect(panes).toHaveLength(4);
-    await userEvent.click(within(panes[2]).getByRole("button", { name: /关闭 生产 Web 3/ }));
+    expect(screen.getAllByLabelText(/^工作区面板/)).toHaveLength(4);
+    await userEvent.click(screen.getByRole("button", { name: /关闭 生产 Web 3/ }));
 
-    panes = screen.getAllByLabelText(/^工作区面板/);
-    expect(panes).toHaveLength(3);
-    expect(panes[0]).toHaveStyle({ gridColumn: "1 / span 1", gridRow: "1 / span 2" });
+    expect(screen.getAllByLabelText(/^工作区面板/)).toHaveLength(3);
+    expect(screen.getByLabelText("工作区面板 1")).toHaveStyle({ left: "0%", top: "0%", width: "50%", height: "100%" });
   });
 
   it("resizes a visible terminal after its pane expands when another pane closes", async () => {
@@ -809,7 +1145,7 @@ describe("AppShell", () => {
 
     await userEvent.pointer({
       keys: "[MouseRight]",
-      target: within(screen.getAllByLabelText(/^工作区面板/)[1]).getByRole("button", { name: "生产 Web 2" }),
+      target: screen.getByRole("button", { name: "生产 Web 2" }),
     });
     await userEvent.click(screen.getByRole("menuitem", { name: "向下拆分" }));
 
@@ -818,8 +1154,7 @@ describe("AppShell", () => {
     });
     callBackendMock.mockClear();
 
-    const panes = screen.getAllByLabelText(/^工作区面板/);
-    await userEvent.click(within(panes[2]).getByRole("button", { name: /关闭 生产 Web 3/ }));
+    await userEvent.click(screen.getByRole("button", { name: /关闭 生产 Web 3/ }));
 
     await waitFor(() => {
       expect(callBackendMock).toHaveBeenCalledWith("resize_terminal", {

@@ -575,6 +575,7 @@ export function TerminalTab({
       const terminal = terminalRef.current;
       if (!terminal) return;
       fitAddonRef.current?.fit();
+      terminal.scrollToBottom();
       const sessionId = sessionIdRef.current;
       if (!sessionId) return;
       void callBackend<void>("resize_terminal", {

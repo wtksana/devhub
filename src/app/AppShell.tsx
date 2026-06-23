@@ -51,17 +51,53 @@ interface WorkspacePane {
   activeTabId: string | null;
 }
 
-interface WorkspacePanePlacement {
+interface WorkspacePaneLayoutNode {
+  type: "pane";
   paneId: string;
-  row: number;
-  column: number;
-  rowSpan: number;
-  columnSpan: number;
+}
+
+interface WorkspaceSplitLayoutNode {
+  type: "split";
+  id: string;
+  direction: WorkspaceSplitDirection;
+  sizes: number[];
+  children: WorkspaceLayoutNode[];
+}
+
+type WorkspaceLayoutNode = WorkspacePaneLayoutNode | WorkspaceSplitLayoutNode;
+
+interface WorkspaceResizeState {
+  splitId: string;
+  direction: WorkspaceSplitDirection;
+  index: number;
+  startPointer: number;
+  startSizes: number[];
+}
+
+interface WorkspaceLayoutBounds {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+interface WorkspacePaneGeometry extends WorkspaceLayoutBounds {
+  paneId: string;
+  path: string;
+}
+
+interface WorkspaceResizeHandleGeometry extends WorkspaceLayoutBounds {
+  splitId: string;
+  direction: WorkspaceSplitDirection;
+  index: number;
+  sizes: number[];
 }
 
 const MIN_CONNECTION_SIDEBAR_WIDTH = 220;
 const MAX_CONNECTION_SIDEBAR_WIDTH = 520;
 const INITIAL_WORKSPACE_PANE_ID = "pane-1";
+const MIN_WORKSPACE_PANE_FR = 0.25;
+const WORKSPACE_RESIZE_STEP_PX = 500;
 
 function mergeConnectionGroups(groups: string[], group?: string) {
   const nextGroup = group?.trim();
@@ -97,173 +133,147 @@ function paneActiveTab(pane: WorkspacePane | null | undefined) {
   return pane.tabs.find((tab) => tab.id === pane.activeTabId) ?? pane.tabs[pane.tabs.length - 1] ?? null;
 }
 
-function createWorkspacePanePlacement(paneId: string): WorkspacePanePlacement {
+function createWorkspaceLayout(paneId: string): WorkspaceLayoutNode {
+  return { type: "pane", paneId };
+}
+
+function normalizeWorkspaceTrackSizes(sizes: number[], count: number) {
+  if (sizes.length > count) {
+    return Array.from({ length: count }, () => 1);
+  }
+  return Array.from({ length: count }, (_, index) => sizes[index] ?? 1);
+}
+
+function splitWorkspaceLayout(
+  node: WorkspaceLayoutNode,
+  paneId: string,
+  newPaneId: string,
+  newSplitId: string,
+  direction: WorkspaceSplitDirection,
+): WorkspaceLayoutNode {
+  if (node.type === "pane") {
+    if (node.paneId !== paneId) return node;
+    return {
+      type: "split",
+      id: newSplitId,
+      direction,
+      sizes: [1, 1],
+      children: [node, createWorkspaceLayout(newPaneId)],
+    };
+  }
+
+  const directPaneIndex = node.children.findIndex((child) => child.type === "pane" && child.paneId === paneId);
+  if (directPaneIndex >= 0) {
+    if (node.direction === direction) {
+      const nextChildren = [...node.children];
+      nextChildren.splice(directPaneIndex + 1, 0, createWorkspaceLayout(newPaneId));
+      const nextSizes = [...normalizeWorkspaceTrackSizes(node.sizes, node.children.length)];
+      nextSizes.splice(directPaneIndex + 1, 0, 1);
+      return { ...node, children: nextChildren, sizes: nextSizes };
+    }
+
+    const nextChildren = [...node.children];
+    nextChildren[directPaneIndex] = {
+      type: "split",
+      id: newSplitId,
+      direction,
+      sizes: [1, 1],
+      children: [node.children[directPaneIndex], createWorkspaceLayout(newPaneId)],
+    };
+    return { ...node, children: nextChildren };
+  }
+
   return {
-    paneId,
-    row: 0,
-    column: 0,
-    rowSpan: 1,
-    columnSpan: 1,
+    ...node,
+    children: node.children.map((child) => splitWorkspaceLayout(child, paneId, newPaneId, newSplitId, direction)),
   };
 }
 
-function compactPanePlacements(placements: WorkspacePanePlacement[]) {
-  if (placements.length === 0) return placements;
-
-  const usedRows = new Set<number>();
-  const usedColumns = new Set<number>();
-  placements.forEach((placement) => {
-    for (let row = placement.row; row < placement.row + placement.rowSpan; row += 1) {
-      usedRows.add(row);
-    }
-    for (let column = placement.column; column < placement.column + placement.columnSpan; column += 1) {
-      usedColumns.add(column);
-    }
-  });
-
-  const rowMap = new Map([...usedRows].sort((a, b) => a - b).map((row, index) => [row, index]));
-  const columnMap = new Map([...usedColumns].sort((a, b) => a - b).map((column, index) => [column, index]));
-
-  return placements.map((placement) => {
-    const rows = Array.from({ length: placement.rowSpan }, (_, index) => rowMap.get(placement.row + index)).filter(
-      (row): row is number => row !== undefined,
-    );
-    const columns = Array.from({ length: placement.columnSpan }, (_, index) => columnMap.get(placement.column + index)).filter(
-      (column): column is number => column !== undefined,
-    );
-    return {
-      ...placement,
-      row: Math.min(...rows),
-      column: Math.min(...columns),
-      rowSpan: rows.length,
-      columnSpan: columns.length,
-    };
-  });
-}
-
-function removePanePlacement(placements: WorkspacePanePlacement[], paneId: string) {
-  const removed = placements.find((placement) => placement.paneId === paneId);
-  if (!removed) return placements;
-
-  const remaining = placements.filter((placement) => placement.paneId !== paneId);
-  const verticalSibling = remaining.find(
-    (placement) =>
-      placement.column === removed.column &&
-      placement.columnSpan === removed.columnSpan &&
-      (placement.row + placement.rowSpan === removed.row || removed.row + removed.rowSpan === placement.row),
-  );
-  if (verticalSibling) {
-    return compactPanePlacements(
-      remaining.map((placement) =>
-        placement.paneId === verticalSibling.paneId
-          ? {
-              ...placement,
-              row: Math.min(placement.row, removed.row),
-              rowSpan: placement.rowSpan + removed.rowSpan,
-            }
-          : placement,
-      ),
-    );
+function removePaneFromWorkspaceLayout(node: WorkspaceLayoutNode, paneId: string): WorkspaceLayoutNode | null {
+  if (node.type === "pane") {
+    return node.paneId === paneId ? null : node;
   }
 
-  const horizontalSibling = remaining.find(
-    (placement) =>
-      placement.row === removed.row &&
-      placement.rowSpan === removed.rowSpan &&
-      (placement.column + placement.columnSpan === removed.column ||
-        removed.column + removed.columnSpan === placement.column),
-  );
-  if (horizontalSibling) {
-    return compactPanePlacements(
-      remaining.map((placement) =>
-        placement.paneId === horizontalSibling.paneId
-          ? {
-              ...placement,
-              column: Math.min(placement.column, removed.column),
-              columnSpan: placement.columnSpan + removed.columnSpan,
-            }
-          : placement,
-      ),
-    );
-  }
+  const nextChildren: WorkspaceLayoutNode[] = [];
+  const nextSizes: number[] = [];
+  const currentSizes = normalizeWorkspaceTrackSizes(node.sizes, node.children.length);
+  node.children.forEach((child, index) => {
+    const nextChild = removePaneFromWorkspaceLayout(child, paneId);
+    if (!nextChild) return;
+    nextChildren.push(nextChild);
+    nextSizes.push(currentSizes[index] ?? 1);
+  });
 
-  return compactPanePlacements(remaining);
+  if (nextChildren.length === 0) return null;
+  if (nextChildren.length === 1) return nextChildren[0];
+  return { ...node, children: nextChildren, sizes: normalizeWorkspaceTrackSizes(nextSizes, nextChildren.length) };
 }
 
-function splitPanePlacements(
-  placements: WorkspacePanePlacement[],
-  paneId: string,
-  newPaneId: string,
-  direction: WorkspaceSplitDirection,
+function updateWorkspaceSplitSizes(node: WorkspaceLayoutNode, splitId: string, sizes: number[]): WorkspaceLayoutNode {
+  if (node.type === "pane") return node;
+  if (node.id === splitId) {
+    return { ...node, sizes: normalizeWorkspaceTrackSizes(sizes, node.children.length) };
+  }
+  return {
+    ...node,
+    children: node.children.map((child) => updateWorkspaceSplitSizes(child, splitId, sizes)),
+  };
+}
+
+function buildWorkspaceLayoutGeometry(
+  node: WorkspaceLayoutNode,
+  bounds: WorkspaceLayoutBounds = { left: 0, top: 0, width: 100, height: 100 },
+  path = "root",
 ) {
-  const target = placements.find((placement) => placement.paneId === paneId);
-  if (!target) return [...placements, createWorkspacePanePlacement(newPaneId)];
+  if (node.type === "pane") {
+    return {
+      panes: [{ paneId: node.paneId, path, ...bounds }],
+      handles: [],
+    } satisfies { panes: WorkspacePaneGeometry[]; handles: WorkspaceResizeHandleGeometry[] };
+  }
 
-  if (direction === "vertical") {
-    if (target.columnSpan > 1) {
-      const leftSpan = Math.ceil(target.columnSpan / 2);
-      const rightSpan = target.columnSpan - leftSpan;
-      return placements
-        .map((placement) => (placement.paneId === paneId ? { ...placement, columnSpan: leftSpan } : placement))
-        .concat({
-          paneId: newPaneId,
-          row: target.row,
-          column: target.column + leftSpan,
-          rowSpan: target.rowSpan,
-          columnSpan: rightSpan,
-        });
+  const sizes = normalizeWorkspaceTrackSizes(node.sizes, node.children.length);
+  const totalSize = sizes.reduce((total, size) => total + size, 0) || 1;
+  const panes: WorkspacePaneGeometry[] = [];
+  const handles: WorkspaceResizeHandleGeometry[] = [];
+  let offset = 0;
+
+  node.children.forEach((child, index) => {
+    const ratio = sizes[index] / totalSize;
+    const childBounds =
+      node.direction === "vertical"
+        ? {
+            left: bounds.left + bounds.width * offset,
+            top: bounds.top,
+            width: bounds.width * ratio,
+            height: bounds.height,
+          }
+        : {
+            left: bounds.left,
+            top: bounds.top + bounds.height * offset,
+            width: bounds.width,
+            height: bounds.height * ratio,
+          };
+    const childGeometry = buildWorkspaceLayoutGeometry(child, childBounds, `${path}/${node.id}:${index}`);
+    panes.push(...childGeometry.panes);
+    handles.push(...childGeometry.handles);
+    offset += ratio;
+
+    if (index < node.children.length - 1) {
+      handles.push({
+        splitId: node.id,
+        direction: node.direction,
+        index,
+        sizes,
+        left: node.direction === "vertical" ? bounds.left + bounds.width * offset : bounds.left,
+        top: node.direction === "vertical" ? bounds.top : bounds.top + bounds.height * offset,
+        width: node.direction === "vertical" ? 0 : bounds.width,
+        height: node.direction === "vertical" ? bounds.height : 0,
+      });
     }
+  });
 
-    const insertedColumn = target.column + 1;
-    return placements
-      .map((placement) => {
-        if (placement.paneId === paneId) return placement;
-        if (placement.column >= insertedColumn) return { ...placement, column: placement.column + 1 };
-        if (placement.column < insertedColumn && placement.column + placement.columnSpan > insertedColumn - 1) {
-          return { ...placement, columnSpan: placement.columnSpan + 1 };
-        }
-        return placement;
-      })
-      .concat({
-        paneId: newPaneId,
-        row: target.row,
-        column: insertedColumn,
-        rowSpan: target.rowSpan,
-        columnSpan: 1,
-      });
-  }
-
-  if (target.rowSpan > 1) {
-    const topSpan = Math.ceil(target.rowSpan / 2);
-    const bottomSpan = target.rowSpan - topSpan;
-    return placements
-      .map((placement) => (placement.paneId === paneId ? { ...placement, rowSpan: topSpan } : placement))
-      .concat({
-        paneId: newPaneId,
-        row: target.row + topSpan,
-        column: target.column,
-        rowSpan: bottomSpan,
-        columnSpan: target.columnSpan,
-      });
-  }
-
-  const insertedRow = target.row + 1;
-  return placements
-    .map((placement) => {
-      if (placement.paneId === paneId) return placement;
-      if (placement.row >= insertedRow) return { ...placement, row: placement.row + 1 };
-      if (placement.row < insertedRow && placement.row + placement.rowSpan > insertedRow - 1) {
-        return { ...placement, rowSpan: placement.rowSpan + 1 };
-      }
-      return placement;
-    })
-    .concat({
-      paneId: newPaneId,
-      row: insertedRow,
-      column: target.column,
-      rowSpan: 1,
-      columnSpan: target.columnSpan,
-    });
+  return { panes, handles };
 }
 
 export function AppShell() {
@@ -281,27 +291,23 @@ function AppShellContent({ settingsState }: { settingsState: ReturnType<typeof u
   const { settings } = settingsState;
   const { t } = useI18n();
   const [workspacePanes, setWorkspacePanes] = useState<WorkspacePane[]>(() => [createWorkspacePane(INITIAL_WORKSPACE_PANE_ID)]);
-  const [workspacePanePlacements, setWorkspacePanePlacements] = useState<WorkspacePanePlacement[]>(() => [
-    createWorkspacePanePlacement(INITIAL_WORKSPACE_PANE_ID),
-  ]);
+  const [workspaceLayout, setWorkspaceLayout] = useState<WorkspaceLayoutNode>(() => createWorkspaceLayout(INITIAL_WORKSPACE_PANE_ID));
   const [focusedPaneId, setFocusedPaneId] = useState(INITIAL_WORKSPACE_PANE_ID);
   const [isConnectionPanelVisible, setIsConnectionPanelVisible] = useState(true);
   const [connectionSidebarWidth, setConnectionSidebarWidth] = useState(settings.layout.connection_sidebar_width);
   const [isResizingConnectionPanel, setIsResizingConnectionPanel] = useState(false);
+  const [workspaceResizeState, setWorkspaceResizeState] = useState<WorkspaceResizeState | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const nextWorkspaceTabSerialRef = useRef(1);
   const nextWorkspacePaneSerialRef = useRef(2);
+  const nextWorkspaceSplitSerialRef = useRef(1);
   const connectionResizeRef = useRef({ startX: 0, startWidth: settings.layout.connection_sidebar_width });
   const theme = settings.appearance.theme === "system" ? "dark" : settings.appearance.theme;
   const uiFontSize = settings.appearance.ui_font_size;
   const focusedPane = workspacePanes.find((pane) => pane.id === focusedPaneId) ?? workspacePanes[0] ?? null;
   const activeTab = paneActiveTab(focusedPane);
-  const panePlacementMap = new Map(workspacePanePlacements.map((placement) => [placement.paneId, placement]));
-  const workspaceColumnCount = Math.max(
-    1,
-    ...workspacePanePlacements.map((placement) => placement.column + placement.columnSpan),
-  );
-  const workspaceRowCount = Math.max(1, ...workspacePanePlacements.map((placement) => placement.row + placement.rowSpan));
+  const workspaceLayoutVersion = JSON.stringify(workspaceLayout);
+  const workspaceLayoutGeometry = buildWorkspaceLayoutGeometry(workspaceLayout);
   const bodyClassName = [
     "app-shell__body",
     activeTab?.kind === "settings" ? "app-shell__body--settings" : "",
@@ -334,6 +340,35 @@ function AppShellContent({ settingsState }: { settingsState: ReturnType<typeof u
     };
   }, [isResizingConnectionPanel]);
 
+  useEffect(() => {
+    if (!workspaceResizeState) return;
+    const resizeState = workspaceResizeState;
+
+    function handleMouseMove(event: MouseEvent) {
+      const pointer = resizeState.direction === "vertical" ? event.clientX : event.clientY;
+      const delta = (pointer - resizeState.startPointer) / WORKSPACE_RESIZE_STEP_PX;
+      const nextSizes = [...resizeState.startSizes];
+      const leftSize = resizeState.startSizes[resizeState.index] ?? 1;
+      const rightSize = resizeState.startSizes[resizeState.index + 1] ?? 1;
+      const nextLeftSize = clamp(leftSize + delta, MIN_WORKSPACE_PANE_FR, leftSize + rightSize - MIN_WORKSPACE_PANE_FR);
+      nextSizes[resizeState.index] = nextLeftSize;
+      nextSizes[resizeState.index + 1] = leftSize + rightSize - nextLeftSize;
+
+      setWorkspaceLayout((layout) => updateWorkspaceSplitSizes(layout, resizeState.splitId, nextSizes));
+    }
+
+    function handleMouseUp() {
+      setWorkspaceResizeState(null);
+    }
+
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [workspaceResizeState]);
+
   function startConnectionPanelResize(event: React.MouseEvent) {
     event.preventDefault();
     connectionResizeRef.current = {
@@ -341,6 +376,24 @@ function AppShellContent({ settingsState }: { settingsState: ReturnType<typeof u
       startWidth: connectionSidebarWidth,
     };
     setIsResizingConnectionPanel(true);
+  }
+
+  function startWorkspaceResize(
+    event: React.MouseEvent,
+    splitId: string,
+    direction: WorkspaceSplitDirection,
+    index: number,
+    sizes: number[],
+  ) {
+    event.preventDefault();
+    event.stopPropagation();
+    setWorkspaceResizeState({
+      splitId,
+      direction,
+      index,
+      startPointer: direction === "vertical" ? event.clientX : event.clientY,
+      startSizes: sizes,
+    });
   }
 
   function allWorkspaceTabs(panes = workspacePanes) {
@@ -527,7 +580,7 @@ function AppShellContent({ settingsState }: { settingsState: ReturnType<typeof u
       if (nextTabs.length === 0 && panes.length > 1) {
         const nextPanes = panes.filter((item) => item.id !== paneId);
         const nextFocusedPaneId = nextPanes[nextPanes.length - 1]?.id ?? INITIAL_WORKSPACE_PANE_ID;
-        setWorkspacePanePlacements((placements) => removePanePlacement(placements, paneId));
+        setWorkspaceLayout((layout) => removePaneFromWorkspaceLayout(layout, paneId) ?? createWorkspaceLayout(nextFocusedPaneId));
         setFocusedPaneId(nextFocusedPaneId);
         return nextPanes;
       }
@@ -602,9 +655,10 @@ function AppShellContent({ settingsState }: { settingsState: ReturnType<typeof u
     const tab = pane?.tabs.find((item) => item.id === tabId);
     if (!tab) return;
     const newPaneId = `pane-${nextWorkspacePaneSerialRef.current++}`;
+    const newSplitId = `split-${nextWorkspaceSplitSerialRef.current++}`;
     const newTab = cloneTabForSplit(tab);
     setWorkspacePanes((panes) => [...panes, createWorkspacePane(newPaneId, [newTab])]);
-    setWorkspacePanePlacements((placements) => splitPanePlacements(placements, paneId, newPaneId, direction));
+    setWorkspaceLayout((layout) => splitWorkspaceLayout(layout, paneId, newPaneId, newSplitId, direction));
     setFocusedPaneId(newPaneId);
   }
 
@@ -651,9 +705,8 @@ function AppShellContent({ settingsState }: { settingsState: ReturnType<typeof u
     });
   }
 
-  function renderTabPanel(pane: WorkspacePane, tab: AppWorkspaceTab, effectiveActiveTabId: string | null) {
-    const panePlacement = panePlacementMap.get(pane.id) ?? createWorkspacePanePlacement(pane.id);
-    const paneLayoutVersion = `${panePlacement.row}:${panePlacement.column}:${panePlacement.rowSpan}:${panePlacement.columnSpan}`;
+  function renderTabPanel(pane: WorkspacePane, tab: AppWorkspaceTab, effectiveActiveTabId: string | null, layoutPath: string) {
+    const paneLayoutVersion = `${workspaceLayoutVersion}:${layoutPath}`;
     return (
       <div
         key={tab.id}
@@ -697,10 +750,10 @@ function AppShellContent({ settingsState }: { settingsState: ReturnType<typeof u
     );
   }
 
-  function renderWorkspacePane(paneId: string) {
+  function renderWorkspacePane(geometry: WorkspacePaneGeometry) {
+    const { paneId } = geometry;
     const pane = workspacePanes.find((item) => item.id === paneId) ?? createWorkspacePane(paneId);
     const paneIndex = workspacePanes.findIndex((item) => item.id === paneId) + 1;
-    const panePlacement = panePlacementMap.get(paneId) ?? createWorkspacePanePlacement(paneId);
     const activePaneTab = paneActiveTab(pane);
     const effectiveActiveTabId = activePaneTab?.id ?? null;
     return (
@@ -711,8 +764,10 @@ function AppShellContent({ settingsState }: { settingsState: ReturnType<typeof u
         aria-label={t("app.workspace_pane", { index: paneIndex })}
         onMouseDown={() => setFocusedPaneId(paneId)}
         style={{
-          gridColumn: `${panePlacement.column + 1} / span ${panePlacement.columnSpan}`,
-          gridRow: `${panePlacement.row + 1} / span ${panePlacement.rowSpan}`,
+          left: `${geometry.left}%`,
+          top: `${geometry.top}%`,
+          width: `${geometry.width}%`,
+          height: `${geometry.height}%`,
         }}
       >
         <WorkspaceTabs
@@ -727,7 +782,7 @@ function AppShellContent({ settingsState }: { settingsState: ReturnType<typeof u
           onClose={(tabId) => closeTab(paneId, tabId)}
           onContextMenu={(event, tabId) => openTabContextMenu(event, paneId, tabId)}
         />
-        {pane.tabs.map((tab) => renderTabPanel(pane, tab, effectiveActiveTabId))}
+        {pane.tabs.map((tab) => renderTabPanel(pane, tab, effectiveActiveTabId, geometry.path))}
         {!activePaneTab ? (
           <section className="workspace-empty" onContextMenu={openEmptyWorkspaceContextMenu}>
             <h2>{t("app.no_tabs")}</h2>
@@ -735,6 +790,26 @@ function AppShellContent({ settingsState }: { settingsState: ReturnType<typeof u
           </section>
         ) : null}
       </section>
+    );
+  }
+
+  function renderWorkspaceResizeHandle(handle: WorkspaceResizeHandleGeometry) {
+    const isVertical = handle.direction === "vertical";
+    return (
+      <div
+        key={`${handle.splitId}-${handle.index}`}
+        role="separator"
+        aria-label={isVertical ? `调整工作区列 ${handle.index + 1} 宽度` : `调整工作区行 ${handle.index + 1} 高度`}
+        aria-orientation={isVertical ? "vertical" : "horizontal"}
+        className={`workspace-resize-handle workspace-resize-handle--${isVertical ? "column" : "row"}`}
+        style={{
+          left: `${handle.left}%`,
+          top: `${handle.top}%`,
+          width: isVertical ? undefined : `${handle.width}%`,
+          height: isVertical ? `${handle.height}%` : undefined,
+        }}
+        onMouseDown={(event) => startWorkspaceResize(event, handle.splitId, handle.direction, handle.index, handle.sizes)}
+      />
     );
   }
 
@@ -810,14 +885,9 @@ function AppShellContent({ settingsState }: { settingsState: ReturnType<typeof u
           />
         ) : null}
         <section className="workspace" aria-label={t("app.workspace")}>
-          <div
-            className="workspace-root"
-            style={{
-              "--workspace-pane-columns": workspaceColumnCount,
-              "--workspace-pane-rows": workspaceRowCount,
-            } as CSSProperties}
-          >
-            {workspacePanes.map((pane) => renderWorkspacePane(pane.id))}
+          <div className="workspace-root">
+            {workspaceLayoutGeometry.panes.map((pane) => renderWorkspacePane(pane))}
+            {workspaceLayoutGeometry.handles.map((handle) => renderWorkspaceResizeHandle(handle))}
           </div>
         </section>
       </div>
