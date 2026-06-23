@@ -799,6 +799,83 @@ describe("TerminalTab", () => {
     });
   });
 
+  it("refits and resizes a visible backend session when the workspace pane layout changes", async () => {
+    callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
+    listenBackendMock.mockResolvedValueOnce(vi.fn());
+
+    const { rerender } = renderTerminalTab({
+      connectionId: "prod-web-01",
+      fontFamily: "Maple Mono",
+      fontSize: 16,
+      theme: "dark",
+      isActive: false,
+      isVisible: true,
+      layoutVersion: 1,
+    });
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+        request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
+      });
+    });
+    callBackendMock.mockClear();
+
+    const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
+    const fitAddon = vi.mocked(FitAddon).mock.instances[0] as unknown as MockFitAddon;
+    terminal.cols = 132;
+    terminal.rows = 40;
+    const fitCountBeforeLayoutChange = fitAddon.fit.mock.calls.length;
+
+    rerender(
+      <I18nProvider language="zh-CN">
+        <TerminalTab {...terminalProps({ isActive: false, isVisible: true, layoutVersion: 2 })} />
+      </I18nProvider>,
+    );
+
+    await waitFor(() => {
+      expect(fitAddon.fit.mock.calls.length).toBeGreaterThan(fitCountBeforeLayoutChange);
+      expect(callBackendMock).toHaveBeenCalledWith("resize_terminal", {
+        request: { session_id: "session-1", cols: 132, rows: 40 },
+      });
+    });
+    expect(callBackendMock).not.toHaveBeenCalledWith("open_terminal", expect.anything());
+  });
+
+  it("does not resize an inactive hidden terminal when the workspace pane layout changes", async () => {
+    callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
+    listenBackendMock.mockResolvedValueOnce(vi.fn());
+
+    const { rerender } = renderTerminalTab({
+      connectionId: "prod-web-01",
+      fontFamily: "Maple Mono",
+      fontSize: 16,
+      theme: "dark",
+      isActive: false,
+      isVisible: false,
+      layoutVersion: 1,
+    });
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+        request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
+      });
+    });
+    callBackendMock.mockClear();
+
+    const fitAddon = vi.mocked(FitAddon).mock.instances[0] as unknown as MockFitAddon;
+    fitAddon.fit.mockClear();
+
+    rerender(
+      <I18nProvider language="zh-CN">
+        <TerminalTab {...terminalProps({ isActive: false, isVisible: false, layoutVersion: 2 })} />
+      </I18nProvider>,
+    );
+
+    expect(fitAddon.fit).not.toHaveBeenCalled();
+    expect(callBackendMock).not.toHaveBeenCalledWith("resize_terminal", expect.anything());
+    expect(callBackendMock).not.toHaveBeenCalledWith("open_terminal", expect.anything());
+  });
+
   it("applies the app theme to xterm", () => {
     callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
     listenBackendMock.mockResolvedValueOnce(vi.fn());

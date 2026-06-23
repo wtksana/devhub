@@ -654,6 +654,253 @@ describe("AppShell", () => {
     expect(within(screen.getByLabelText("工作区标签")).getByRole("button", { name: "预发 Web" })).toBeInTheDocument();
   });
 
+  it("splits a tab to the right and opens new connections in the focused pane", async () => {
+    settings = {
+      ...createSettings(),
+      connections: [
+        remoteConnection,
+        { ...remoteConnection, id: "stage-web-01", name: "预发 Web", host: "10.0.0.11" },
+      ],
+    };
+
+    render(<AppShell />);
+
+    await userEvent.dblClick(screen.getByText("生产 Web").closest("li") as HTMLElement);
+    await userEvent.pointer({
+      keys: "[MouseRight]",
+      target: within(screen.getAllByLabelText("工作区标签")[0]).getByRole("button", { name: "生产 Web" }),
+    });
+    await userEvent.click(screen.getByRole("menuitem", { name: "向右拆分" }));
+
+    let panes = screen.getAllByLabelText(/^工作区面板/);
+    expect(panes).toHaveLength(2);
+
+    await userEvent.click(panes[1]);
+    await userEvent.dblClick(screen.getByText("预发 Web").closest("li") as HTMLElement);
+
+    panes = screen.getAllByLabelText(/^工作区面板/);
+    expect(within(panes[1]).getByRole("button", { name: "预发 Web" })).toHaveAttribute("aria-pressed", "true");
+    expect(within(panes[0]).queryByRole("button", { name: "预发 Web" })).not.toBeInTheDocument();
+  });
+
+  it("splits only the target pane down without changing existing right splits", async () => {
+    settings = {
+      ...createSettings(),
+      connections: [remoteConnection],
+    };
+
+    render(<AppShell />);
+
+    await userEvent.dblClick(screen.getByText("生产 Web").closest("li") as HTMLElement);
+    await userEvent.pointer({
+      keys: "[MouseRight]",
+      target: within(screen.getAllByLabelText("工作区标签")[0]).getByRole("button", { name: "生产 Web" }),
+    });
+    await userEvent.click(screen.getByRole("menuitem", { name: "向右拆分" }));
+
+    await userEvent.pointer({
+      keys: "[MouseRight]",
+      target: within(screen.getAllByLabelText(/^工作区面板/)[0]).getByRole("button", { name: "生产 Web" }),
+    });
+    await userEvent.click(screen.getByRole("menuitem", { name: "向下拆分" }));
+
+    const panes = screen.getAllByLabelText(/^工作区面板/);
+    expect(panes).toHaveLength(3);
+    expect(panes[0]).toHaveStyle({ gridColumn: "1 / span 1", gridRow: "1 / span 1" });
+    expect(panes[1]).toHaveStyle({ gridColumn: "2 / span 1", gridRow: "1 / span 2" });
+    expect(panes[2]).toHaveStyle({ gridColumn: "1 / span 1", gridRow: "2 / span 1" });
+  });
+
+  it("expands the sibling pane after closing the bottom pane in a split column", async () => {
+    settings = {
+      ...createSettings(),
+      connections: [remoteConnection],
+    };
+
+    render(<AppShell />);
+
+    await userEvent.dblClick(screen.getByText("生产 Web").closest("li") as HTMLElement);
+    await userEvent.pointer({
+      keys: "[MouseRight]",
+      target: within(screen.getAllByLabelText("工作区标签")[0]).getByRole("button", { name: "生产 Web" }),
+    });
+    await userEvent.click(screen.getByRole("menuitem", { name: "向右拆分" }));
+
+    await userEvent.pointer({
+      keys: "[MouseRight]",
+      target: within(screen.getAllByLabelText(/^工作区面板/)[0]).getByRole("button", { name: "生产 Web" }),
+    });
+    await userEvent.click(screen.getByRole("menuitem", { name: "向下拆分" }));
+
+    await userEvent.pointer({
+      keys: "[MouseRight]",
+      target: within(screen.getAllByLabelText(/^工作区面板/)[1]).getByRole("button", { name: "生产 Web 2" }),
+    });
+    await userEvent.click(screen.getByRole("menuitem", { name: "向下拆分" }));
+
+    let panes = screen.getAllByLabelText(/^工作区面板/);
+    expect(panes).toHaveLength(4);
+    expect(panes[1]).toHaveStyle({ gridColumn: "2 / span 1", gridRow: "1 / span 1" });
+    expect(panes[3]).toHaveStyle({ gridColumn: "2 / span 1", gridRow: "2 / span 1" });
+
+    await userEvent.click(within(panes[3]).getByRole("button", { name: /关闭 生产 Web 4/ }));
+
+    panes = screen.getAllByLabelText(/^工作区面板/);
+    expect(panes).toHaveLength(3);
+    expect(panes[1]).toHaveStyle({ gridColumn: "2 / span 1", gridRow: "1 / span 2" });
+  });
+
+  it("expands the top-left pane after closing the bottom-left pane", async () => {
+    settings = {
+      ...createSettings(),
+      connections: [remoteConnection],
+    };
+
+    render(<AppShell />);
+
+    await userEvent.dblClick(screen.getByText("生产 Web").closest("li") as HTMLElement);
+    await userEvent.pointer({
+      keys: "[MouseRight]",
+      target: within(screen.getAllByLabelText("工作区标签")[0]).getByRole("button", { name: "生产 Web" }),
+    });
+    await userEvent.click(screen.getByRole("menuitem", { name: "向右拆分" }));
+
+    await userEvent.pointer({
+      keys: "[MouseRight]",
+      target: within(screen.getAllByLabelText(/^工作区面板/)[0]).getByRole("button", { name: "生产 Web" }),
+    });
+    await userEvent.click(screen.getByRole("menuitem", { name: "向下拆分" }));
+
+    await userEvent.pointer({
+      keys: "[MouseRight]",
+      target: within(screen.getAllByLabelText(/^工作区面板/)[1]).getByRole("button", { name: "生产 Web 2" }),
+    });
+    await userEvent.click(screen.getByRole("menuitem", { name: "向下拆分" }));
+
+    let panes = screen.getAllByLabelText(/^工作区面板/);
+    expect(panes).toHaveLength(4);
+    await userEvent.click(within(panes[2]).getByRole("button", { name: /关闭 生产 Web 3/ }));
+
+    panes = screen.getAllByLabelText(/^工作区面板/);
+    expect(panes).toHaveLength(3);
+    expect(panes[0]).toHaveStyle({ gridColumn: "1 / span 1", gridRow: "1 / span 2" });
+  });
+
+  it("resizes a visible terminal after its pane expands when another pane closes", async () => {
+    settings = {
+      ...createSettings(),
+      connections: [remoteConnection],
+    };
+
+    render(<AppShell />);
+
+    await userEvent.dblClick(screen.getByText("生产 Web").closest("li") as HTMLElement);
+    await userEvent.pointer({
+      keys: "[MouseRight]",
+      target: within(screen.getAllByLabelText("工作区标签")[0]).getByRole("button", { name: "生产 Web" }),
+    });
+    await userEvent.click(screen.getByRole("menuitem", { name: "向右拆分" }));
+
+    await userEvent.pointer({
+      keys: "[MouseRight]",
+      target: within(screen.getAllByLabelText(/^工作区面板/)[0]).getByRole("button", { name: "生产 Web" }),
+    });
+    await userEvent.click(screen.getByRole("menuitem", { name: "向下拆分" }));
+
+    await userEvent.pointer({
+      keys: "[MouseRight]",
+      target: within(screen.getAllByLabelText(/^工作区面板/)[1]).getByRole("button", { name: "生产 Web 2" }),
+    });
+    await userEvent.click(screen.getByRole("menuitem", { name: "向下拆分" }));
+
+    await waitFor(() => {
+      expect(callBackendMock.mock.calls.filter(([command]) => command === "open_terminal")).toHaveLength(4);
+    });
+    callBackendMock.mockClear();
+
+    const panes = screen.getAllByLabelText(/^工作区面板/);
+    await userEvent.click(within(panes[2]).getByRole("button", { name: /关闭 生产 Web 3/ }));
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("resize_terminal", {
+        request: { session_id: "session-1", cols: expect.any(Number), rows: expect.any(Number) },
+      });
+    });
+  });
+
+  it("removes a split pane after its last tab closes", async () => {
+    settings = {
+      ...createSettings(),
+      connections: [remoteConnection],
+    };
+
+    render(<AppShell />);
+
+    await userEvent.dblClick(screen.getByText("生产 Web").closest("li") as HTMLElement);
+    await userEvent.pointer({
+      keys: "[MouseRight]",
+      target: within(screen.getAllByLabelText("工作区标签")[0]).getByRole("button", { name: "生产 Web" }),
+    });
+    await userEvent.click(screen.getByRole("menuitem", { name: "向右拆分" }));
+
+    expect(screen.getAllByLabelText(/^工作区面板/)).toHaveLength(2);
+    await userEvent.click(within(screen.getAllByLabelText(/^工作区面板/)[1]).getByRole("button", { name: /关闭 生产 Web/ }));
+
+    expect(screen.getAllByLabelText(/^工作区面板/)).toHaveLength(1);
+  });
+
+  it("keeps existing terminal sessions mounted when splitting a tab", async () => {
+    settings = {
+      ...createSettings(),
+      connections: [remoteConnection],
+    };
+
+    render(<AppShell />);
+
+    await userEvent.dblClick(screen.getByText("生产 Web").closest("li") as HTMLElement);
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", expect.anything());
+    });
+    callBackendMock.mockClear();
+
+    await userEvent.pointer({
+      keys: "[MouseRight]",
+      target: within(screen.getAllByLabelText("工作区标签")[0]).getByRole("button", { name: "生产 Web" }),
+    });
+    await userEvent.click(screen.getByRole("menuitem", { name: "向右拆分" }));
+
+    await waitFor(() => {
+      expect(callBackendMock.mock.calls.filter(([command]) => command === "open_terminal")).toHaveLength(1);
+    });
+  });
+
+  it("uses unique title numbers when splitting the same terminal multiple times", async () => {
+    settings = {
+      ...createSettings(),
+      connections: [remoteConnection],
+    };
+
+    render(<AppShell />);
+
+    await userEvent.dblClick(screen.getByText("生产 Web").closest("li") as HTMLElement);
+    await userEvent.pointer({
+      keys: "[MouseRight]",
+      target: within(screen.getAllByLabelText("工作区标签")[0]).getByRole("button", { name: "生产 Web" }),
+    });
+    await userEvent.click(screen.getByRole("menuitem", { name: "向右拆分" }));
+
+    await userEvent.pointer({
+      keys: "[MouseRight]",
+      target: within(screen.getAllByLabelText("工作区标签")[0]).getByRole("button", { name: "生产 Web" }),
+    });
+    await userEvent.click(screen.getByRole("menuitem", { name: "向右拆分" }));
+
+    expect(screen.getByRole("button", { name: "生产 Web 2" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "生产 Web 3" })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "生产 Web 3" })).toHaveLength(1);
+  });
+
   it("shows empty workspace context actions for settings and connection panel", async () => {
     render(<AppShell />);
 

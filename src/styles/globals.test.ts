@@ -72,6 +72,30 @@ describe("global style defaults", () => {
     expect(globalsCss).toContain(".database-object-tree li:hover,\n.database-object-tree__item-button:hover {\n  background: color-mix(in srgb, var(--accent) 8%, var(--panel-raised));");
   });
 
+  it("does not draw focus outlines around split workspace panes", () => {
+    const globalsCss = readCssSource();
+
+    expect(globalsCss).toContain(".workspace-pane {\n  display: grid;");
+    expect(globalsCss).not.toContain('.workspace-pane[data-focused="true"]');
+    expect(globalsCss).not.toContain("outline-color: color-mix(in srgb, var(--accent) 34%, transparent);");
+  });
+
+  it("uses grid placement instead of a global split direction for workspace panes", () => {
+    const globalsCss = readCssSource();
+
+    expect(globalsCss).toContain("grid-template-columns: repeat(var(--workspace-pane-columns, 1), minmax(0, 1fr));");
+    expect(globalsCss).toContain("grid-template-rows: repeat(var(--workspace-pane-rows, 1), minmax(0, 1fr));");
+    expect(globalsCss).not.toContain(".workspace-root[data-direction=");
+  });
+
+  it("uses the workspace background for database object tree filters", () => {
+    const globalsCss = readCssSource();
+
+    expect(globalsCss).toContain(".database-object-tree__header {\n  display: grid;");
+    expect(globalsCss).toContain("  background: var(--bg);");
+    expect(globalsCss).toContain(".database-object-tree__header select,\n.database-object-tree__header input {\n  width: 100%;\n  background: var(--bg);");
+  });
+
   it("prevents connection item text selection during double click", () => {
     const globalsCss = readCssSource();
 

@@ -9,11 +9,23 @@ interface TerminalWorkspaceProps {
   fontSize: number;
   theme: "dark" | "light";
   isActive: boolean;
+  isVisible?: boolean;
+  layoutVersion?: number | string;
   terminalSettings: TerminalSettings;
   onStatusChange?: (status: TerminalConnectionStatus) => void;
 }
 
-export function TerminalWorkspace({ connectionId, fontFamily, fontSize, theme, isActive, terminalSettings, onStatusChange }: TerminalWorkspaceProps) {
+export function TerminalWorkspace({
+  connectionId,
+  fontFamily,
+  fontSize,
+  theme,
+  isActive,
+  isVisible = isActive,
+  layoutVersion = 0,
+  terminalSettings,
+  onStatusChange,
+}: TerminalWorkspaceProps) {
   const { t } = useI18n();
 
   if (!connectionId) {
@@ -33,6 +45,8 @@ export function TerminalWorkspace({ connectionId, fontFamily, fontSize, theme, i
         fontSize={fontSize}
         theme={theme}
         isActive={isActive}
+        isVisible={isVisible}
+        layoutVersion={layoutVersion}
         terminalSettings={terminalSettings}
         onStatusChange={onStatusChange}
       />

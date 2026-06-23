@@ -17,6 +17,8 @@ interface TerminalTabProps {
   fontSize: number;
   theme: "dark" | "light";
   isActive: boolean;
+  isVisible?: boolean;
+  layoutVersion?: number | string;
   terminalSettings: TerminalSettings;
   onStatusChange?: (status: TerminalConnectionStatus) => void;
 }
@@ -148,7 +150,17 @@ function isTerminalSessionErrorOutput(data: string) {
 
 const TERMINAL_SCROLLBACK = 1000;
 
-export function TerminalTab({ connectionId, fontFamily, fontSize, theme, isActive, terminalSettings, onStatusChange }: TerminalTabProps) {
+export function TerminalTab({
+  connectionId,
+  fontFamily,
+  fontSize,
+  theme,
+  isActive,
+  isVisible = isActive,
+  layoutVersion = 0,
+  terminalSettings,
+  onStatusChange,
+}: TerminalTabProps) {
   const { t } = useI18n();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<Terminal | null>(null);
@@ -556,6 +568,27 @@ export function TerminalTab({ connectionId, fontFamily, fontSize, theme, isActiv
       },
     });
   }, [isActive]);
+
+  useEffect(() => {
+    if (!isVisible || !terminalRef.current) return;
+    const frame = window.requestAnimationFrame(() => {
+      const terminal = terminalRef.current;
+      if (!terminal) return;
+      fitAddonRef.current?.fit();
+      const sessionId = sessionIdRef.current;
+      if (!sessionId) return;
+      void callBackend<void>("resize_terminal", {
+        request: {
+          session_id: sessionId,
+          cols: terminal.cols || 80,
+          rows: terminal.rows || 24,
+        },
+      });
+    });
+    return () => {
+      window.cancelAnimationFrame(frame);
+    };
+  }, [isVisible, layoutVersion]);
 
   return (
     <>
