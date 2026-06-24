@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent } from "react";
 import Editor from "@monaco-editor/react";
 import type { OnMount } from "@monaco-editor/react";
+import { logFrontendError } from "../../lib/appLogging";
 import { callBackend } from "../../lib/tauri";
 import type {
   DatabaseQueryResult,
@@ -99,6 +100,7 @@ export function DatabaseWorkspace({ connectionId, initialDatabase, theme, fontFa
       .catch((caught) => {
         if (!isActive) return;
         console.error("[devhub] load database SQL files failed", caught);
+        void logFrontendError("frontend.database", "list_database_sql_files", caught, `${connectionId}:${currentDatabase}`);
         setSqlFiles([{ name: "default", content: "" }]);
         setSelectedSqlFileName("default");
         setSql("");
@@ -198,6 +200,9 @@ export function DatabaseWorkspace({ connectionId, initialDatabase, theme, fontFa
     } catch (caught) {
       setResult(null);
       setError(caught instanceof Error ? caught.message : String(caught));
+      void logFrontendError("frontend.database", "execute_database_query", caught, `${connectionId}:${currentDatabase || ""}`, {
+        sql_kind: sqlKind(sqlToExecute),
+      });
     } finally {
       setIsExecuting(false);
     }
@@ -247,6 +252,10 @@ export function DatabaseWorkspace({ connectionId, initialDatabase, theme, fontFa
       });
       setTableStructureDialog({ table: node, columns: Array.isArray(columns) ? columns : [], error: null });
     } catch (caught) {
+      void logFrontendError("frontend.database", "list_database_objects", caught, `${connectionId}:${currentDatabase}:${node.name}`, {
+        database: currentDatabase,
+        table: node.name,
+      });
       setTableStructureDialog({
         table: node,
         columns: [],
@@ -278,6 +287,10 @@ export function DatabaseWorkspace({ connectionId, initialDatabase, theme, fontFa
         error: null,
       });
     } catch (caught) {
+      void logFrontendError("frontend.database", "get_database_table_ddl", caught, `${connectionId}:${currentDatabase}:${node.name}`, {
+        database: currentDatabase,
+        table: node.name,
+      });
       setTableDdlDialog({
         table: node,
         ddl: "",
@@ -318,6 +331,11 @@ export function DatabaseWorkspace({ connectionId, initialDatabase, theme, fontFa
         name,
         content,
       },
+    }).catch((caught) => {
+      void logFrontendError("frontend.database", "save_database_sql_file", caught, `${connectionId}:${database}:${name}`, {
+        database,
+        name,
+      });
     });
   }
 
@@ -709,6 +727,16 @@ function firstSqlKeyword(sql: string) {
     return remaining.split(/[^a-zA-Z]+/).find(Boolean) ?? null;
   }
   return null;
+}
+
+function sqlKind(sql: string) {
+  const keyword = firstSqlKeyword(sql)?.toLowerCase();
+  if (keyword === "select" || keyword === "with") return "select";
+  if (keyword === "insert") return "insert";
+  if (keyword === "update") return "update";
+  if (keyword === "delete") return "delete";
+  if (keyword === "create" || keyword === "alter" || keyword === "drop" || keyword === "truncate") return "ddl";
+  return "other";
 }
 
 function sqlFileKey(connectionId: string, database: string, name: string) {

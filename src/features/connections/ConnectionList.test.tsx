@@ -467,6 +467,38 @@ describe("ConnectionList", () => {
     expect(await within(dialog).findByRole("status")).toHaveTextContent("请填写主机");
   });
 
+  it("logs Redis connection test failures without sensitive fields", async () => {
+    callBackendMock.mockImplementation((command) => {
+      if (command === "test_redis_connection_config") return Promise.reject(new Error("connection refused"));
+      if (command === "write_app_log") return Promise.resolve(undefined);
+      return Promise.resolve(undefined);
+    });
+
+    renderConnectionList();
+
+    await userEvent.click(screen.getByRole("button", { name: "添加连接" }));
+    const dialog = screen.getByRole("dialog", { name: "添加 SSH 连接" });
+    await userEvent.selectOptions(within(dialog).getByLabelText("连接类型"), "redis");
+    await userEvent.type(within(dialog).getByLabelText("连接名称"), "本地 Redis");
+    await userEvent.type(within(dialog).getByLabelText("主机"), "127.0.0.1");
+    await userEvent.type(within(dialog).getByLabelText("Redis 密码"), "redis-password");
+    await userEvent.click(within(dialog).getByRole("button", { name: "测试连接" }));
+
+    expect(await within(dialog).findByRole("status")).toHaveTextContent("connection refused");
+    expect(callBackendMock).toHaveBeenCalledWith("write_app_log", {
+      entry: expect.objectContaining({
+        level: "error",
+        module: "frontend.connections",
+        action: "test_redis_connection_config",
+        target: "redis-form-test",
+        result: "failed",
+        error: "connection refused",
+      }),
+    });
+    const logCall = callBackendMock.mock.calls.find(([command]) => command === "write_app_log");
+    expect(JSON.stringify(logCall)).not.toContain("redis-password");
+  });
+
   it("validates database connection fields before testing from the dialog", async () => {
     renderConnectionList();
 

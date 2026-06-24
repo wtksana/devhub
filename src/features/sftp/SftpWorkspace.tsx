@@ -19,6 +19,7 @@ import {
   pickUploadDirectory,
   pickUploadFile,
 } from "../../lib/fileDialog";
+import { logFrontendError } from "../../lib/appLogging";
 import { callBackend } from "../../lib/tauri";
 import { listenLocalDragDrop } from "../../lib/tauriDragDrop";
 import { listenSftpTransferProgress } from "../../lib/tauriEvents";
@@ -363,6 +364,15 @@ export function SftpWorkspace({
     [entries, selectedEntryPaths],
   );
 
+  function logSftpError(
+    action: string,
+    caught: unknown,
+    target?: string,
+    metadata: Record<string, string | number | boolean | null> = {},
+  ) {
+    void logFrontendError("frontend.sftp", action, caught, target ?? sessionId ?? connectionId ?? undefined, metadata);
+  }
+
   useEffect(() => {
     if (!connectionId) {
       setSessionId(null);
@@ -415,6 +425,7 @@ export function SftpWorkspace({
       .catch((caught) => {
         if (!disposed) {
           setError(caught instanceof Error ? caught.message : String(caught));
+          logSftpError("open_sftp_session", caught, connectionId ?? undefined);
         }
       });
 
@@ -540,6 +551,7 @@ export function SftpWorkspace({
         return normalizedPath;
       } catch (caught) {
         setError(caught instanceof Error ? caught.message : String(caught));
+        logSftpError("list_sftp_directory", caught, `${sessionId}:${normalizedPath}`);
         return null;
       } finally {
         setIsLoading(false);
@@ -630,6 +642,7 @@ export function SftpWorkspace({
       await refresh();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
+      logSftpError("create_sftp_directory", caught, `${sessionId}:${joinRemotePath(path, name)}`);
     }
   }
 
@@ -642,6 +655,7 @@ export function SftpWorkspace({
       await refresh();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
+      logSftpError("create_sftp_file", caught, `${sessionId}:${joinRemotePath(path, name)}`);
     }
   }
 
@@ -658,6 +672,7 @@ export function SftpWorkspace({
       await refresh();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
+      logSftpError("rename_sftp_path", caught, `${sessionId}:${entry.path}`);
     }
   }
 
@@ -697,6 +712,9 @@ export function SftpWorkspace({
       await refresh();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
+      logSftpError("delete_sftp_path", caught, `${sessionId}:${targetEntries.length} paths`, {
+        count: targetEntries.length,
+      });
     }
   }
 
@@ -838,6 +856,7 @@ export function SftpWorkspace({
         await uploadSelectedFile(upload, false);
       } catch (caught) {
         setError(caught instanceof Error ? caught.message : String(caught));
+        logSftpError("get_local_path_kind", caught, sessionId ?? undefined);
       }
     }
   }
@@ -875,6 +894,12 @@ export function SftpWorkspace({
       } else {
         updateTransferTask(taskId, { status: "failed", error: message });
         setError(message);
+        logSftpError(
+          upload.kind === "directory" ? "upload_sftp_directory" : "upload_sftp_file",
+          caught,
+          `${sessionId}:${upload.remotePath}`,
+          { transfer_id: taskId, overwrite },
+        );
       }
     }
   }
@@ -908,6 +933,9 @@ export function SftpWorkspace({
       await refresh();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
+      logSftpError("compress_sftp_path", caught, `${sessionId}:${targetEntries.map((entry) => entry.path).join(",")}`, {
+        count: targetEntries.length,
+      });
     }
   }
 
@@ -928,6 +956,9 @@ export function SftpWorkspace({
       await refresh();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
+      logSftpError("compress_sftp_paths", caught, `${sessionId}:${archiveName}`, {
+        count: pendingBatchArchive.entries.length,
+      });
     }
   }
 
@@ -940,6 +971,7 @@ export function SftpWorkspace({
       await refresh();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
+      logSftpError("extract_sftp_archive", caught, `${sessionId}:${entry.path}`);
     }
   }
 
@@ -972,6 +1004,9 @@ export function SftpWorkspace({
       setError(null);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
+      logSftpError("read_sftp_text_file", caught, `${sessionId}:${entry.path}`, {
+        max_bytes: TEXT_FILE_MAX_BYTES,
+      });
     }
   }
 
@@ -1006,6 +1041,9 @@ export function SftpWorkspace({
         return;
       }
       setError(message);
+      logSftpError("write_sftp_text_file", caught, `${sessionId}:${textFile.path}`, {
+        overwrite,
+      });
     }
   }
 
@@ -1104,6 +1142,9 @@ export function SftpWorkspace({
       } else {
         updateTransferTask(taskId, { status: "failed", error: message });
         setError(message);
+        logSftpError("download_sftp_file", caught, `${sessionId}:${entry.path}`, {
+          transfer_id: taskId,
+        });
       }
     }
   }
@@ -1148,6 +1189,10 @@ export function SftpWorkspace({
       } else {
         updateTransferTask(taskId, { status: "failed", error: message });
         setError(message);
+        logSftpError("download_sftp_directory", caught, `${sessionId}:${entry.path}`, {
+          transfer_id: taskId,
+          overwrite: false,
+        });
       }
     }
   }

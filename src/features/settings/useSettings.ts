@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { logFrontendError } from "../../lib/appLogging";
 import { callBackend } from "../../lib/tauri";
 import { parseSettings } from "./settingsSchema";
 import type { DevHubSettings } from "./settingsTypes";
@@ -57,6 +58,7 @@ export function useSettings() {
       setError(null);
     } catch (caught) {
       setError(getErrorMessage(caught));
+      void logFrontendError("frontend.settings", "load_settings", caught);
     }
   }, []);
 
@@ -73,6 +75,7 @@ export function useSettings() {
       setError(null);
     } catch (caught) {
       setError(getErrorMessage(caught));
+      void logFrontendError("frontend.settings", "save_raw_settings", caught);
     }
   }, []);
 
@@ -85,6 +88,7 @@ export function useSettings() {
       setError(null);
     } catch (caught) {
       setError(getErrorMessage(caught));
+      void logFrontendError("frontend.settings", "save_settings", caught);
     }
   }, []);
 

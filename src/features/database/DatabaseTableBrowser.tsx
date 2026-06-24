@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { useI18n } from "../../i18n/useI18n";
+import { logFrontendError } from "../../lib/appLogging";
 import { callBackend } from "../../lib/tauri";
 import { AppIcon } from "../../app/AppIcon";
 import { readClipboardText, writeClipboardText } from "../../lib/clipboard";
@@ -129,6 +130,10 @@ export function DatabaseTableBrowser({ connectionId, target }: DatabaseTableBrow
       setNewRows([]);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
+      void logFrontendError("frontend.database", "load_database_table_page", caught, `${connectionId}:${target.database}:${target.table}`, {
+        database: target.database,
+        table: target.table,
+      });
     } finally {
       setIsLoading(false);
     }
@@ -475,6 +480,11 @@ export function DatabaseTableBrowser({ connectionId, target }: DatabaseTableBrow
       await loadPage();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
+      void logFrontendError("frontend.database", "save_database_table_rows", caught, `${connectionId}:${target.database}:${target.table}`, {
+        database: target.database,
+        table: target.table,
+        row_count: changedRowCount,
+      });
     } finally {
       setIsSaving(false);
     }
@@ -516,6 +526,11 @@ export function DatabaseTableBrowser({ connectionId, target }: DatabaseTableBrow
       await loadPage();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
+      void logFrontendError("frontend.database", "delete_database_table_rows", caught, `${connectionId}:${target.database}:${target.table}`, {
+        database: target.database,
+        table: target.table,
+        row_count: 1,
+      });
     } finally {
       setIsSaving(false);
     }

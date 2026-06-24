@@ -7,6 +7,7 @@ import type {
 } from "../settings/settingsTypes";
 import { ContextMenu, type ContextMenuState } from "../../app/ContextMenu";
 import { pickPrivateKeyFile } from "../../lib/fileDialog";
+import { logFrontendError } from "../../lib/appLogging";
 import { callBackend } from "../../lib/tauri";
 import sshConnectionIcon from "../../assets/icons/devicon--powershell.png";
 import redisConnectionIcon from "../../assets/icons/devicon--redis.png";
@@ -375,6 +376,7 @@ export function ConnectionList({
       setRedisTestMessage(t("connections.test_success", { name: connectionName, message: result }));
     } catch (error) {
       setRedisTestMessage(t("connections.test_failed", { name: connectionName, message: String(error) }));
+      void logFrontendError("frontend.connections", "test_redis_connection", error, connectionId);
     }
   }
 
@@ -393,6 +395,7 @@ export function ConnectionList({
       setConnectionDialogMessage(t("connections.test_success", { name: connectionName, message: result }));
     } catch (error) {
       setConnectionDialogMessage(t("connections.test_failed", { name: connectionName, message: String(error) }));
+      void logFrontendError("frontend.connections", "test_redis_connection_config", error, connection.id);
     }
   }
 
@@ -412,6 +415,9 @@ export function ConnectionList({
       setConnectionDialogMessage(t("connections.test_success", { name: connectionName, message: result }));
     } catch (error) {
       setConnectionDialogMessage(t("connections.test_failed", { name: connectionName, message: String(error) }));
+      void logFrontendError("frontend.connections", "test_database_connection_config", error, connection.id, {
+        kind,
+      });
     }
   }
 

@@ -1,5 +1,6 @@
 import { useEffect, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { useI18n } from "../../i18n/useI18n";
+import { logFrontendError } from "../../lib/appLogging";
 import { callBackend } from "../../lib/tauri";
 import type { DatabaseTreeNode } from "./databaseTypes";
 import { AppIcon } from "../../app/AppIcon";
@@ -97,6 +98,10 @@ export function DatabaseObjectTree({ connectionId, selectedDatabase, onDatabaseC
       return Array.isArray(nodes) ? nodes : [];
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : String(loadError));
+      void logFrontendError("frontend.database", "list_database_objects", loadError, connectionId, {
+        database: parent?.kind === "database" ? parent.name : selectedDatabase || null,
+        parent_kind: parent?.kind ?? null,
+      });
       return [];
     }
   }
