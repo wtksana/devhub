@@ -1096,6 +1096,12 @@ function AppShellContent({ settingsState }: { settingsState: ReturnType<typeof u
                   connections: settings.connections.map((item) => (item.id === connection.id ? connection : item)),
                 });
               }}
+              onDeleteConnection={(connectionId) => {
+                void settingsState.saveSettings({
+                  ...settings,
+                  connections: settings.connections.filter((item) => item.id !== connectionId),
+                });
+              }}
               onOpenTerminal={(connectionId) => {
                 openTerminalTab(connectionId);
               }}

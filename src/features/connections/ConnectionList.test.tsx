@@ -97,6 +97,7 @@ describe("ConnectionList", () => {
           onOpenDatabase={vi.fn()}
           onAddConnection={vi.fn()}
           onUpdateConnection={vi.fn()}
+          onDeleteConnection={vi.fn()}
           connectionGroups={[]}
           onUpdateConnectionGroups={vi.fn()}
           {...props}
@@ -569,6 +570,27 @@ describe("ConnectionList", () => {
       },
     });
     expect(updatedConnection).not.toHaveProperty("group");
+  });
+
+  it("deletes a saved connection from the connection context menu after confirmation", async () => {
+    const onDeleteConnection = vi.fn();
+
+    renderConnectionList({
+      connections: groupedConnections,
+      onDeleteConnection,
+    });
+
+    await userEvent.pointer({ keys: "[MouseRight]", target: screen.getByText("生产 Web") });
+    await userEvent.click(screen.getByRole("menuitem", { name: "删除" }));
+
+    expect(screen.getByRole("dialog", { name: "确认删除连接" })).toHaveTextContent(
+      "确认删除 生产 Web 连接？该操作不可逆！",
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "确认" }));
+
+    expect(onDeleteConnection).toHaveBeenCalledWith("prod-web-01");
+    expect(screen.queryByRole("dialog", { name: "确认删除连接" })).not.toBeInTheDocument();
   });
 
   it("opens a blank connection panel context menu for creating groups and choosing sort modes", async () => {

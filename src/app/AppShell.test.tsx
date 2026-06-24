@@ -970,6 +970,33 @@ describe("AppShell", () => {
     });
   });
 
+  it("deletes a saved connection from the connection context menu", async () => {
+    settings = {
+      ...createSettings(),
+      connections: [
+        remoteConnection,
+        { ...remoteConnection, id: "stage-web-01", name: "预发 Web", host: "10.0.0.11" },
+      ],
+    };
+
+    render(<AppShell />);
+
+    await userEvent.pointer({ keys: "[MouseRight]", target: getConnectionItem("生产 Web") });
+    await userEvent.click(screen.getByRole("menuitem", { name: "删除" }));
+    expect(screen.getByRole("dialog", { name: "确认删除连接" })).toHaveTextContent(
+      "确认删除 生产 Web 连接？该操作不可逆！",
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "确认" }));
+
+    expect(saveSettings).toHaveBeenLastCalledWith({
+      ...settings,
+      connections: [
+        { ...remoteConnection, id: "stage-web-01", name: "预发 Web", host: "10.0.0.11" },
+      ],
+    });
+  });
+
   it("shows workspace tab context close actions", async () => {
     settings = {
       ...createSettings(),

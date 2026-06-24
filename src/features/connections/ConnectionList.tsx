@@ -23,6 +23,7 @@ interface ConnectionListProps {
   onOpenDatabase: (connectionId: string) => void;
   onAddConnection: (connection: ConnectionSettings) => void;
   onUpdateConnection: (connection: ConnectionSettings) => void;
+  onDeleteConnection: (connectionId: string) => void;
   connectionGroups: string[];
   onUpdateConnectionGroups: (groups: string[]) => void;
 }
@@ -119,12 +120,14 @@ export function ConnectionList({
   onOpenDatabase,
   onAddConnection,
   onUpdateConnection,
+  onDeleteConnection,
   connectionGroups,
   onUpdateConnectionGroups,
 }: ConnectionListProps) {
   const { t } = useI18n();
   const [dialogMode, setDialogMode] = useState<ConnectionDialogMode | null>(null);
   const [sourceConnection, setSourceConnection] = useState<ConnectionSettings | null>(null);
+  const [deleteCandidate, setDeleteCandidate] = useState<ConnectionSettings | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [isGroupDialogOpen, setIsGroupDialogOpen] = useState(false);
   const [kind, setKind] = useState<ConnectionKind>("ssh");
@@ -177,10 +180,14 @@ export function ConnectionList({
   }, [connectionSortMode, connections, groupNames, groupSortMode]);
 
   useEffect(() => {
-    if (!dialogMode && !isGroupDialogOpen) return;
+    if (!dialogMode && !isGroupDialogOpen && !deleteCandidate) return;
 
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key !== "Escape") return;
+      if (deleteCandidate) {
+        setDeleteCandidate(null);
+        return;
+      }
       if (dialogMode) {
         closeConnectionDialog();
         return;
@@ -192,7 +199,7 @@ export function ConnectionList({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [dialogMode, isGroupDialogOpen]);
+  }, [deleteCandidate, dialogMode, isGroupDialogOpen]);
 
   function dialogTitle(mode: ConnectionDialogMode) {
     if (kind === "mysql") {
@@ -475,6 +482,12 @@ export function ConnectionList({
     onUpdateConnection(nextGroup ? { ...connection, group: nextGroup } : connectionWithoutGroup);
   }
 
+  function confirmDeleteConnection() {
+    if (!deleteCandidate) return;
+    onDeleteConnection(deleteCandidate.id);
+    setDeleteCandidate(null);
+  }
+
   function submitGroup(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const nextGroup = newGroupName.trim();
@@ -508,6 +521,7 @@ export function ConnectionList({
             ]),
         { label: t("connections.edit"), onSelect: () => openConnectionDialog("edit", connection) },
         { label: t("connections.copy"), onSelect: () => openConnectionDialog("copy", connection) },
+        { label: t("connections.delete"), onSelect: () => setDeleteCandidate(connection) },
         { type: "separator" },
         {
           type: "submenu",
@@ -783,6 +797,29 @@ export function ConnectionList({
                 <button type="submit">{t("connections.save_group")}</button>
               </footer>
             </form>
+          </div>
+        </div>
+      ) : null}
+      {deleteCandidate ? (
+        <div className="connection-dialog__backdrop">
+          <div className="connection-dialog" role="dialog" aria-modal="true" aria-labelledby="connection-delete-dialog-title">
+            <section className="connection-form">
+              <header className="connection-dialog__header">
+                <h3 id="connection-delete-dialog-title">{t("connections.confirm_delete")}</h3>
+                <button type="button" aria-label={t("connections.close_delete_dialog")} onClick={() => setDeleteCandidate(null)}>
+                  ×
+                </button>
+              </header>
+              <p>{t("connections.delete_confirm_message", { name: deleteCandidate.name })}</p>
+              <footer>
+                <button type="button" onClick={() => setDeleteCandidate(null)}>
+                  {t("connections.cancel")}
+                </button>
+                <button type="button" onClick={confirmDeleteConnection}>
+                  {t("connections.confirm")}
+                </button>
+              </footer>
+            </section>
           </div>
         </div>
       ) : null}
