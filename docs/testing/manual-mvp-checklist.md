@@ -11,7 +11,7 @@
 - [x] 新安装默认包含 `logging.enabled=true`、`logging.level=info`、`logging.retention_days=14`、`logging.include_sql=false`。
 - [x] 设置页可以修改操作日志开关、日志级别、日志保留天数和是否记录完整 SQL。
 - [x] 设置页可以打开日志目录。
-- [x] 设置页可以复制日志目录路径。
+- [x] 设置页不显示复制日志目录路径按钮。
 - [x] 关键操作会写入本地 JSON Lines 日志文件。
 - [x] 默认日志不会记录完整 SQL、密码、私钥口令、Redis 密码、数据库密码或私钥内容。
 - [x] Redis 查看、编辑、新增、删除、TTL 和批量操作会记录操作日志。

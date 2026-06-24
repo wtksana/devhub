@@ -90,8 +90,6 @@ export const zhCN = {
   "settings.logging_directory": "日志目录",
   "settings.logging_directory_desc": "日志按天写入本地目录，格式为 JSON Lines。",
   "settings.open_log_directory": "打开日志目录",
-  "settings.copy_log_directory": "复制日志目录路径",
-  "settings.log_directory_copied": "日志目录路径已复制",
   "settings.keymap_desc": "第一版使用 keymap.json 管理快捷键，后续提供冲突检测和图形化编辑。",
   "settings.save": "保存",
   "connections.title": "连接",

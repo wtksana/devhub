@@ -1,6 +1,7 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { StrictMode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "../../i18n/I18nProvider";
 import { readClipboardText, writeClipboardText } from "../../lib/clipboard";
@@ -118,6 +119,22 @@ describe("DatabaseWorkspace", () => {
     );
   }
 
+  function renderDatabaseWorkspaceInStrictMode(initialDatabase?: string) {
+    return render(
+      <StrictMode>
+        <I18nProvider language="zh-CN">
+          <DatabaseWorkspace
+            connectionId="mysql-dev"
+            initialDatabase={initialDatabase}
+            theme="light"
+            fontFamily="Consolas"
+            fontSize={14}
+          />
+        </I18nProvider>
+      </StrictMode>,
+    );
+  }
+
   it("loads the default database tables directly and switches databases from the selector", async () => {
     callBackendMock.mockImplementation((command, payload) => {
       if (command !== "list_database_objects") return Promise.resolve([]);
@@ -170,6 +187,35 @@ describe("DatabaseWorkspace", () => {
       },
     });
     expect(screen.getByLabelText("数据库对象树")).toBeInTheDocument();
+  });
+
+  it("deduplicates initial object tree loads in strict mode", async () => {
+    callBackendMock.mockImplementation((command, payload) => {
+      if (command !== "list_database_objects") return Promise.resolve([]);
+      const request = (payload as { request: { parent_kind?: string; database?: string } }).request;
+      if (!request.parent_kind) {
+        return Promise.resolve([
+          { id: "database:app", name: "app", kind: "database", has_children: true },
+        ]);
+      }
+      return Promise.resolve([
+        { id: "table:app.users", name: "users", kind: "table", has_children: true, detail: "BASE TABLE" },
+      ]);
+    });
+
+    renderDatabaseWorkspaceInStrictMode("app");
+
+    expect(await screen.findByText("users")).toBeInTheDocument();
+    await waitFor(() => {
+      const objectCalls = callBackendMock.mock.calls.filter(([command]) => command === "list_database_objects");
+      expect(objectCalls).toHaveLength(2);
+    });
+    const tableObjectCalls = callBackendMock.mock.calls.filter(([command, payload]) => {
+      if (command !== "list_database_objects") return false;
+      const request = (payload as { request?: { parent_kind?: string; database?: string } }).request;
+      return request?.parent_kind === "database" && request.database === "app";
+    });
+    expect(tableObjectCalls).toHaveLength(1);
   });
 
   it("filters table names on the client", async () => {
@@ -422,6 +468,44 @@ describe("DatabaseWorkspace", () => {
       });
     });
     expect(screen.getAllByText("1")).toHaveLength(2);
+  });
+
+  it("deduplicates initial table page loading in strict mode", async () => {
+    callBackendMock.mockImplementation((command, payload) => {
+      if (command === "list_database_objects") {
+        const request = (payload as { request: { parent_kind?: string; database?: string } }).request;
+        if (!request.parent_kind) {
+          return Promise.resolve([{ id: "database:app", name: "app", kind: "database", has_children: true }]);
+        }
+        return Promise.resolve([
+          { id: "table:app.users", name: "users", kind: "table", has_children: true, detail: "BASE TABLE" },
+        ]);
+      }
+      if (command === "list_database_sql_files") {
+        return Promise.resolve([{ name: "default", content: "select 1" }]);
+      }
+      if (command === "load_database_table_page") {
+        return Promise.resolve({
+          columns: [{ name: "id", data_type: "INT" }],
+          rows: [[{ kind: "number", value: "1" }]],
+          total_rows: 1,
+          page: 1,
+          page_size: 200,
+          duration_ms: 9,
+          primary_key_columns: ["id"],
+          editable: true,
+        });
+      }
+      return Promise.resolve([]);
+    });
+
+    renderDatabaseWorkspaceInStrictMode("app");
+
+    await userEvent.dblClick(await screen.findByText("users"));
+    expect(await screen.findByLabelText("表数据")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(callBackendMock.mock.calls.filter(([command]) => command === "load_database_table_page")).toHaveLength(1);
+    });
   });
 
   it("opens tables from the whole table row and shows table actions from the row context menu", async () => {
@@ -1190,6 +1274,45 @@ describe("DatabaseWorkspace", () => {
     expect(screen.getByLabelText("第 1 行 id")).toHaveClass("database-table-browser__cell--selected");
   });
 
+  it("does not edit the selected table cell when Enter is pressed after focusing the SQL editor", async () => {
+    callBackendMock.mockImplementation((command, payload) => {
+      if (command === "list_database_objects") {
+        const request = (payload as { request: { parent_kind?: string } }).request;
+        if (!request.parent_kind) {
+          return Promise.resolve([{ id: "database:app", name: "app", kind: "database", has_children: true }]);
+        }
+        return Promise.resolve([{ id: "table:app.users", name: "users", kind: "table", has_children: true }]);
+      }
+      if (command === "load_database_table_page") {
+        return Promise.resolve({
+          columns: [
+            { name: "id", data_type: "INT" },
+            { name: "name", data_type: "VARCHAR" },
+          ],
+          rows: [[{ kind: "number", value: "1" }, { kind: "text", value: "Alice" }]],
+          total_rows: 1,
+          page: 1,
+          page_size: 200,
+          duration_ms: 9,
+          primary_key_columns: ["id"],
+          editable: true,
+        });
+      }
+      return Promise.resolve([]);
+    });
+
+    renderDatabaseWorkspace("app");
+    await userEvent.dblClick(await screen.findByText("users"));
+    await userEvent.click(await screen.findByText("Alice"));
+    expect(screen.getByLabelText("第 1 行 name")).toHaveClass("database-table-browser__cell--selected");
+
+    await userEvent.click(screen.getByTestId("database-monaco-editor"));
+    expect(screen.getByTestId("database-monaco-editor")).toHaveFocus();
+    fireEvent.keyDown(window, { key: "Enter" });
+
+    expect(screen.queryByLabelText("编辑 name")).not.toBeInTheDocument();
+  });
+
   it("clears selected editable table cells with Delete", async () => {
     callBackendMock.mockImplementation((command, payload) => {
       if (command === "list_database_objects") {
@@ -1712,6 +1835,25 @@ describe("DatabaseWorkspace", () => {
     await userEvent.selectOptions(screen.getByLabelText("SQL 文件"), "report");
 
     expect(screen.getByLabelText("SQL 编辑器")).toHaveValue("select count(*) from users");
+  });
+
+  it("deduplicates SQL file loading and does not save immediately in strict mode", async () => {
+    callBackendMock.mockImplementation((command) => {
+      if (command === "list_database_sql_files") {
+        return Promise.resolve([{ name: "default", content: "select * from users" }]);
+      }
+      if (command === "save_database_sql_file") return Promise.resolve(undefined);
+      return Promise.resolve([]);
+    });
+
+    renderDatabaseWorkspaceInStrictMode("app");
+
+    expect(await screen.findByLabelText("SQL 编辑器")).toHaveValue("select * from users");
+    await waitFor(() => {
+      expect(callBackendMock.mock.calls.filter(([command]) => command === "list_database_sql_files")).toHaveLength(1);
+    });
+    await new Promise((resolve) => window.setTimeout(resolve, 650));
+    expect(callBackendMock.mock.calls.filter(([command]) => command === "save_database_sql_file")).toHaveLength(0);
   });
 
   it("keeps edited SQL file content when switching files before debounce save", async () => {

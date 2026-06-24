@@ -41,6 +41,25 @@ const DANGEROUS_SQL_KEYWORDS = new Set([
   "revoke",
 ]);
 
+const pendingSqlFileRequests = new Map<string, Promise<DatabaseSqlFile[]>>();
+
+function listDatabaseSqlFilesOnce(connectionId: string, database: string) {
+  const key = `${connectionId}:${database}`;
+  const pendingRequest = pendingSqlFileRequests.get(key);
+  if (pendingRequest) return pendingRequest;
+
+  const requestPromise = callBackend<DatabaseSqlFile[]>("list_database_sql_files", {
+    request: {
+      connection_id: connectionId,
+      database,
+    },
+  }).finally(() => {
+    pendingSqlFileRequests.delete(key);
+  });
+  pendingSqlFileRequests.set(key, requestPromise);
+  return requestPromise;
+}
+
 export function DatabaseWorkspace({ connectionId, initialDatabase, theme, fontFamily, fontSize }: DatabaseWorkspaceProps) {
   const { t } = useI18n();
   const [sql, setSql] = useState("");
@@ -65,6 +84,7 @@ export function DatabaseWorkspace({ connectionId, initialDatabase, theme, fontFa
   const [tableDdlDialog, setTableDdlDialog] = useState<{ table: DatabaseTreeNode; ddl: string; durationMs: number | null; error: string | null } | null>(null);
   const objectTreeResizeRef = useRef({ startX: 0, startWidth: DEFAULT_OBJECT_TREE_WIDTH });
   const latestSqlFileKeyRef = useRef("");
+  const dirtySqlFileKeysRef = useRef(new Set<string>());
   const monacoEditorRef = useRef<Parameters<OnMount>[0] | null>(null);
 
   useEffect(() => {
@@ -81,12 +101,7 @@ export function DatabaseWorkspace({ connectionId, initialDatabase, theme, fontFa
       return;
     }
 
-    callBackend<DatabaseSqlFile[]>("list_database_sql_files", {
-      request: {
-        connection_id: connectionId,
-        database: currentDatabase,
-      },
-    })
+    listDatabaseSqlFilesOnce(connectionId, currentDatabase)
       .then((files) => {
         if (!isActive) return;
         const nextFiles = sortSqlFiles(files.length > 0 ? files : [{ name: "default", content: "" }]);
@@ -116,10 +131,13 @@ export function DatabaseWorkspace({ connectionId, initialDatabase, theme, fontFa
   useEffect(() => {
     if (!isSqlFileLoaded || !currentDatabase || !selectedSqlFileName) return;
     const key = sqlFileKey(connectionId, currentDatabase, selectedSqlFileName);
+    if (!dirtySqlFileKeysRef.current.has(key)) return;
     latestSqlFileKeyRef.current = key;
     const timer = window.setTimeout(() => {
       if (latestSqlFileKeyRef.current !== key) return;
-      void saveSqlFileContent(currentDatabase, selectedSqlFileName, sql);
+      void saveSqlFileContent(currentDatabase, selectedSqlFileName, sql).then(() => {
+        dirtySqlFileKeysRef.current.delete(key);
+      });
     }, 500);
     return () => window.clearTimeout(timer);
   }, [connectionId, currentDatabase, isSqlFileLoaded, selectedSqlFileName, sql]);
@@ -308,8 +326,11 @@ export function DatabaseWorkspace({ connectionId, initialDatabase, theme, fontFa
     }
     const nextFile = sqlFiles.find((file) => file.name === nextName);
     if (!nextFile) return;
-    if (isSqlFileLoaded && currentDatabase && selectedSqlFileName) {
-      void saveSqlFileContent(currentDatabase, selectedSqlFileName, sql);
+    const currentKey = sqlFileKey(connectionId, currentDatabase, selectedSqlFileName);
+    if (isSqlFileLoaded && currentDatabase && selectedSqlFileName && dirtySqlFileKeysRef.current.has(currentKey)) {
+      void saveSqlFileContent(currentDatabase, selectedSqlFileName, sql).then(() => {
+        dirtySqlFileKeysRef.current.delete(currentKey);
+      });
     }
     setSelectedSqlFileName(nextFile.name);
     setSql(nextFile.content);
@@ -318,6 +339,9 @@ export function DatabaseWorkspace({ connectionId, initialDatabase, theme, fontFa
   function updateSql(nextSql: string) {
     setSql(nextSql);
     if (!isSqlFileLoaded || !selectedSqlFileName) return;
+    if (currentDatabase) {
+      dirtySqlFileKeysRef.current.add(sqlFileKey(connectionId, currentDatabase, selectedSqlFileName));
+    }
     setSqlFiles((files) => files.map((file) => (
       file.name === selectedSqlFileName ? { ...file, content: nextSql } : file
     )));

@@ -182,7 +182,7 @@ Redis 当前实现第一批基础能力：
 
 ### 操作日志
 
-DevHub 会把关键操作写入本地日志目录，便于排查连接、SFTP、Redis 和数据库问题。日志默认开启，按天写入 `<app_config_dir>/logs/devhub-YYYY-MM-DD.log`，格式为 JSON Lines。设置页可以打开日志目录或复制日志目录路径。
+DevHub 会把关键操作写入本地日志目录，便于排查连接、SFTP、Redis 和数据库问题。日志默认开启，按天写入 `<app_config_dir>/logs/devhub-YYYY-MM-DD.log`，格式为 JSON Lines。设置页可以打开日志目录。
 
 默认配置如下：
 

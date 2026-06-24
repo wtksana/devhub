@@ -33,6 +33,7 @@ import {
 
 const DEFAULT_PAGE_SIZE = 200;
 const PAGE_SIZE_OPTIONS = [10, 100, 200, 400, 500, 1000];
+
 interface DatabaseTableBrowserProps {
   connectionId: string;
   target: DatabaseTableBrowserTarget;
@@ -42,6 +43,31 @@ type DirtyRows = Record<number, Record<string, DatabaseCellValue>>;
 type EditingCell = { rowIndex: number; columnName: string; value: string } | null;
 type NewRow = { id: string; values: Record<string, DatabaseCellValue> };
 type DeleteTarget = { rowIndex: number } | null;
+type DatabaseTablePageRequest = {
+  connection_id: string;
+  database: string;
+  table: string;
+  page: number;
+  page_size: number;
+  sort_column: string | null;
+  sort_direction: DatabaseSortDirection | null;
+  order_by: string | null;
+  filter: string | null;
+};
+
+const pendingTablePageRequests = new Map<string, Promise<DatabaseTablePageResult>>();
+
+function loadDatabaseTablePageOnce(request: DatabaseTablePageRequest) {
+  const requestKey = JSON.stringify(request);
+  const pendingRequest = pendingTablePageRequests.get(requestKey);
+  if (pendingRequest) return pendingRequest;
+
+  const requestPromise = callBackend<DatabaseTablePageResult>("load_database_table_page", { request }).finally(() => {
+    pendingTablePageRequests.delete(requestKey);
+  });
+  pendingTablePageRequests.set(requestKey, requestPromise);
+  return requestPromise;
+}
 
 export function DatabaseTableBrowser({ connectionId, target }: DatabaseTableBrowserProps) {
   const { t } = useI18n();
@@ -112,18 +138,16 @@ export function DatabaseTableBrowser({ connectionId, target }: DatabaseTableBrow
     setIsLoading(true);
     setError(null);
     try {
-      const nextResult = await callBackend<DatabaseTablePageResult>("load_database_table_page", {
-        request: {
-          connection_id: connectionId,
-          database: target.database,
-          table: target.table,
-          page,
-          page_size: pageSize,
-          sort_column: sortColumn,
-          sort_direction: sortDirection,
-          order_by: orderBy || null,
-          filter: filter || null,
-        },
+      const nextResult = await loadDatabaseTablePageOnce({
+        connection_id: connectionId,
+        database: target.database,
+        table: target.table,
+        page,
+        page_size: pageSize,
+        sort_column: sortColumn,
+        sort_direction: sortDirection,
+        order_by: orderBy || null,
+        filter: filter || null,
       });
       setResult(nextResult);
       setActiveEditingCell(null);
@@ -656,8 +680,14 @@ export function DatabaseTableBrowser({ connectionId, target }: DatabaseTableBrow
                   onBlur={(event) => commitEditingCell(event.currentTarget.value)}
                   onChange={(event) => setActiveEditingCell({ ...editingCell, value: event.target.value })}
                   onKeyDown={(event) => {
-                    if (event.key === "Enter") commitEditingCell(event.currentTarget.value);
-                    if (event.key === "Escape") setActiveEditingCell(null);
+                    if (event.key === "Enter") {
+                      focusEditingCell(event.currentTarget);
+                      commitEditingCell(event.currentTarget.value);
+                    }
+                    if (event.key === "Escape") {
+                      focusEditingCell(event.currentTarget);
+                      setActiveEditingCell(null);
+                    }
                   }}
                 />
               ) : null,
@@ -816,6 +846,13 @@ function normalizePage(value: string) {
   const parsed = Number.parseInt(value, 10);
   if (!Number.isFinite(parsed) || parsed < 1) return 1;
   return parsed;
+}
+
+function focusEditingCell(editor: HTMLInputElement) {
+  const cell = editor.closest("td");
+  if (cell instanceof HTMLElement) {
+    cell.focus();
+  }
 }
 
 function isEmptyInsertCell(cell: DatabaseCellValue) {

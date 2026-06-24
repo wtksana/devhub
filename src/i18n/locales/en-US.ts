@@ -92,8 +92,6 @@ export const enUS: Dictionary = {
   "settings.logging_directory": "Log directory",
   "settings.logging_directory_desc": "Logs are written daily to a local JSON Lines directory.",
   "settings.open_log_directory": "Open log directory",
-  "settings.copy_log_directory": "Copy log directory path",
-  "settings.log_directory_copied": "Log directory path copied",
   "settings.keymap_desc": "The first version manages shortcuts through keymap.json. Conflict detection and visual editing will be added later.",
   "settings.save": "Save",
   "connections.title": "Connections",

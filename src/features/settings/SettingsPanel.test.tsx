@@ -14,7 +14,6 @@ const callBackendMock = vi.fn((command: string) => {
   if (command === "get_log_directory") return Promise.resolve("C:\\Users\\ttat\\AppData\\Roaming\\devhub\\logs");
   throw new Error(`unexpected command: ${command}`);
 });
-const writeClipboardTextMock = vi.fn(async (_text: string) => {});
 const settings: DevHubSettings = {
   appearance: {
     theme: "dark",
@@ -53,10 +52,6 @@ vi.mock("../../lib/tauri", () => ({
   callBackend: (command: string, _args?: Record<string, unknown>) => callBackendMock(command),
 }));
 
-vi.mock("../../lib/clipboard", () => ({
-  writeClipboardText: (text: string) => writeClipboardTextMock(text),
-}));
-
 vi.mock("./useSettings", () => ({
   useSettings: () => ({
     settings,
@@ -74,7 +69,6 @@ describe("SettingsPanel", () => {
     saveSettings.mockClear();
     listSystemFonts.mockClear();
     callBackendMock.mockClear();
-    writeClipboardTextMock.mockClear();
   });
 
   function renderSettingsPanel() {
@@ -333,14 +327,13 @@ describe("SettingsPanel", () => {
     });
   });
 
-  it("copies the log directory path", async () => {
+  it("does not show copy log directory path action", async () => {
+    window.HTMLElement.prototype.scrollIntoView = vi.fn();
     renderSettingsPanel();
 
     await userEvent.click(within(screen.getByLabelText("设置分类")).getByRole("button", { name: "日志" }));
-    await userEvent.click(screen.getByRole("button", { name: "复制日志目录路径" }));
 
-    expect(callBackendMock).toHaveBeenCalledWith("get_log_directory");
-    expect(writeClipboardTextMock).toHaveBeenCalledWith("C:\\Users\\ttat\\AppData\\Roaming\\devhub\\logs");
-    expect(screen.getByText("日志目录路径已复制")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "复制日志目录路径" })).not.toBeInTheDocument();
+    expect(callBackendMock).not.toHaveBeenCalledWith("get_log_directory");
   });
 });

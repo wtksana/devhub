@@ -73,6 +73,7 @@ export function DatabaseDataGrid({
   const [isSelectingRange, setIsSelectingRange] = useState(false);
   const [cellContextMenu, setCellContextMenu] = useState<ContextMenuState | null>(null);
   const tableCellRefs = useRef<Record<string, HTMLTableCellElement | null>>({});
+  const gridRef = useRef<HTMLDivElement | null>(null);
   const gridShapeKey = `${columns.map((column) => column.name).join("\n")}\n${rows.length}`;
 
   useEffect(() => {
@@ -94,6 +95,7 @@ export function DatabaseDataGrid({
     function handleKeyDown(event: KeyboardEvent) {
       if (!selectedCell) return;
       if (isTextInputEventTarget(event.target)) return;
+      if (!isKeyboardEventInsideGrid(event.target, gridRef.current)) return;
       if (event.key.toLowerCase() === "c" && (event.ctrlKey || event.metaKey)) {
         if (!selectionRange) return;
         event.preventDefault();
@@ -253,7 +255,7 @@ export function DatabaseDataGrid({
   }
 
   return (
-    <div className="database-table-browser__table-shell">
+    <div className="database-table-browser__table-shell" ref={gridRef}>
       <div className="database-result__table-wrap database-table-browser__table-wrap">
         <table style={{ width: `${tableWidth}px` }}>
           <colgroup>
@@ -440,6 +442,12 @@ function calculateColumnWidths(columns: DatabaseResultColumn[], rows: DatabaseCe
 
 function isTextInputEventTarget(target: EventTarget | null) {
   return target instanceof Element && Boolean(target.closest("input, textarea, select, [contenteditable='true']"));
+}
+
+function isKeyboardEventInsideGrid(target: EventTarget | null, grid: HTMLDivElement | null) {
+  if (!grid) return false;
+  if (target instanceof Node && grid.contains(target)) return true;
+  return Boolean(document.activeElement && grid.contains(document.activeElement));
 }
 
 function cellKey(rowIndex: number, columnIndex: number) {

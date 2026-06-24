@@ -150,16 +150,20 @@ describe("global style defaults", () => {
     expect(globalsCss).toContain("  user-select: none;");
   });
 
-  it("keeps icon button hover states flat and compact", () => {
+  it("keeps icon buttons flat while using stronger icon color and hover states", () => {
     const globalsCss = readCssSource();
 
     expect(globalsCss).toContain(".command-palette__icon-button:hover,\n.command-palette__icon-button:focus-visible");
     expect(globalsCss).toContain(".database-icon-button:hover:not(:disabled),\n.database-icon-button:focus-visible:not(:disabled)");
+    expect(globalsCss).toContain(".workspace-icon-button:hover:not(:disabled),\n.workspace-icon-button:focus-visible:not(:disabled)");
     expect(globalsCss).toContain("border-radius: 6px;");
-    expect(globalsCss).toContain("background: color-mix(in srgb, var(--button-hover) 72%, transparent);");
+    expect(globalsCss).toContain("border-color: transparent;");
+    expect(globalsCss).toContain("background: transparent;");
+    expect(globalsCss).toContain("color: var(--text);");
+    expect(globalsCss).toContain("background: color-mix(in srgb, var(--button-hover) 84%, transparent);");
     expect(globalsCss).not.toContain("0 8px 18px rgb(0 0 0 / 16%)");
     expect(globalsCss).not.toContain("transform: translateY(-1px);");
     expect(globalsCss).toContain(".command-palette__icon-button:active,\n.database-icon-button:active:not(:disabled)");
-    expect(globalsCss).toContain("background: color-mix(in srgb, var(--button-active) 78%, transparent);");
+    expect(globalsCss).toContain("background: color-mix(in srgb, var(--button-active) 88%, transparent);");
   });
 });

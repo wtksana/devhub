@@ -4,7 +4,6 @@ import { KeymapEditor } from "./KeymapEditor";
 import { useSettings } from "./useSettings";
 import type { DevHubSettings, LanguageSetting, LogLevel, SftpFileSizeUnit, ThemeName } from "./settingsTypes";
 import { callBackend } from "../../lib/tauri";
-import { writeClipboardText } from "../../lib/clipboard";
 import { useI18n } from "../../i18n/useI18n";
 
 const navItems = ["通用", "外观", "布局", "连接", "SFTP", "日志", "快捷键", "settings.json"] as const;
@@ -94,7 +93,6 @@ function SettingsPanelView({ settingsState }: { settingsState: SettingsState }) 
   const [draftSettings, setDraftSettings] = useState(settings);
   const [activeCategory, setActiveCategory] = useState<SettingsCategory>("外观");
   const [systemFonts, setSystemFonts] = useState<string[]>(fallbackFonts);
-  const [logDirectoryCopied, setLogDirectoryCopied] = useState(false);
   const sectionRefs = useRef<Record<SettingsCategory, HTMLElement | null>>({
     通用: null,
     外观: null,
@@ -259,12 +257,6 @@ function SettingsPanelView({ settingsState }: { settingsState: SettingsState }) 
 
   async function openLogDirectory() {
     await callBackend<void>("open_log_directory");
-  }
-
-  async function copyLogDirectory() {
-    const logDirectory = await callBackend<string>("get_log_directory");
-    await writeClipboardText(logDirectory);
-    setLogDirectoryCopied(true);
   }
 
   return (
@@ -569,10 +561,6 @@ function SettingsPanelView({ settingsState }: { settingsState: SettingsState }) 
               <button type="button" onClick={openLogDirectory}>
                 {t("settings.open_log_directory")}
               </button>
-              <button type="button" onClick={copyLogDirectory}>
-                {t("settings.copy_log_directory")}
-              </button>
-              {logDirectoryCopied ? <span className="settings-value">{t("settings.log_directory_copied")}</span> : null}
             </div>
           </SettingsRow>
         </section>

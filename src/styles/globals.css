@@ -254,13 +254,15 @@ p {
   border-color: transparent;
   border-radius: 6px;
   background: transparent;
+  color: var(--text);
   transition: background 120ms ease, color 120ms ease;
 }
 
 .command-palette__icon-button:hover,
 .command-palette__icon-button:focus-visible {
   border-color: transparent;
-  background: color-mix(in srgb, var(--button-hover) 72%, transparent);
+  background: color-mix(in srgb, var(--button-hover) 84%, transparent);
+  color: var(--text);
 }
 
 .command-palette__icon-button .app-icon {
@@ -1220,22 +1222,25 @@ p {
   border: 1px solid transparent;
   border-radius: 6px;
   background: transparent;
+  color: var(--text);
   transition: background 120ms ease, color 120ms ease;
 }
 
 .database-icon-button:hover:not(:disabled),
 .database-icon-button:focus-visible:not(:disabled) {
   border-color: transparent;
-  background: color-mix(in srgb, var(--button-hover) 72%, transparent);
+  background: color-mix(in srgb, var(--button-hover) 84%, transparent);
+  color: var(--text);
 }
 
 .command-palette__icon-button:active,
-.database-icon-button:active:not(:disabled) {
-  background: color-mix(in srgb, var(--button-active) 78%, transparent);
+.database-icon-button:active:not(:disabled),
+.workspace-icon-button:active:not(:disabled) {
+  background: color-mix(in srgb, var(--button-active) 88%, transparent);
 }
 
 .database-icon-button--ghost {
-  color: var(--muted);
+  color: var(--text);
 }
 
 .database-icon-button .app-icon,
@@ -1246,7 +1251,7 @@ p {
 }
 
 .database-icon-button:disabled .app-icon {
-  opacity: 0.36;
+  opacity: 0.32;
 }
 
 .workspace-icon-button {
@@ -1258,19 +1263,15 @@ p {
   border: 1px solid transparent;
   border-radius: 6px;
   background: transparent;
-  color: var(--muted);
+  color: var(--text);
   transition: background 120ms ease, color 120ms ease;
 }
 
 .workspace-icon-button:hover:not(:disabled),
 .workspace-icon-button:focus-visible:not(:disabled) {
   border-color: transparent;
-  background: color-mix(in srgb, var(--button-hover) 72%, transparent);
+  background: color-mix(in srgb, var(--button-hover) 84%, transparent);
   color: var(--text);
-}
-
-.workspace-icon-button:active:not(:disabled) {
-  background: color-mix(in srgb, var(--button-active) 78%, transparent);
 }
 
 .workspace-icon-button .app-icon {
@@ -1280,7 +1281,7 @@ p {
 }
 
 .workspace-icon-button:disabled .app-icon {
-  opacity: 0.34;
+  opacity: 0.32;
 }
 
 .database-query-panel__icon-label {

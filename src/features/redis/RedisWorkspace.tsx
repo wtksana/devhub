@@ -24,6 +24,28 @@ const REDIS_ROW_HEIGHT = 30;
 const REDIS_OVERSCAN_ROWS = 8;
 const REDIS_DEFAULT_VISIBLE_ROWS = 32;
 
+interface RedisKeyListRequest {
+  connection_id: string;
+  database: number;
+  pattern: string;
+  count: number;
+  cursor: number;
+}
+
+const pendingRedisKeyRequests = new Map<string, Promise<RedisKeyListResponse>>();
+
+function listRedisKeysOnce(request: RedisKeyListRequest) {
+  const requestKey = JSON.stringify(request);
+  const pendingRequest = pendingRedisKeyRequests.get(requestKey);
+  if (pendingRequest) return pendingRequest;
+
+  const requestPromise = callBackend<RedisKeyListResponse>("list_redis_keys", { request }).finally(() => {
+    pendingRedisKeyRequests.delete(requestKey);
+  });
+  pendingRedisKeyRequests.set(requestKey, requestPromise);
+  return requestPromise;
+}
+
 interface RedisFolderNode {
   kind: "folder";
   id: string;
@@ -289,14 +311,12 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
       let total = 0;
 
       do {
-        const response = await callBackend<RedisKeyListResponse>("list_redis_keys", {
-          request: {
-            connection_id: connectionId,
-            database: nextDatabase,
-            pattern,
-            count: nextLoadLimit - entries.length,
-            cursor: nextCursor,
-          },
+        const response = await listRedisKeysOnce({
+          connection_id: connectionId,
+          database: nextDatabase,
+          pattern,
+          count: nextLoadLimit - entries.length,
+          cursor: nextCursor,
         });
         total = response.total_count;
         entries.push(...response.entries);

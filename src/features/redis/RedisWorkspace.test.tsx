@@ -1,6 +1,7 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { StrictMode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "../../i18n/I18nProvider";
 import { callBackend } from "../../lib/tauri";
@@ -23,6 +24,16 @@ describe("RedisWorkspace", () => {
       <I18nProvider language="zh-CN">
         <RedisWorkspace {...props} />
       </I18nProvider>,
+    );
+  }
+
+  function renderRedisWorkspaceInStrictMode(props: React.ComponentProps<typeof RedisWorkspace>) {
+    return render(
+      <StrictMode>
+        <I18nProvider language="zh-CN">
+          <RedisWorkspace {...props} />
+        </I18nProvider>
+      </StrictMode>,
     );
   }
 
@@ -57,6 +68,31 @@ describe("RedisWorkspace", () => {
     expect(screen.getByText("3600")).toBeInTheDocument();
     expect(screen.getByText("共 12000 条数据，已加载 2 条")).toBeInTheDocument();
     expect(screen.getByLabelText("加载数量")).toHaveValue(5000);
+  });
+
+  it("deduplicates initial key loading in strict mode", async () => {
+    callBackendMock.mockResolvedValue({
+      total_count: 1,
+      entries: [
+        { key: "user:1", key_type: "hash", ttl: -1 },
+      ],
+    });
+
+    renderRedisWorkspaceInStrictMode({ connectionId: "redis-local", initialDatabase: 0 });
+
+    expect(await screen.findByText("user")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(callBackendMock.mock.calls.filter(([command]) => command === "list_redis_keys")).toHaveLength(1);
+    });
+    expect(callBackendMock).toHaveBeenCalledWith("list_redis_keys", {
+      request: {
+        connection_id: "redis-local",
+        database: 0,
+        pattern: "*",
+        count: 5000,
+        cursor: 0,
+      },
+    });
   });
 
   it("refreshes Redis keys with the edited database, fuzzy keyword, and load limit", async () => {

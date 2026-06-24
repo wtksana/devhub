@@ -14,6 +14,10 @@ interface DatabaseObjectTreeProps {
   onTableContextMenu?: (event: ReactMouseEvent, node: DatabaseTreeNode) => void;
 }
 
+type DatabaseObjectRequest = ReturnType<typeof childRequest>;
+
+const pendingObjectRequests = new Map<string, Promise<DatabaseTreeNode[]>>();
+
 function childRequest(connectionId: string, node?: DatabaseTreeNode) {
   if (!node) {
     return {
@@ -48,6 +52,24 @@ function childRequest(connectionId: string, node?: DatabaseTreeNode) {
     connection_id: connectionId,
     parent_kind: node.kind,
   };
+}
+
+function objectRequestKey(request: DatabaseObjectRequest) {
+  return JSON.stringify(request);
+}
+
+function listDatabaseObjectsOnce(request: DatabaseObjectRequest) {
+  const key = objectRequestKey(request);
+  const pendingRequest = pendingObjectRequests.get(key);
+  if (pendingRequest) return pendingRequest;
+
+  const requestPromise = callBackend<DatabaseTreeNode[]>("list_database_objects", {
+    request,
+  }).finally(() => {
+    pendingObjectRequests.delete(key);
+  });
+  pendingObjectRequests.set(key, requestPromise);
+  return requestPromise;
 }
 
 export function DatabaseObjectTree({ connectionId, selectedDatabase, onDatabaseChange, onOpenTable, onTableContextMenu }: DatabaseObjectTreeProps) {
@@ -91,9 +113,7 @@ export function DatabaseObjectTree({ connectionId, selectedDatabase, onDatabaseC
 
   async function loadNodes(parent?: DatabaseTreeNode) {
     try {
-      const nodes = await callBackend<DatabaseTreeNode[]>("list_database_objects", {
-        request: childRequest(connectionId, parent),
-      });
+      const nodes = await listDatabaseObjectsOnce(childRequest(connectionId, parent));
       setError("");
       return Array.isArray(nodes) ? nodes : [];
     } catch (loadError) {
