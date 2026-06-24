@@ -1,6 +1,8 @@
 use tauri::{AppHandle, Emitter, State};
 
-use crate::commands::logging::log_operation;
+use crate::commands::logging::{
+    log_operation, metadata, metadata_bool, metadata_number, metadata_string,
+};
 use crate::core::app_logger::AppLogger;
 use crate::core::credential_store::CredentialStore;
 use crate::core::settings_store::SettingsStore;
@@ -14,6 +16,47 @@ use crate::models::sftp::{
     SftpWriteTextFileResponse,
 };
 use crate::ssh::sftp_manager::{self, SftpSessionManager};
+
+fn sftp_target(session_id: &str, path: &str) -> String {
+    format!("{session_id}:{path}")
+}
+
+fn log_sftp_result<T>(
+    settings_store: &SettingsStore,
+    logger: &AppLogger,
+    action: &str,
+    target: String,
+    started_at: std::time::Instant,
+    result: &Result<T, String>,
+    metadata: Option<serde_json::Map<String, serde_json::Value>>,
+) {
+    match result {
+        Ok(_) => log_operation(
+            settings_store,
+            logger,
+            "info",
+            "sftp",
+            action,
+            Some(target),
+            "success",
+            Some(started_at),
+            None,
+            metadata,
+        ),
+        Err(error) => log_operation(
+            settings_store,
+            logger,
+            "error",
+            "sftp",
+            action,
+            Some(target),
+            "failed",
+            Some(started_at),
+            Some(error.clone()),
+            metadata,
+        ),
+    }
+}
 
 #[tauri::command]
 pub async fn get_local_path_kind(
@@ -142,97 +185,221 @@ pub async fn list_sftp_directory(
 #[tauri::command]
 pub async fn delete_sftp_path(
     sessions: State<'_, SftpSessionManager>,
+    settings_store: State<'_, SettingsStore>,
+    logger: State<'_, AppLogger>,
     request: SftpSessionPathRequest,
 ) -> Result<(), String> {
-    sessions
+    let started_at = std::time::Instant::now();
+    let target = sftp_target(&request.session_id, &request.path);
+    let result = sessions
         .delete_path(&request.session_id, &request.path)
         .await
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string());
+    log_sftp_result(
+        settings_store.inner(),
+        logger.inner(),
+        "delete_sftp_path",
+        target,
+        started_at,
+        &result,
+        None,
+    );
+    result
 }
 
 #[tauri::command]
 pub async fn rename_sftp_path(
     sessions: State<'_, SftpSessionManager>,
+    settings_store: State<'_, SettingsStore>,
+    logger: State<'_, AppLogger>,
     request: SftpSessionRenameRequest,
 ) -> Result<(), String> {
-    sessions
+    let started_at = std::time::Instant::now();
+    let target = format!("{}:{} -> {}", request.session_id, request.from, request.to);
+    let result = sessions
         .rename_path(&request.session_id, &request.from, &request.to)
         .await
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string());
+    log_sftp_result(
+        settings_store.inner(),
+        logger.inner(),
+        "rename_sftp_path",
+        target,
+        started_at,
+        &result,
+        None,
+    );
+    result
 }
 
 #[tauri::command]
 pub async fn create_sftp_directory(
     sessions: State<'_, SftpSessionManager>,
+    settings_store: State<'_, SettingsStore>,
+    logger: State<'_, AppLogger>,
     request: SftpSessionPathRequest,
 ) -> Result<(), String> {
-    sessions
+    let started_at = std::time::Instant::now();
+    let target = sftp_target(&request.session_id, &request.path);
+    let result = sessions
         .create_directory(&request.session_id, &request.path)
         .await
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string());
+    log_sftp_result(
+        settings_store.inner(),
+        logger.inner(),
+        "create_sftp_directory",
+        target,
+        started_at,
+        &result,
+        None,
+    );
+    result
 }
 
 #[tauri::command]
 pub async fn create_sftp_file(
     sessions: State<'_, SftpSessionManager>,
+    settings_store: State<'_, SettingsStore>,
+    logger: State<'_, AppLogger>,
     request: SftpSessionPathRequest,
 ) -> Result<(), String> {
-    sessions
+    let started_at = std::time::Instant::now();
+    let target = sftp_target(&request.session_id, &request.path);
+    let result = sessions
         .create_file(&request.session_id, &request.path)
         .await
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string());
+    log_sftp_result(
+        settings_store.inner(),
+        logger.inner(),
+        "create_sftp_file",
+        target,
+        started_at,
+        &result,
+        None,
+    );
+    result
 }
 
 #[tauri::command]
 pub async fn compress_sftp_path(
     sessions: State<'_, SftpSessionManager>,
+    settings_store: State<'_, SettingsStore>,
+    logger: State<'_, AppLogger>,
     request: SftpArchiveRequest,
 ) -> Result<(), String> {
-    sessions
+    let started_at = std::time::Instant::now();
+    let target = sftp_target(&request.session_id, &request.path);
+    let result = sessions
         .compress_path(&request.session_id, &request.path)
         .await
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string());
+    log_sftp_result(
+        settings_store.inner(),
+        logger.inner(),
+        "compress_sftp_path",
+        target,
+        started_at,
+        &result,
+        None,
+    );
+    result
 }
 
 #[tauri::command]
 pub async fn compress_sftp_paths(
     sessions: State<'_, SftpSessionManager>,
+    settings_store: State<'_, SettingsStore>,
+    logger: State<'_, AppLogger>,
     request: SftpCompressPathsRequest,
 ) -> Result<(), String> {
-    sessions
+    let started_at = std::time::Instant::now();
+    let target = format!(
+        "{}:{} paths -> {}",
+        request.session_id,
+        request.paths.len(),
+        request.archive_name
+    );
+    let log_metadata = metadata([("count", metadata_number(request.paths.len() as i64))]);
+    let result = sessions
         .compress_paths(&request.session_id, &request.archive_name, &request.paths)
         .await
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string());
+    log_sftp_result(
+        settings_store.inner(),
+        logger.inner(),
+        "compress_sftp_paths",
+        target,
+        started_at,
+        &result,
+        Some(log_metadata),
+    );
+    result
 }
 
 #[tauri::command]
 pub async fn extract_sftp_archive(
     sessions: State<'_, SftpSessionManager>,
+    settings_store: State<'_, SettingsStore>,
+    logger: State<'_, AppLogger>,
     request: SftpArchiveRequest,
 ) -> Result<(), String> {
-    sessions
+    let started_at = std::time::Instant::now();
+    let target = sftp_target(&request.session_id, &request.path);
+    let result = sessions
         .extract_archive(&request.session_id, &request.path)
         .await
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string());
+    log_sftp_result(
+        settings_store.inner(),
+        logger.inner(),
+        "extract_sftp_archive",
+        target,
+        started_at,
+        &result,
+        None,
+    );
+    result
 }
 
 #[tauri::command]
 pub async fn read_sftp_text_file(
     sessions: State<'_, SftpSessionManager>,
+    settings_store: State<'_, SettingsStore>,
+    logger: State<'_, AppLogger>,
     request: SftpReadTextFileRequest,
 ) -> Result<SftpTextFileResponse, String> {
-    sessions
+    let started_at = std::time::Instant::now();
+    let target = sftp_target(&request.session_id, &request.path);
+    let log_metadata = metadata([("max_bytes", metadata_number(request.max_bytes as i64))]);
+    let result = sessions
         .read_text_file(&request.session_id, &request.path, request.max_bytes)
         .await
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string());
+    log_sftp_result(
+        settings_store.inner(),
+        logger.inner(),
+        "read_sftp_text_file",
+        target,
+        started_at,
+        &result,
+        Some(log_metadata),
+    );
+    result
 }
 
 #[tauri::command]
 pub async fn write_sftp_text_file(
     sessions: State<'_, SftpSessionManager>,
+    settings_store: State<'_, SettingsStore>,
+    logger: State<'_, AppLogger>,
     request: SftpWriteTextFileRequest,
 ) -> Result<SftpWriteTextFileResponse, String> {
-    sessions
+    let started_at = std::time::Instant::now();
+    let target = sftp_target(&request.session_id, &request.path);
+    let log_metadata = metadata([("overwrite", metadata_bool(request.overwrite))]);
+    let result = sessions
         .write_text_file(
             &request.session_id,
             &request.path,
@@ -241,7 +408,17 @@ pub async fn write_sftp_text_file(
             request.overwrite,
         )
         .await
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string());
+    log_sftp_result(
+        settings_store.inner(),
+        logger.inner(),
+        "write_sftp_text_file",
+        target,
+        started_at,
+        &result,
+        Some(log_metadata),
+    );
+    result
 }
 
 #[tauri::command]
@@ -365,10 +542,18 @@ pub async fn download_sftp_file(
 pub async fn upload_sftp_directory(
     app: AppHandle,
     sessions: State<'_, SftpSessionManager>,
+    settings_store: State<'_, SettingsStore>,
+    logger: State<'_, AppLogger>,
     request: SftpUploadDirectoryRequest,
 ) -> Result<(), String> {
+    let started_at = std::time::Instant::now();
+    let target = sftp_target(&request.session_id, &request.remote_path);
+    let log_metadata = metadata([
+        ("transfer_id", metadata_string(request.transfer_id.clone())),
+        ("overwrite", metadata_bool(request.overwrite)),
+    ]);
     let transfer_id = request.transfer_id.clone();
-    sessions
+    let result = sessions
         .upload_directory(
             &request.session_id,
             &request.local_path,
@@ -386,17 +571,35 @@ pub async fn upload_sftp_directory(
             },
         )
         .await
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string());
+    log_sftp_result(
+        settings_store.inner(),
+        logger.inner(),
+        "upload_sftp_directory",
+        target,
+        started_at,
+        &result,
+        Some(log_metadata),
+    );
+    result
 }
 
 #[tauri::command]
 pub async fn download_sftp_directory(
     app: AppHandle,
     sessions: State<'_, SftpSessionManager>,
+    settings_store: State<'_, SettingsStore>,
+    logger: State<'_, AppLogger>,
     request: SftpDownloadDirectoryRequest,
 ) -> Result<(), String> {
+    let started_at = std::time::Instant::now();
+    let target = sftp_target(&request.session_id, &request.remote_path);
+    let log_metadata = metadata([
+        ("transfer_id", metadata_string(request.transfer_id.clone())),
+        ("overwrite", metadata_bool(request.overwrite)),
+    ]);
     let transfer_id = request.transfer_id.clone();
-    sessions
+    let result = sessions
         .download_directory(
             &request.session_id,
             &request.remote_path,
@@ -414,7 +617,17 @@ pub async fn download_sftp_directory(
             },
         )
         .await
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string());
+    log_sftp_result(
+        settings_store.inner(),
+        logger.inner(),
+        "download_sftp_directory",
+        target,
+        started_at,
+        &result,
+        Some(log_metadata),
+    );
+    result
 }
 
 #[tauri::command]
@@ -446,59 +659,124 @@ pub async fn cancel_sftp_transfer(
 pub async fn list_directory(
     settings_store: State<'_, SettingsStore>,
     credential_store: State<'_, CredentialStore>,
+    logger: State<'_, AppLogger>,
     request: ListDirectoryRequest,
 ) -> Result<Vec<SftpEntry>, String> {
-    sftp_manager::list_directory(
+    let started_at = std::time::Instant::now();
+    let target = sftp_target(&request.connection_id, &request.path);
+    let result = sftp_manager::list_directory(
         settings_store.inner().clone(),
         credential_store.inner().clone(),
         request.connection_id,
         request.path,
     )
-    .await
+    .await;
+    log_sftp_result(
+        settings_store.inner(),
+        logger.inner(),
+        "list_directory",
+        target,
+        started_at,
+        &result,
+        None,
+    );
+    result
 }
 
 #[tauri::command]
 pub async fn delete_path(
     settings_store: State<'_, SettingsStore>,
     credential_store: State<'_, CredentialStore>,
+    logger: State<'_, AppLogger>,
     request: DeletePathRequest,
 ) -> Result<(), String> {
-    sftp_manager::delete_path(
+    let started_at = std::time::Instant::now();
+    let target = sftp_target(&request.connection_id, &request.path);
+    let result = sftp_manager::delete_path(
         settings_store.inner().clone(),
         credential_store.inner().clone(),
         request.connection_id,
         request.path,
     )
-    .await
+    .await;
+    log_sftp_result(
+        settings_store.inner(),
+        logger.inner(),
+        "delete_path",
+        target,
+        started_at,
+        &result,
+        None,
+    );
+    result
 }
 
 #[tauri::command]
 pub async fn rename_path(
     settings_store: State<'_, SettingsStore>,
     credential_store: State<'_, CredentialStore>,
+    logger: State<'_, AppLogger>,
     request: RenamePathRequest,
 ) -> Result<(), String> {
-    sftp_manager::rename_path(
+    let started_at = std::time::Instant::now();
+    let target = format!(
+        "{}:{} -> {}",
+        request.connection_id, request.from, request.to
+    );
+    let result = sftp_manager::rename_path(
         settings_store.inner().clone(),
         credential_store.inner().clone(),
         request.connection_id,
         request.from,
         request.to,
     )
-    .await
+    .await;
+    log_sftp_result(
+        settings_store.inner(),
+        logger.inner(),
+        "rename_path",
+        target,
+        started_at,
+        &result,
+        None,
+    );
+    result
 }
 
 #[tauri::command]
 pub async fn create_directory(
     settings_store: State<'_, SettingsStore>,
     credential_store: State<'_, CredentialStore>,
+    logger: State<'_, AppLogger>,
     request: CreateDirectoryRequest,
 ) -> Result<(), String> {
-    sftp_manager::create_directory(
+    let started_at = std::time::Instant::now();
+    let target = sftp_target(&request.connection_id, &request.path);
+    let result = sftp_manager::create_directory(
         settings_store.inner().clone(),
         credential_store.inner().clone(),
         request.connection_id,
         request.path,
     )
-    .await
+    .await;
+    log_sftp_result(
+        settings_store.inner(),
+        logger.inner(),
+        "create_directory",
+        target,
+        started_at,
+        &result,
+        None,
+    );
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sftp_target;
+
+    #[test]
+    fn builds_sftp_log_target() {
+        assert_eq!(sftp_target("sftp-1", "/var/log"), "sftp-1:/var/log");
+    }
 }
