@@ -94,7 +94,7 @@ pub async fn list_database_objects(
             logger.inner(),
             "info",
             "database",
-            "list_database_objects",
+            database_object_list_action(&request),
             Some(target),
             "success",
             Some(started_at),
@@ -106,7 +106,7 @@ pub async fn list_database_objects(
             logger.inner(),
             "error",
             "database",
-            "list_database_objects",
+            database_object_list_action(&request),
             Some(target),
             "failed",
             Some(started_at),
@@ -518,6 +518,15 @@ fn database_object_list_metadata(
     log_metadata
 }
 
+fn database_object_list_action(request: &ListDatabaseObjectsRequest) -> &'static str {
+    match request.parent_kind.as_deref() {
+        None => "list_database_databases",
+        Some("database") | Some("schema") => "list_database_tables",
+        Some("table") | Some("view") => "list_database_columns",
+        _ => "list_database_objects",
+    }
+}
+
 fn append_database_object_summary(
     log_metadata: &mut serde_json::Map<String, serde_json::Value>,
     nodes: &[DatabaseTreeNode],
@@ -593,8 +602,8 @@ fn log_database_result<T>(
 #[cfg(test)]
 mod tests {
     use super::{
-        database_connection_metadata, database_object_list_metadata, database_sql_file_target,
-        database_table_target, sql_kind,
+        database_connection_metadata, database_object_list_action, database_object_list_metadata,
+        database_sql_file_target, database_table_target, sql_kind,
     };
     use crate::models::database::{DatabaseTreeNode, ListDatabaseObjectsRequest};
     use crate::models::settings::DatabaseConnectionSettings;
@@ -700,6 +709,40 @@ mod tests {
         assert_eq!(metadata["returned_tables"].as_array().unwrap().len(), 50);
         assert_eq!(metadata["returned_tables_truncated"], true);
         assert_eq!(metadata["returned_views"], json!(["v_users"]));
+    }
+
+    #[test]
+    fn classifies_database_object_list_log_action_by_parent_kind() {
+        assert_eq!(
+            database_object_list_action(&object_request(None)),
+            "list_database_databases"
+        );
+        assert_eq!(
+            database_object_list_action(&object_request(Some("database"))),
+            "list_database_tables"
+        );
+        assert_eq!(
+            database_object_list_action(&object_request(Some("schema"))),
+            "list_database_tables"
+        );
+        assert_eq!(
+            database_object_list_action(&object_request(Some("table"))),
+            "list_database_columns"
+        );
+        assert_eq!(
+            database_object_list_action(&object_request(Some("other"))),
+            "list_database_objects"
+        );
+    }
+
+    fn object_request(parent_kind: Option<&str>) -> ListDatabaseObjectsRequest {
+        ListDatabaseObjectsRequest {
+            connection_id: "mysql-local".to_string(),
+            parent_kind: parent_kind.map(str::to_string),
+            database: None,
+            schema: None,
+            table: None,
+        }
     }
 
     fn tree_node(kind: &str, name: &str) -> DatabaseTreeNode {
