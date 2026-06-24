@@ -42,6 +42,7 @@ pub async fn test_database_connection(
             "success",
             Some(started_at),
             None,
+            None,
         ),
         Err(error) => log_operation(
             settings_store.inner(),
@@ -53,6 +54,7 @@ pub async fn test_database_connection(
             "failed",
             Some(started_at),
             Some(error.clone()),
+            None,
         ),
     }
     result
@@ -101,6 +103,7 @@ pub async fn execute_database_query(
             "success",
             Some(started_at),
             None,
+            None,
         ),
         Err(error) => log_operation(
             settings_store.inner(),
@@ -112,6 +115,7 @@ pub async fn execute_database_query(
             "failed",
             Some(started_at),
             Some(error.clone()),
+            None,
         ),
     }
     result
@@ -142,6 +146,7 @@ pub async fn load_database_table_page(
             "success",
             Some(started_at),
             None,
+            None,
         ),
         Err(error) => log_operation(
             settings_store.inner(),
@@ -153,6 +158,7 @@ pub async fn load_database_table_page(
             "failed",
             Some(started_at),
             Some(error.clone()),
+            None,
         ),
     }
     result

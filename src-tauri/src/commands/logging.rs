@@ -1,6 +1,7 @@
 use crate::core::app_logger::{AppLogEntry, AppLogger};
 use crate::core::settings_store::SettingsStore;
 use serde::Deserialize;
+use serde_json::{Map, Value};
 use std::time::Instant;
 use tauri::{AppHandle, State};
 use tauri_plugin_opener::OpenerExt;
@@ -14,6 +15,7 @@ pub struct FrontendLogEntry {
     result: Option<String>,
     message: Option<String>,
     error: Option<String>,
+    metadata: Option<Map<String, Value>>,
 }
 
 #[tauri::command]
@@ -53,6 +55,9 @@ pub fn write_app_log(
     if let Some(error) = entry.error {
         log_entry = log_entry.error(error);
     }
+    if let Some(metadata) = entry.metadata {
+        log_entry = log_entry.metadata(metadata);
+    }
 
     logger.write(&settings.logging, log_entry)
 }
@@ -67,6 +72,7 @@ pub fn log_operation(
     result: &str,
     started_at: Option<Instant>,
     error: Option<String>,
+    metadata: Option<Map<String, Value>>,
 ) {
     let Ok(settings) = settings_store.load_or_create() else {
         return;
@@ -82,6 +88,28 @@ pub fn log_operation(
     if let Some(error) = error {
         entry = entry.error(error);
     }
+    if let Some(metadata) = metadata {
+        entry = entry.metadata(metadata);
+    }
 
     let _ = logger.write(&settings.logging, entry);
+}
+
+pub fn metadata(items: impl IntoIterator<Item = (&'static str, Value)>) -> Map<String, Value> {
+    items
+        .into_iter()
+        .map(|(key, value)| (key.to_string(), value))
+        .collect()
+}
+
+pub fn metadata_string(value: impl Into<String>) -> Value {
+    Value::String(value.into())
+}
+
+pub fn metadata_number(value: impl Into<i64>) -> Value {
+    Value::Number(value.into().into())
+}
+
+pub fn metadata_bool(value: bool) -> Value {
+    Value::Bool(value)
 }

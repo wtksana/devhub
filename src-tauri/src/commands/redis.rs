@@ -395,6 +395,7 @@ pub async fn test_redis_connection(
             "success",
             Some(started_at),
             None,
+            None,
         ),
         Err(error) => log_operation(
             settings_store.inner(),
@@ -406,6 +407,7 @@ pub async fn test_redis_connection(
             "failed",
             Some(started_at),
             Some(error.clone()),
+            None,
         ),
     }
     result
@@ -475,6 +477,7 @@ pub async fn list_redis_keys(
             "success",
             Some(started_at),
             None,
+            None,
         ),
         Err(error) => log_operation(
             settings_store.inner(),
@@ -486,6 +489,7 @@ pub async fn list_redis_keys(
             "failed",
             Some(started_at),
             Some(error.clone()),
+            None,
         ),
     }
     result

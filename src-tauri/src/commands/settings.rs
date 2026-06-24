@@ -63,6 +63,7 @@ pub async fn save_settings(
             "success",
             Some(started_at),
             None,
+            None,
         ),
         Err(error) => log_operation(
             settings_store.inner(),
@@ -74,6 +75,7 @@ pub async fn save_settings(
             "failed",
             Some(started_at),
             Some(error.clone()),
+            None,
         ),
     }
     result

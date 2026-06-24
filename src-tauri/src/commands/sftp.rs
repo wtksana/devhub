@@ -70,6 +70,7 @@ pub async fn open_sftp_session(
             "success",
             Some(started_at),
             None,
+            None,
         ),
         Err(error) => log_operation(
             settings_store.inner(),
@@ -81,6 +82,7 @@ pub async fn open_sftp_session(
             "failed",
             Some(started_at),
             Some(error.clone()),
+            None,
         ),
     }
     result
@@ -119,6 +121,7 @@ pub async fn list_sftp_directory(
             "success",
             Some(started_at),
             None,
+            None,
         ),
         Err(error) => log_operation(
             settings_store.inner(),
@@ -130,6 +133,7 @@ pub async fn list_sftp_directory(
             "failed",
             Some(started_at),
             Some(error.clone()),
+            None,
         ),
     }
     result
@@ -281,6 +285,7 @@ pub async fn upload_sftp_file(
             "success",
             Some(started_at),
             None,
+            None,
         ),
         Err(error) => log_operation(
             settings_store.inner(),
@@ -292,6 +297,7 @@ pub async fn upload_sftp_file(
             "failed",
             Some(started_at),
             Some(error.clone()),
+            None,
         ),
     }
     result
@@ -337,6 +343,7 @@ pub async fn download_sftp_file(
             "success",
             Some(started_at),
             None,
+            None,
         ),
         Err(error) => log_operation(
             settings_store.inner(),
@@ -348,6 +355,7 @@ pub async fn download_sftp_file(
             "failed",
             Some(started_at),
             Some(error.clone()),
+            None,
         ),
     }
     result
@@ -428,6 +436,7 @@ pub async fn cancel_sftp_transfer(
         Some(target),
         "success",
         Some(started_at),
+        None,
         None,
     );
     Ok(())

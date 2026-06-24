@@ -9,6 +9,20 @@ use std::{
     sync::Mutex,
 };
 
+const MAX_LOG_FIELD_LEN: usize = 2000;
+const REDACTED: &str = "[REDACTED]";
+const SENSITIVE_KEYS: &[&str] = &[
+    "password",
+    "passphrase",
+    "private_key",
+    "privateKey",
+    "secret",
+    "token",
+    "authorization",
+    "api_key",
+    "apiKey",
+];
+
 pub struct AppLogger {
     app_dir: PathBuf,
     lock: Mutex<()>,
@@ -83,6 +97,15 @@ impl AppLogEntry {
         self.metadata = Some(metadata);
         self
     }
+
+    fn sanitized(mut self) -> Self {
+        self.target = self.target.map(|value| sanitize_string(&value));
+        self.result = self.result.map(|value| sanitize_string(&value));
+        self.message = self.message.map(|value| sanitize_string(&value));
+        self.error = self.error.map(|value| sanitize_string(&value));
+        self.metadata = self.metadata.map(sanitize_metadata);
+        self
+    }
 }
 
 impl AppLogger {
@@ -106,6 +129,7 @@ impl AppLogger {
         fs::create_dir_all(self.log_dir()).map_err(|error| error.to_string())?;
         self.cleanup_old_logs(settings)?;
 
+        let entry = entry.sanitized();
         let path = self.log_file_path(Local::now());
         let mut file = OpenOptions::new()
             .create(true)
@@ -149,6 +173,84 @@ fn should_log(configured: &str, entry: &str) -> bool {
     level_rank(entry) >= level_rank(configured)
 }
 
+fn sanitize_metadata(metadata: Map<String, Value>) -> Map<String, Value> {
+    metadata
+        .into_iter()
+        .map(|(key, value)| {
+            if is_sensitive_key(&key) {
+                (key, Value::String(REDACTED.to_string()))
+            } else {
+                (key, sanitize_value(value))
+            }
+        })
+        .collect()
+}
+
+fn sanitize_value(value: Value) -> Value {
+    match value {
+        Value::String(value) => Value::String(sanitize_string(&value)),
+        Value::Array(values) => Value::Array(values.into_iter().map(sanitize_value).collect()),
+        Value::Object(values) => Value::Object(sanitize_metadata(values)),
+        other => other,
+    }
+}
+
+fn sanitize_string(value: &str) -> String {
+    let sanitized = redact_url_passwords(value);
+    let sanitized = redact_authorization(&sanitized);
+    truncate_string(&sanitized)
+}
+
+fn redact_url_passwords(value: &str) -> String {
+    let mut result = String::with_capacity(value.len());
+    let mut rest = value;
+
+    while let Some(scheme_index) = rest.find("://") {
+        let (prefix, after_scheme) = rest.split_at(scheme_index + 3);
+        result.push_str(prefix);
+        rest = after_scheme;
+
+        let next_separator = rest.find(['/', '?', '#'].as_ref()).unwrap_or(rest.len());
+        let authority = &rest[..next_separator];
+        if let Some(at_index) = authority.rfind('@') {
+            let credentials = &authority[..at_index];
+            if let Some(colon_index) = credentials.rfind(':') {
+                result.push_str(&credentials[..=colon_index]);
+                result.push_str(REDACTED);
+                result.push_str(&authority[at_index..]);
+                rest = &rest[next_separator..];
+                continue;
+            }
+        }
+    }
+
+    result.push_str(rest);
+    result
+}
+
+fn redact_authorization(value: &str) -> String {
+    let lower = value.to_lowercase();
+    if lower.contains("authorization") || lower.contains("bearer ") {
+        return REDACTED.to_string();
+    }
+    value.to_string()
+}
+
+fn truncate_string(value: &str) -> String {
+    if value.chars().count() <= MAX_LOG_FIELD_LEN {
+        return value.to_string();
+    }
+
+    let truncated = value.chars().take(MAX_LOG_FIELD_LEN).collect::<String>();
+    format!("{truncated}...[truncated]")
+}
+
+fn is_sensitive_key(key: &str) -> bool {
+    SENSITIVE_KEYS
+        .iter()
+        .any(|sensitive| key.eq_ignore_ascii_case(sensitive))
+}
+
 fn level_rank(level: &str) -> u8 {
     match level {
         "debug" => 10,
@@ -186,6 +288,17 @@ mod tests {
             retention_days: 14,
             include_sql: false,
         }
+    }
+
+    fn read_first_log_line(app_dir: &std::path::Path) -> String {
+        let log_dir = app_dir.join("logs");
+        let file = fs::read_dir(&log_dir)
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        fs::read_to_string(file).unwrap().trim().to_string()
     }
 
     #[test]
@@ -242,5 +355,53 @@ mod tests {
         logger.cleanup_old_logs(&config).unwrap();
 
         assert!(!log_dir.join("devhub-2000-01-01.log").exists());
+    }
+
+    #[test]
+    fn redacts_sensitive_strings_before_writing() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let logger = AppLogger::new_for_dir(temp_dir.path().to_path_buf());
+        let entry = AppLogEntry::new("error", "database", "execute_database_query")
+            .target("mysql://root:secret-password@127.0.0.1/app")
+            .message("authorization: Bearer abc123")
+            .error("redis://:redis-password@127.0.0.1/0");
+
+        logger.write(&settings(), entry).unwrap();
+
+        let content = read_first_log_line(temp_dir.path());
+        assert!(!content.contains("secret-password"));
+        assert!(!content.contains("abc123"));
+        assert!(!content.contains("redis-password"));
+        assert!(content.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn redacts_sensitive_metadata_and_truncates_long_values() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let logger = AppLogger::new_for_dir(temp_dir.path().to_path_buf());
+        let mut metadata = serde_json::Map::new();
+        metadata.insert(
+            "password".to_string(),
+            serde_json::Value::String("plain".to_string()),
+        );
+        metadata.insert(
+            "sql_kind".to_string(),
+            serde_json::Value::String("select".to_string()),
+        );
+        metadata.insert(
+            "long".to_string(),
+            serde_json::Value::String("x".repeat(3000)),
+        );
+        let entry = AppLogEntry::new("info", "frontend.database", "load")
+            .result("failed")
+            .metadata(metadata);
+
+        logger.write(&settings(), entry).unwrap();
+
+        let content = read_first_log_line(temp_dir.path());
+        let value: Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(value["metadata"]["password"], "[REDACTED]");
+        assert_eq!(value["metadata"]["sql_kind"], "select");
+        assert!(value["metadata"]["long"].as_str().unwrap().len() <= 2015);
     }
 }

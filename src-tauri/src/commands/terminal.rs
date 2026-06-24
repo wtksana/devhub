@@ -43,6 +43,7 @@ pub async fn open_terminal(
             "success",
             Some(started_at),
             None,
+            None,
         ),
         Err(error) => log_operation(
             settings_store.inner(),
@@ -54,6 +55,7 @@ pub async fn open_terminal(
             "failed",
             Some(started_at),
             Some(error.clone()),
+            None,
         ),
     }
     result
@@ -100,6 +102,7 @@ pub async fn close_terminal(
         Some(target),
         "success",
         Some(started_at),
+        None,
         None,
     );
     Ok(())
