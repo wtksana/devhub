@@ -1342,6 +1342,11 @@ p {
   color: var(--danger);
 }
 
+.database-query-panel__status {
+  margin: 0;
+  color: var(--success);
+}
+
 .database-dialog {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
@@ -1448,6 +1453,62 @@ p {
   max-width: calc(100vw - 48px);
 }
 
+.database-sql-file-execute-dialog {
+  width: min(720px, calc(100vw - 48px));
+}
+
+.database-sql-file-execute-dialog__body {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  overflow: auto;
+  padding: 12px;
+}
+
+.database-sql-file-execute-dialog__body p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.database-sql-file-execute-dialog__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+}
+
+.database-sql-file-execute-dialog__meta strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.database-sql-file-execute-dialog__meta span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.database-sql-file-execute-dialog__danger {
+  color: var(--danger) !important;
+}
+
+.database-sql-file-execute-dialog pre {
+  max-height: 300px;
+  margin: 0;
+  padding: 10px;
+  overflow: auto;
+  color: var(--text);
+  font-family: var(--terminal-font-family);
+  font-size: var(--terminal-font-size);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  background: var(--workspace);
+  border: 1px solid var(--border-subtle);
+}
+
 .database-dangerous-sql__preview {
   max-height: 160px;
   padding: 10px;
@@ -1485,6 +1546,9 @@ p {
 }
 
 .database-result header {
+  display: flex;
+  gap: 8px;
+  align-items: center;
   min-width: 0;
   overflow: hidden;
   padding: 8px 10px;
@@ -1492,6 +1556,52 @@ p {
   color: var(--muted);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.database-result header > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.database-result header > span[role="status"] {
+  margin-left: auto;
+  color: var(--success);
+}
+
+.database-table-browser__grid-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 0;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.database-table-browser__export-actions {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.database-table-browser__export-actions span[role="status"] {
+  color: var(--success);
+}
+
+.database-export-dialog__field {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 12px;
+}
+
+.database-export-dialog__field input {
+  width: 100%;
+  min-width: 0;
+  height: 32px;
+  padding: 0 8px;
 }
 
 .database-result__table-wrap {

@@ -43,6 +43,41 @@ pub struct SaveDatabaseSqlFileRequest {
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct PreviewDatabaseSqlFileRequest {
+    pub connection_id: String,
+    pub database: String,
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct DatabaseSqlFilePreview {
+    pub path: String,
+    pub file_name: String,
+    pub size_bytes: u64,
+    pub preview: String,
+    pub estimated_statement_count: u64,
+    pub dangerous: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct ExecuteDatabaseSqlFileRequest {
+    pub connection_id: String,
+    pub database: String,
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct DatabaseSqlFileExecutionResult {
+    pub executed_statements: u64,
+    pub affected_rows: u64,
+    pub duration_ms: u128,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failed_statement_index: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failed_statement_preview: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub struct LoadDatabaseTablePageRequest {
     pub connection_id: String,
     pub database: String,
@@ -74,7 +109,7 @@ pub struct DatabaseSqlFile {
     pub content: String,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DatabaseResultColumn {
     pub name: String,
     pub data_type: String,
@@ -93,6 +128,30 @@ pub enum DatabaseCellValue {
     Text { value: String },
     Number { value: String },
     Bool { value: bool },
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DatabaseResultExportFormat {
+    Csv,
+    InsertSql,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct ExportDatabaseResultRequest {
+    pub connection_id: String,
+    pub database: String,
+    pub table: Option<String>,
+    pub path: String,
+    pub format: DatabaseResultExportFormat,
+    pub columns: Vec<DatabaseResultColumn>,
+    pub rows: Vec<Vec<DatabaseCellValue>>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct DatabaseResultExportResult {
+    pub exported_rows: u64,
+    pub duration_ms: u128,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]

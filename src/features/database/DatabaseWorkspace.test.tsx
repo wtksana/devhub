@@ -5,6 +5,7 @@ import { StrictMode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "../../i18n/I18nProvider";
 import { readClipboardText, writeClipboardText } from "../../lib/clipboard";
+import { pickDatabaseExportPath, pickSqlFile } from "../../lib/fileDialog";
 import { callBackend } from "../../lib/tauri";
 import { DatabaseWorkspace } from "./DatabaseWorkspace";
 
@@ -90,6 +91,11 @@ vi.mock("../../lib/clipboard", () => ({
   writeClipboardText: vi.fn(),
 }));
 
+vi.mock("../../lib/fileDialog", () => ({
+  pickSqlFile: vi.fn(),
+  pickDatabaseExportPath: vi.fn(),
+}));
+
 vi.mock("@monaco-editor/react", () => ({
   default: monacoEditorMock,
 }));
@@ -97,6 +103,8 @@ vi.mock("@monaco-editor/react", () => ({
 const callBackendMock = vi.mocked(callBackend);
 const readClipboardTextMock = vi.mocked(readClipboardText);
 const writeClipboardTextMock = vi.mocked(writeClipboardText);
+const pickSqlFileMock = vi.mocked(pickSqlFile);
+const pickDatabaseExportPathMock = vi.mocked(pickDatabaseExportPath);
 
 describe("DatabaseWorkspace", () => {
   afterEach(() => {
@@ -1941,6 +1949,151 @@ describe("DatabaseWorkspace", () => {
     expect(screen.queryByTestId("database-monaco-editor")).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "打开编辑器" }));
     expect(screen.getByTestId("database-monaco-editor")).toBeInTheDocument();
+  });
+
+  it("previews and executes a selected SQL file", async () => {
+    pickSqlFileMock.mockResolvedValue("C:\\tmp\\seed.sql");
+    callBackendMock.mockImplementation((command) => {
+      if (command === "preview_database_sql_file") {
+        return Promise.resolve({
+          path: "C:\\tmp\\seed.sql",
+          file_name: "seed.sql",
+          size_bytes: 42,
+          preview: "insert into users(id, name) values (1, 'Alice');",
+          estimated_statement_count: 1,
+          dangerous: true,
+        });
+      }
+      if (command === "execute_database_sql_file") {
+        return Promise.resolve({
+          executed_statements: 1,
+          affected_rows: 1,
+          duration_ms: 12,
+        });
+      }
+      if (command === "list_database_sql_files") {
+        return Promise.resolve([{ name: "default", content: "" }]);
+      }
+      return Promise.resolve([]);
+    });
+
+    renderDatabaseWorkspace("app");
+
+    await userEvent.click(await screen.findByRole("button", { name: "执行 SQL 文件" }));
+
+    expect(pickSqlFileMock).toHaveBeenCalledTimes(1);
+    expect(callBackendMock).toHaveBeenCalledWith("preview_database_sql_file", {
+      request: {
+        connection_id: "mysql-dev",
+        database: "app",
+        path: "C:\\tmp\\seed.sql",
+      },
+    });
+    const dialog = await screen.findByRole("dialog", { name: "执行 SQL 文件" });
+    expect(dialog).toHaveTextContent("seed.sql");
+    expect(dialog).toHaveTextContent("42 B");
+    expect(dialog).toHaveTextContent("1 条语句");
+    expect(dialog).toHaveTextContent("insert into users");
+    expect(dialog).toHaveTextContent("检测到危险 SQL 关键词");
+
+    await userEvent.click(within(dialog).getByRole("button", { name: "执行" }));
+
+    expect(callBackendMock).toHaveBeenCalledWith("execute_database_sql_file", {
+      request: {
+        connection_id: "mysql-dev",
+        database: "app",
+        path: "C:\\tmp\\seed.sql",
+      },
+    });
+    expect(await screen.findByText("执行完成：1 条语句，影响 1 行，耗时 12 ms")).toBeInTheDocument();
+  });
+
+  it("exports the current query result to CSV", async () => {
+    pickDatabaseExportPathMock.mockResolvedValue("C:\\tmp\\app.result.20260625093000.csv");
+    callBackendMock.mockImplementation((command) => {
+      if (command === "execute_database_query") {
+        return Promise.resolve({
+          columns: [{ name: "id", data_type: "INT" }, { name: "name", data_type: "VARCHAR" }],
+          rows: [[{ kind: "number", value: "1" }, { kind: "text", value: "Alice" }]],
+          affected_rows: 0,
+          duration_ms: 8,
+          limited: false,
+        });
+      }
+      if (command === "export_database_result") {
+        return Promise.resolve({ exported_rows: 1, duration_ms: 3 });
+      }
+      if (command === "list_database_sql_files") {
+        return Promise.resolve([{ name: "default", content: "" }]);
+      }
+      return Promise.resolve([]);
+    });
+
+    renderDatabaseWorkspace("app");
+    const editor = await screen.findByLabelText("SQL 编辑器");
+    await userEvent.type(editor, "select id, name from users");
+    setSelectedSqlText("select id, name from users");
+    await executeSelectedSqlFromContextMenu(editor);
+
+    await userEvent.click(await screen.findByRole("button", { name: "导出" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "导出为 CSV" }));
+
+    expect(pickDatabaseExportPathMock).toHaveBeenCalledWith(expect.stringMatching(/app\.result\.\d{14}\.csv/), "csv");
+    expect(callBackendMock).toHaveBeenCalledWith("export_database_result", {
+      request: {
+        connection_id: "mysql-dev",
+        database: "app",
+        table: null,
+        path: "C:\\tmp\\app.result.20260625093000.csv",
+        format: "csv",
+        columns: [{ name: "id", data_type: "INT" }, { name: "name", data_type: "VARCHAR" }],
+        rows: [[{ kind: "number", value: "1" }, { kind: "text", value: "Alice" }]],
+      },
+    });
+    expect(await screen.findByText("已导出 1 行，耗时 3 ms")).toBeInTheDocument();
+  });
+
+  it("asks for a target table when exporting free query result as INSERT SQL", async () => {
+    pickDatabaseExportPathMock.mockResolvedValue("C:\\tmp\\app.users.20260625093000.sql");
+    callBackendMock.mockImplementation((command) => {
+      if (command === "execute_database_query") {
+        return Promise.resolve({
+          columns: [{ name: "id", data_type: "INT" }],
+          rows: [[{ kind: "number", value: "1" }]],
+          affected_rows: 0,
+          duration_ms: 8,
+          limited: false,
+        });
+      }
+      if (command === "export_database_result") {
+        return Promise.resolve({ exported_rows: 1, duration_ms: 3 });
+      }
+      if (command === "list_database_sql_files") {
+        return Promise.resolve([{ name: "default", content: "" }]);
+      }
+      return Promise.resolve([]);
+    });
+
+    renderDatabaseWorkspace("app");
+    const editor = await screen.findByLabelText("SQL 编辑器");
+    await userEvent.type(editor, "select id from users");
+    setSelectedSqlText("select id from users");
+    await executeSelectedSqlFromContextMenu(editor);
+
+    await userEvent.click(await screen.findByRole("button", { name: "导出" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "导出为 INSERT SQL" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "导出 INSERT SQL" });
+    await userEvent.type(within(dialog).getByLabelText("目标表名"), "users");
+    await userEvent.click(within(dialog).getByRole("button", { name: "导出" }));
+
+    expect(pickDatabaseExportPathMock).toHaveBeenCalledWith(expect.stringMatching(/app\.users\.\d{14}\.sql/), "sql");
+    expect(callBackendMock).toHaveBeenCalledWith("export_database_result", expect.objectContaining({
+      request: expect.objectContaining({
+        table: "users",
+        format: "insert_sql",
+      }),
+    }));
   });
 
   it("uses the configured default limit and disables context execution without selected SQL", async () => {

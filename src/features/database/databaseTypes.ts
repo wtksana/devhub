@@ -41,6 +41,30 @@ export interface DatabaseSqlFile {
   content: string;
 }
 
+export interface DatabaseSqlFilePreview {
+  path: string;
+  file_name: string;
+  size_bytes: number;
+  preview: string;
+  estimated_statement_count: number;
+  dangerous: boolean;
+}
+
+export interface DatabaseSqlFileExecutionResult {
+  executed_statements: number;
+  affected_rows: number;
+  duration_ms: number;
+  failed_statement_index?: number | null;
+  failed_statement_preview?: string | null;
+}
+
+export type DatabaseResultExportFormat = "csv" | "insert_sql";
+
+export interface DatabaseResultExportResult {
+  exported_rows: number;
+  duration_ms: number;
+}
+
 export interface DatabaseTableDdlResult {
   ddl: string;
   duration_ms: number;

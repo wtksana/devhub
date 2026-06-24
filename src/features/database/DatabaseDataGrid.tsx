@@ -34,6 +34,7 @@ interface DatabaseDataGridProps {
   sortDirection?: DatabaseSortDirection | null;
   page?: number;
   pageSize?: number;
+  toolbarActions?: ReactNode;
   footer?: ReactNode;
   onSortColumn?: (columnName: string) => void;
   getCellState?: (rowIndex: number, column: DatabaseResultColumn, original: DatabaseCellValue) => DatabaseDataGridCellState;
@@ -57,6 +58,7 @@ export function DatabaseDataGrid({
   sortDirection,
   page = 1,
   pageSize,
+  toolbarActions,
   footer,
   onSortColumn,
   getCellState,
@@ -256,6 +258,7 @@ export function DatabaseDataGrid({
 
   return (
     <div className="database-table-browser__table-shell" ref={gridRef}>
+      {toolbarActions ? <div className="database-table-browser__grid-actions">{toolbarActions}</div> : null}
       <div className="database-result__table-wrap database-table-browser__table-wrap">
         <table style={{ width: `${tableWidth}px` }}>
           <colgroup>

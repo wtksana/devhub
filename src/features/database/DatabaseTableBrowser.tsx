@@ -13,6 +13,7 @@ import RefreshIcon from "../../assets/icons/solar--refresh-bold.svg?react";
 import SaveChangesIcon from "../../assets/icons/material-symbols--upload.svg?react";
 import DiscardChangesIcon from "../../assets/icons/material-symbols--undo.svg?react";
 import AddRowIcon from "../../assets/icons/material-symbols--add-rounded.svg?react";
+import ExportIcon from "../../assets/icons/mdi--table-export.svg?react";
 import type {
   DatabaseCellValue,
   DatabaseResultColumn,
@@ -37,6 +38,8 @@ const PAGE_SIZE_OPTIONS = [10, 100, 200, 400, 500, 1000];
 interface DatabaseTableBrowserProps {
   connectionId: string;
   target: DatabaseTableBrowserTarget;
+  exportMessage?: string;
+  onExport?: (event: ReactMouseEvent, columns: DatabaseResultColumn[], rows: DatabaseCellValue[][], table: string) => void;
 }
 
 type DirtyRows = Record<number, Record<string, DatabaseCellValue>>;
@@ -69,7 +72,7 @@ function loadDatabaseTablePageOnce(request: DatabaseTablePageRequest) {
   return requestPromise;
 }
 
-export function DatabaseTableBrowser({ connectionId, target }: DatabaseTableBrowserProps) {
+export function DatabaseTableBrowser({ connectionId, target, exportMessage, onExport }: DatabaseTableBrowserProps) {
   const { t } = useI18n();
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
@@ -698,6 +701,20 @@ export function DatabaseTableBrowser({ connectionId, target }: DatabaseTableBrow
           onClearCellRequest={clearCell}
           onPasteCellsRequest={(rowIndex, columnIndex) => void pasteClipboardIntoCells(rowIndex, columnIndex)}
           getContextMenuItems={cellContextMenuItems}
+          toolbarActions={(
+            <div className="database-table-browser__export-actions">
+              <button
+                type="button"
+                className="database-icon-button"
+                aria-label={t("database.export")}
+                title={t("database.export")}
+                onClick={(event) => onExport?.(event, result.columns, displayedRows(), target.table)}
+              >
+                <AppIcon icon={ExportIcon} decorative />
+              </button>
+              {exportMessage ? <span role="status">{exportMessage}</span> : null}
+            </div>
+          )}
           footer={(
             <div className="database-table-browser__pagination" aria-label={t("database.pagination")}>
           <button

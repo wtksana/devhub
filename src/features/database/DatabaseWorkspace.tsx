@@ -5,7 +5,13 @@ import { logFrontendError } from "../../lib/appLogging";
 import { callBackend } from "../../lib/tauri";
 import type {
   DatabaseQueryResult,
+  DatabaseCellValue,
+  DatabaseResultColumn,
+  DatabaseResultExportFormat,
+  DatabaseResultExportResult,
+  DatabaseSqlFileExecutionResult,
   DatabaseSqlFile,
+  DatabaseSqlFilePreview,
   DatabaseTableBrowserTarget,
   DatabaseTableDdlResult,
   DatabaseTreeNode,
@@ -18,10 +24,13 @@ import { ContextMenu } from "../../app/ContextMenu";
 import type { ContextMenuState } from "../../app/ContextMenu";
 import { AppIcon } from "../../app/AppIcon";
 import { readClipboardText, writeClipboardText } from "../../lib/clipboard";
+import { pickDatabaseExportPath, pickSqlFile } from "../../lib/fileDialog";
 import { DatabaseDataGrid } from "./DatabaseDataGrid";
 import CollapseEditorIcon from "../../assets/icons/oi--collapse-up.svg?react";
 import ExpandEditorIcon from "../../assets/icons/oi--expand-down.svg?react";
 import SqlFileIcon from "../../assets/icons/ph--file-sql-light.svg?react";
+import ExecuteSqlFileIcon from "../../assets/icons/tabler--file-import.svg?react";
+import ExportIcon from "../../assets/icons/mdi--table-export.svg?react";
 
 const DEFAULT_SQL_LIMIT = 200;
 const DEFAULT_OBJECT_TREE_WIDTH = 220;
@@ -82,6 +91,13 @@ export function DatabaseWorkspace({ connectionId, initialDatabase, theme, fontFa
   const [tableContextMenu, setTableContextMenu] = useState<ContextMenuState | null>(null);
   const [tableStructureDialog, setTableStructureDialog] = useState<{ table: DatabaseTreeNode; columns: DatabaseTreeNode[]; error: string | null } | null>(null);
   const [tableDdlDialog, setTableDdlDialog] = useState<{ table: DatabaseTreeNode; ddl: string; durationMs: number | null; error: string | null } | null>(null);
+  const [sqlFilePreview, setSqlFilePreview] = useState<DatabaseSqlFilePreview | null>(null);
+  const [sqlFileMessage, setSqlFileMessage] = useState("");
+  const [isSqlFileExecuting, setIsSqlFileExecuting] = useState(false);
+  const [exportContextMenu, setExportContextMenu] = useState<ContextMenuState | null>(null);
+  const [exportMessage, setExportMessage] = useState("");
+  const [pendingInsertExport, setPendingInsertExport] = useState<{ columns: DatabaseResultColumn[]; rows: DatabaseCellValue[][] } | null>(null);
+  const [insertExportTableName, setInsertExportTableName] = useState("");
   const objectTreeResizeRef = useRef({ startX: 0, startWidth: DEFAULT_OBJECT_TREE_WIDTH });
   const latestSqlFileKeyRef = useRef("");
   const dirtySqlFileKeysRef = useRef(new Set<string>());
@@ -163,12 +179,14 @@ export function DatabaseWorkspace({ connectionId, initialDatabase, theme, fontFa
   }, [isResizingObjectTree]);
 
   useEffect(() => {
-    if (!tableStructureDialog && !tableDdlDialog) return;
+    if (!tableStructureDialog && !tableDdlDialog && !sqlFilePreview && !pendingInsertExport) return;
 
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
         if (tableStructureDialog) requestCloseTableStructureDialog();
         if (tableDdlDialog) setTableDdlDialog(null);
+        if (sqlFilePreview) setSqlFilePreview(null);
+        if (pendingInsertExport) setPendingInsertExport(null);
       }
     }
 
@@ -176,7 +194,7 @@ export function DatabaseWorkspace({ connectionId, initialDatabase, theme, fontFa
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [tableDdlDialog, tableStructureDialog]);
+  }, [pendingInsertExport, sqlFilePreview, tableDdlDialog, tableStructureDialog]);
 
   function startObjectTreeResize(event: React.MouseEvent) {
     event.preventDefault();
@@ -449,6 +467,118 @@ export function DatabaseWorkspace({ connectionId, initialDatabase, theme, fontFa
     setNewSqlFileName("");
   }
 
+  async function openSqlFilePreview() {
+    if (!currentDatabase) {
+      setError(t("database.database_required"));
+      return;
+    }
+    const path = await pickSqlFile();
+    if (!path) return;
+    setError(null);
+    try {
+      const preview = await callBackend<DatabaseSqlFilePreview>("preview_database_sql_file", {
+        request: {
+          connection_id: connectionId,
+          database: currentDatabase,
+          path,
+        },
+      });
+      setSqlFilePreview(preview);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+      void logFrontendError("frontend.database", "preview_database_sql_file", caught, `${connectionId}:${currentDatabase}:${path}`, {
+        database: currentDatabase,
+      });
+    }
+  }
+
+  async function executeSqlFile() {
+    if (!sqlFilePreview || !currentDatabase) return;
+    setIsSqlFileExecuting(true);
+    setError(null);
+    try {
+      const execution = await callBackend<DatabaseSqlFileExecutionResult>("execute_database_sql_file", {
+        request: {
+          connection_id: connectionId,
+          database: currentDatabase,
+          path: sqlFilePreview.path,
+        },
+      });
+      setSqlFilePreview(null);
+      setSqlFileMessage(t("database.sql_file_execute_summary", {
+        statements: execution.executed_statements,
+        affected: execution.affected_rows,
+        duration: execution.duration_ms,
+      }));
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+      void logFrontendError("frontend.database", "execute_database_sql_file", caught, `${connectionId}:${currentDatabase}:${sqlFilePreview.path}`, {
+        database: currentDatabase,
+      });
+    } finally {
+      setIsSqlFileExecuting(false);
+    }
+  }
+
+  function openExportMenu(event: ReactMouseEvent, columns: DatabaseResultColumn[], rows: DatabaseCellValue[][], table: string | null) {
+    event.preventDefault();
+    setExportContextMenu({
+      x: event.clientX,
+      y: event.clientY,
+      items: [
+        {
+          label: t("database.export_csv"),
+          onSelect: () => void exportResult("csv", columns, rows, table),
+        },
+        {
+          label: t("database.export_insert_sql"),
+          onSelect: () => void exportResult("insert_sql", columns, rows, table),
+        },
+      ],
+    });
+  }
+
+  async function exportResult(
+    format: DatabaseResultExportFormat,
+    columns: DatabaseResultColumn[],
+    rows: DatabaseCellValue[][],
+    table: string | null,
+  ) {
+    if (format === "insert_sql" && !table) {
+      setPendingInsertExport({ columns, rows });
+      setInsertExportTableName("");
+      return;
+    }
+    if (!currentDatabase) {
+      setError(t("database.database_required"));
+      return;
+    }
+    const extension = format === "csv" ? "csv" : "sql";
+    const path = await pickDatabaseExportPath(defaultExportName(currentDatabase, table, extension), extension);
+    if (!path) return;
+    setError(null);
+    try {
+      const exported = await callBackend<DatabaseResultExportResult>("export_database_result", {
+        request: {
+          connection_id: connectionId,
+          database: currentDatabase,
+          table,
+          path,
+          format,
+          columns,
+          rows,
+        },
+      });
+      setExportMessage(t("database.export_complete", { rows: exported.exported_rows, duration: exported.duration_ms }));
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+      void logFrontendError("frontend.database", "export_database_result", caught, `${connectionId}:${currentDatabase}:${path}`, {
+        database: currentDatabase,
+        table: table ?? "",
+      });
+    }
+  }
+
   return (
     <section
       className="database-workspace"
@@ -508,6 +638,15 @@ export function DatabaseWorkspace({ connectionId, initialDatabase, theme, fontFa
                 onChange={(event) => setDefaultLimit(event.target.value)}
               />
             </label>
+            <button
+              type="button"
+              className="database-icon-button"
+              aria-label={t("database.execute_sql_file")}
+              title={t("database.execute_sql_file")}
+              onClick={() => void openSqlFilePreview()}
+            >
+              <AppIcon icon={ExecuteSqlFileIcon} decorative />
+            </button>
             <span className="database-query-panel__monaco">{t("database.monaco_support")}</span>
           </div>
           {isEditorOpen ? (
@@ -535,17 +674,30 @@ export function DatabaseWorkspace({ connectionId, initialDatabase, theme, fontFa
             </div>
           ) : null}
           {error ? <p className="database-query-panel__error" role="alert">{error}</p> : null}
+          {sqlFileMessage ? <p className="database-query-panel__status" role="status">{sqlFileMessage}</p> : null}
         </div>
         <div className="database-workspace__content">
           {tableBrowserTarget ? (
-            <DatabaseTableBrowser connectionId={connectionId} target={tableBrowserTarget} />
-          ) : result ? <DatabaseResultView result={result} /> : (
+            <DatabaseTableBrowser
+              connectionId={connectionId}
+              target={tableBrowserTarget}
+              exportMessage={exportMessage}
+              onExport={(event, columns, rows, table) => openExportMenu(event, columns, rows, table)}
+            />
+          ) : result ? (
+            <DatabaseResultView
+              result={result}
+              exportMessage={exportMessage}
+              onExport={(event, columns, rows) => openExportMenu(event, columns, rows, null)}
+            />
+          ) : (
             <div className="database-workspace__empty" aria-label={t("database.query_result")}>{t("database.empty_query_result")}</div>
           )}
         </div>
       </div>
       <ContextMenu menu={editorContextMenu} onClose={() => setEditorContextMenu(null)} />
       <ContextMenu menu={tableContextMenu} onClose={() => setTableContextMenu(null)} />
+      <ContextMenu menu={exportContextMenu} onClose={() => setExportContextMenu(null)} />
       {dangerousSqlToConfirm ? (
         <div className="connection-dialog__backdrop">
           <div
@@ -608,6 +760,82 @@ export function DatabaseWorkspace({ connectionId, initialDatabase, theme, fontFa
               </button>
               <button type="button" disabled={!newSqlFileName.trim()} onClick={() => void createSqlFile()}>
                 {t("database.confirm")}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {sqlFilePreview ? (
+        <div className="connection-dialog__backdrop">
+          <div
+            className="connection-dialog database-dialog database-sql-file-execute-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-label={t("database.execute_sql_file")}
+          >
+            <header className="database-dialog__header">
+              <h2>{t("database.execute_sql_file")}</h2>
+            </header>
+            <div className="database-sql-file-execute-dialog__body">
+              <div className="database-sql-file-execute-dialog__meta">
+                <strong>{sqlFilePreview.file_name}</strong>
+                <span>{t("database.sql_file_preview_size", { size: sqlFilePreview.size_bytes })}</span>
+                <span>{t("database.sql_file_preview_statements", { count: sqlFilePreview.estimated_statement_count })}</span>
+              </div>
+              <p>{t("database.sql_file_execute_hint")}</p>
+              {sqlFilePreview.dangerous ? (
+                <p className="database-sql-file-execute-dialog__danger" role="alert">
+                  {t("database.sql_file_dangerous")}
+                </p>
+              ) : null}
+              <pre>{sqlFilePreview.preview}</pre>
+            </div>
+            <div className="database-dialog__actions">
+              <button type="button" onClick={() => setSqlFilePreview(null)}>
+                {t("database.cancel")}
+              </button>
+              <button type="button" disabled={isSqlFileExecuting} onClick={() => void executeSqlFile()}>
+                {t("database.sql_file_execute")}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {pendingInsertExport ? (
+        <div className="connection-dialog__backdrop">
+          <div
+            className="connection-dialog database-dialog database-export-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-label={t("database.export_insert_sql_title")}
+          >
+            <header className="database-dialog__header">
+              <h2>{t("database.export_insert_sql_title")}</h2>
+            </header>
+            <label className="database-export-dialog__field">
+              <span>{t("database.export_target_table")}</span>
+              <input
+                aria-label={t("database.export_target_table")}
+                autoFocus
+                value={insertExportTableName}
+                onChange={(event) => setInsertExportTableName(event.target.value)}
+              />
+            </label>
+            <div className="database-dialog__actions">
+              <button type="button" onClick={() => setPendingInsertExport(null)}>
+                {t("database.cancel")}
+              </button>
+              <button
+                type="button"
+                disabled={!insertExportTableName.trim()}
+                onClick={() => {
+                  const pending = pendingInsertExport;
+                  const table = insertExportTableName.trim();
+                  setPendingInsertExport(null);
+                  void exportResult("insert_sql", pending.columns, pending.rows, table);
+                }}
+              >
+                {t("database.export")}
               </button>
             </div>
           </div>
@@ -701,7 +929,15 @@ export function DatabaseWorkspace({ connectionId, initialDatabase, theme, fontFa
   );
 }
 
-function DatabaseResultView({ result }: { result: DatabaseQueryResult }) {
+function DatabaseResultView({
+  result,
+  exportMessage,
+  onExport,
+}: {
+  result: DatabaseQueryResult;
+  exportMessage: string;
+  onExport: (event: ReactMouseEvent, columns: DatabaseResultColumn[], rows: DatabaseCellValue[][]) => void;
+}) {
   const { t } = useI18n();
   const summary = result.columns.length > 0
     ? t("database.query_result_summary", {
@@ -716,7 +952,21 @@ function DatabaseResultView({ result }: { result: DatabaseQueryResult }) {
 
   return (
     <section className="database-result" aria-label={t("database.query_result")}>
-      <header>{summary}</header>
+      <header>
+        <span>{summary}</span>
+        {result.columns.length > 0 ? (
+          <button
+            type="button"
+            className="database-icon-button"
+            aria-label={t("database.export")}
+            title={t("database.export")}
+            onClick={(event) => onExport(event, result.columns, result.rows)}
+          >
+            <AppIcon icon={ExportIcon} decorative />
+          </button>
+        ) : null}
+        {exportMessage ? <span role="status">{exportMessage}</span> : null}
+      </header>
       {result.columns.length > 0 ? (
         <DatabaseDataGrid
           columns={result.columns}
@@ -725,6 +975,11 @@ function DatabaseResultView({ result }: { result: DatabaseQueryResult }) {
       ) : null}
     </section>
   );
+}
+
+function defaultExportName(database: string, table: string | null, extension: "csv" | "sql") {
+  const timestamp = new Date().toISOString().replace(/\D/g, "").slice(0, 14);
+  return `${database || "database"}.${table?.trim() || "result"}.${timestamp}.${extension}`;
 }
 
 function isDangerousSql(sql: string) {

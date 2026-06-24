@@ -133,6 +133,44 @@ pub async fn execute_database_query(
     }
 }
 
+pub async fn execute_database_statement(
+    manager: &DatabaseConnectionManager,
+    connection: &DatabaseConnectionSettings,
+    database: &str,
+    sql: &str,
+) -> Result<u64, String> {
+    let normalized_sql = sql.trim();
+    if normalized_sql.is_empty() {
+        return Ok(0);
+    }
+
+    match connection.kind.as_str() {
+        "mysql" => {
+            let DatabasePool::Mysql(pool) = manager.pool(connection, Some(database)).await? else {
+                return Err("database pool kind mismatch".to_string());
+            };
+            let mut connection = pool.acquire().await.map_err(|error| error.to_string())?;
+            sqlx::query(normalized_sql)
+                .execute(&mut *connection)
+                .await
+                .map(|result| result.rows_affected())
+                .map_err(|error| error.to_string())
+        }
+        "postgresql" => {
+            let DatabasePool::Postgresql(pool) = manager.pool(connection, None).await? else {
+                return Err("database pool kind mismatch".to_string());
+            };
+            let mut connection = pool.acquire().await.map_err(|error| error.to_string())?;
+            sqlx::query(normalized_sql)
+                .execute(&mut *connection)
+                .await
+                .map(|result| result.rows_affected())
+                .map_err(|error| error.to_string())
+        }
+        kind => Err(format!("unsupported database connection kind: {kind}")),
+    }
+}
+
 pub fn is_select_sql(sql: &str) -> bool {
     first_sql_keyword(sql).is_some_and(|keyword| keyword.eq_ignore_ascii_case("select"))
 }

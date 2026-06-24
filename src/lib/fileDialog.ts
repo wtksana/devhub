@@ -38,3 +38,20 @@ export async function pickDownloadDirectory() {
   });
   return typeof selected === "string" ? selected : null;
 }
+
+export async function pickSqlFile() {
+  const selected = await open({
+    multiple: false,
+    directory: false,
+    filters: [{ name: "SQL", extensions: ["sql"] }],
+  });
+  return typeof selected === "string" ? selected : null;
+}
+
+export async function pickDatabaseExportPath(defaultPath: string, extension: "csv" | "sql") {
+  const selected = await save({
+    defaultPath,
+    filters: [{ name: extension.toUpperCase(), extensions: [extension] }],
+  });
+  return typeof selected === "string" ? selected : null;
+}

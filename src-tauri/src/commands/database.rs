@@ -6,14 +6,19 @@ use crate::commands::logging::{
 use crate::core::app_logger::AppLogger;
 use crate::core::settings_store::SettingsStore;
 use crate::db::connection::DatabaseConnectionManager;
+use crate::db::export;
 use crate::db::metadata;
 use crate::db::query;
+use crate::db::sql_file;
 use crate::db::sql_files::DatabaseSqlFileStore;
 use crate::models::database::{
-    DatabaseQueryResult, DatabaseSqlFile, DatabaseTableDdlResult, DatabaseTablePageResult,
-    DatabaseTableUpdateResult, DeleteDatabaseTableRowsRequest, ExecuteDatabaseQueryRequest,
+    DatabaseQueryResult, DatabaseResultExportResult, DatabaseSqlFile,
+    DatabaseSqlFileExecutionResult, DatabaseSqlFilePreview, DatabaseTableDdlResult,
+    DatabaseTablePageResult, DatabaseTableUpdateResult, DeleteDatabaseTableRowsRequest,
+    ExecuteDatabaseQueryRequest, ExecuteDatabaseSqlFileRequest, ExportDatabaseResultRequest,
     GetDatabaseTableDdlRequest, InsertDatabaseTableRowsRequest, ListDatabaseSqlFilesRequest,
-    LoadDatabaseTablePageRequest, SaveDatabaseSqlFileRequest, UpdateDatabaseTableRowsRequest,
+    LoadDatabaseTablePageRequest, PreviewDatabaseSqlFileRequest, SaveDatabaseSqlFileRequest,
+    UpdateDatabaseTableRowsRequest,
 };
 use crate::models::database::{DatabaseTreeNode, ListDatabaseObjectsRequest};
 use crate::models::settings::{ConnectionSettings, DatabaseConnectionSettings};
@@ -370,6 +375,99 @@ pub fn save_database_sql_file(
     result
 }
 
+#[tauri::command]
+pub fn preview_database_sql_file(
+    settings_store: State<'_, SettingsStore>,
+    logger: State<'_, AppLogger>,
+    request: PreviewDatabaseSqlFileRequest,
+) -> Result<DatabaseSqlFilePreview, String> {
+    let started_at = std::time::Instant::now();
+    let target = database_file_target(&request.connection_id, &request.database, &request.path);
+    let log_metadata = database_file_metadata(request.database.clone(), request.path.clone());
+    let result = sql_file::preview_sql_file(&request.path);
+    log_database_result(
+        settings_store.inner(),
+        logger.inner(),
+        "preview_database_sql_file",
+        target,
+        started_at,
+        &result,
+        Some(log_metadata),
+    );
+    result
+}
+
+#[tauri::command]
+pub async fn execute_database_sql_file(
+    settings_store: State<'_, SettingsStore>,
+    database_manager: State<'_, DatabaseConnectionManager>,
+    logger: State<'_, AppLogger>,
+    request: ExecuteDatabaseSqlFileRequest,
+) -> Result<DatabaseSqlFileExecutionResult, String> {
+    let started_at = std::time::Instant::now();
+    let target = database_file_target(&request.connection_id, &request.database, &request.path);
+    let log_metadata = database_file_metadata(request.database.clone(), request.path.clone());
+    let connection = load_database_connection(settings_store.inner(), &request.connection_id)?;
+    let result = sql_file::execute_sql_file(
+        database_manager.inner(),
+        &connection,
+        &request.database,
+        &request.path,
+    )
+    .await;
+    log_database_result(
+        settings_store.inner(),
+        logger.inner(),
+        "execute_database_sql_file",
+        target,
+        started_at,
+        &result,
+        Some(log_metadata),
+    );
+    result
+}
+
+#[tauri::command]
+pub fn export_database_result(
+    settings_store: State<'_, SettingsStore>,
+    logger: State<'_, AppLogger>,
+    request: ExportDatabaseResultRequest,
+) -> Result<DatabaseResultExportResult, String> {
+    let started_at = std::time::Instant::now();
+    let target = database_file_target(&request.connection_id, &request.database, &request.path);
+    let log_metadata = metadata([
+        ("database", metadata_string(request.database.clone())),
+        ("path", metadata_string(request.path.clone())),
+        (
+            "row_count",
+            metadata_number(i64::try_from(request.rows.len()).unwrap_or(i64::MAX)),
+        ),
+    ]);
+    let connection = load_database_connection(settings_store.inner(), &request.connection_id)?;
+    let result = export::export_database_result(
+        &connection.kind,
+        request.table.as_deref(),
+        &request.path,
+        &request.format,
+        &request.columns,
+        &request.rows,
+    )
+    .map(|exported_rows| DatabaseResultExportResult {
+        exported_rows,
+        duration_ms: started_at.elapsed().as_millis(),
+    });
+    log_database_result(
+        settings_store.inner(),
+        logger.inner(),
+        "export_database_result",
+        target,
+        started_at,
+        &result,
+        Some(log_metadata),
+    );
+    result
+}
+
 fn load_database_connection(
     settings_store: &SettingsStore,
     connection_id: &str,
@@ -417,6 +515,20 @@ fn database_table_target(connection_id: &str, database: &str, table: &str) -> St
 
 fn database_sql_file_target(connection_id: &str, database: &str, name: &str) -> String {
     format!("{connection_id}:{database}:{name}")
+}
+
+fn database_file_target(connection_id: &str, database: &str, path: &str) -> String {
+    format!("{connection_id}:{database}:{path}")
+}
+
+fn database_file_metadata(
+    database: String,
+    path: String,
+) -> serde_json::Map<String, serde_json::Value> {
+    metadata([
+        ("database", metadata_string(database)),
+        ("path", metadata_string(path)),
+    ])
 }
 
 fn sql_kind(sql: &str) -> &'static str {
@@ -602,8 +714,8 @@ fn log_database_result<T>(
 #[cfg(test)]
 mod tests {
     use super::{
-        database_connection_metadata, database_object_list_action, database_object_list_metadata,
-        database_sql_file_target, database_table_target, sql_kind,
+        database_connection_metadata, database_file_target, database_object_list_action,
+        database_object_list_metadata, database_sql_file_target, database_table_target, sql_kind,
     };
     use crate::models::database::{DatabaseTreeNode, ListDatabaseObjectsRequest};
     use crate::models::settings::DatabaseConnectionSettings;
@@ -618,6 +730,10 @@ mod tests {
         assert_eq!(
             database_sql_file_target("mysql-local", "app", "default"),
             "mysql-local:app:default"
+        );
+        assert_eq!(
+            database_file_target("mysql-local", "app", "C:\\tmp\\seed.sql"),
+            "mysql-local:app:C:\\tmp\\seed.sql"
         );
     }
 
