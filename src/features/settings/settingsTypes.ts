@@ -1,6 +1,7 @@
 export type ThemeName = "dark" | "light" | "system";
 export type LanguageSetting = "system" | "zh-CN" | "en-US";
 export type SftpFileSizeUnit = "bytes" | "auto";
+export type LogLevel = "debug" | "info" | "warn" | "error";
 
 export interface AppearanceSettings {
   theme: ThemeName;
@@ -32,6 +33,13 @@ export interface TerminalLogHighlightSettings {
 
 export interface TerminalSettings {
   log_highlight: TerminalLogHighlightSettings;
+}
+
+export interface LoggingSettings {
+  enabled: boolean;
+  level: LogLevel;
+  retention_days: number;
+  include_sql: boolean;
 }
 
 export interface PasswordAuthSettings {
@@ -88,6 +96,7 @@ export interface DevHubSettings {
   layout: LayoutSettings;
   sftp: SftpSettings;
   terminal: TerminalSettings;
+  logging: LoggingSettings;
   connection_groups: string[];
   connections: ConnectionSettings[];
 }

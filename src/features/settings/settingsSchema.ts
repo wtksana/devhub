@@ -104,6 +104,13 @@ const defaultTerminalLogHighlight = {
   ],
 };
 
+const defaultLogging = {
+  enabled: true,
+  level: "info" as const,
+  retention_days: 14,
+  include_sql: false,
+};
+
 export const devHubSettingsSchema = z.object({
   appearance: z.object({
     theme: z.enum(["dark", "light", "system"]),
@@ -129,6 +136,12 @@ export const devHubSettingsSchema = z.object({
       })),
     }),
   }),
+  logging: z.object({
+    enabled: z.boolean().default(defaultLogging.enabled),
+    level: z.enum(["debug", "info", "warn", "error"]).default(defaultLogging.level),
+    retention_days: z.coerce.number().int().min(1).max(365).default(defaultLogging.retention_days),
+    include_sql: z.boolean().default(defaultLogging.include_sql),
+  }).default(defaultLogging),
   connection_groups: z.array(z.string().min(1)),
   connections: z.array(connectionSchema),
 });
@@ -151,6 +164,10 @@ export function parseSettings(value: unknown): DevHubSettings {
     settings.terminal = {
       log_highlight: defaultTerminalLogHighlight,
       ...(settings.terminal && typeof settings.terminal === "object" && !Array.isArray(settings.terminal) ? settings.terminal : {}),
+    };
+    settings.logging = {
+      ...defaultLogging,
+      ...(settings.logging && typeof settings.logging === "object" && !Array.isArray(settings.logging) ? settings.logging : {}),
     };
     if (settings.terminal && typeof settings.terminal === "object" && !Array.isArray(settings.terminal)) {
       const terminal = settings.terminal as Record<string, unknown>;

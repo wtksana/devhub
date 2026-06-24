@@ -35,6 +35,35 @@ fn creates_default_settings_when_missing() {
 }
 
 #[test]
+fn creates_default_logging_settings() {
+    let settings = DevHubSettings::default();
+
+    assert!(settings.logging.enabled);
+    assert_eq!(settings.logging.level, "info");
+    assert_eq!(settings.logging.retention_days, 14);
+    assert!(!settings.logging.include_sql);
+}
+
+#[test]
+fn saves_logging_settings() {
+    let dir = tempdir().unwrap();
+    let store = SettingsStore::new_for_dir(dir.path().to_path_buf());
+    let mut settings = DevHubSettings::default();
+    settings.logging.enabled = false;
+    settings.logging.level = "debug".to_string();
+    settings.logging.retention_days = 3;
+    settings.logging.include_sql = true;
+
+    store.save(&settings).unwrap();
+    let loaded = store.load_or_create().unwrap();
+
+    assert!(!loaded.logging.enabled);
+    assert_eq!(loaded.logging.level, "debug");
+    assert_eq!(loaded.logging.retention_days, 3);
+    assert!(loaded.logging.include_sql);
+}
+
+#[test]
 fn saves_terminal_log_highlight_settings() {
     let dir = tempdir().unwrap();
     let store = SettingsStore::new_for_dir(dir.path().to_path_buf());

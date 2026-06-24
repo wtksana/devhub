@@ -8,6 +8,12 @@
 - [x] 复制 `settings.json` 和 `keymap.json` 可以恢复非敏感工作环境。
 - [x] 设置页可以在跟随系统、简体中文和 English 之间切换界面语言。
 - [x] 语言设置写入 `settings.json` 的 `appearance.language`，新安装默认值为 `system`。
+- [x] 新安装默认包含 `logging.enabled=true`、`logging.level=info`、`logging.retention_days=14`、`logging.include_sql=false`。
+- [x] 设置页可以修改操作日志开关、日志级别、日志保留天数和是否记录完整 SQL。
+- [x] 设置页可以打开日志目录。
+- [x] 设置页可以复制日志目录路径。
+- [x] 关键操作会写入本地 JSON Lines 日志文件。
+- [x] 默认日志不会记录完整 SQL、密码、私钥口令、Redis 密码、数据库密码或私钥内容。
 
 ## 连接面板
 

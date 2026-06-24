@@ -1,5 +1,7 @@
 use tauri::State;
 
+use crate::commands::logging::log_operation;
+use crate::core::app_logger::AppLogger;
 use crate::core::settings_store::SettingsStore;
 use crate::models::settings::DevHubSettings;
 
@@ -43,11 +45,38 @@ pub async fn load_settings(
 #[tauri::command]
 pub async fn save_settings(
     settings_store: State<'_, SettingsStore>,
+    logger: State<'_, AppLogger>,
     settings: DevHubSettings,
 ) -> Result<(), String> {
-    settings_store
+    let started_at = std::time::Instant::now();
+    let result = settings_store
         .save(&settings)
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string());
+    match &result {
+        Ok(()) => log_operation(
+            settings_store.inner(),
+            logger.inner(),
+            "info",
+            "settings",
+            "save_settings",
+            None,
+            "success",
+            Some(started_at),
+            None,
+        ),
+        Err(error) => log_operation(
+            settings_store.inner(),
+            logger.inner(),
+            "error",
+            "settings",
+            "save_settings",
+            None,
+            "failed",
+            Some(started_at),
+            Some(error.clone()),
+        ),
+    }
+    result
 }
 
 #[tauri::command]

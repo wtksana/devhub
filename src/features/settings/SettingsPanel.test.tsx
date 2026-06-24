@@ -8,6 +8,13 @@ import { I18nProvider } from "../../i18n/I18nProvider";
 
 const saveSettings = vi.fn();
 const listSystemFonts = vi.fn(async () => ["Inter", "Zed Sans", "JetBrains Mono", "Consolas"]);
+const callBackendMock = vi.fn((command: string) => {
+  if (command === "list_system_fonts") return listSystemFonts();
+  if (command === "open_log_directory") return Promise.resolve();
+  if (command === "get_log_directory") return Promise.resolve("C:\\Users\\ttat\\AppData\\Roaming\\devhub\\logs");
+  throw new Error(`unexpected command: ${command}`);
+});
+const writeClipboardTextMock = vi.fn(async (_text: string) => {});
 const settings: DevHubSettings = {
   appearance: {
     theme: "dark",
@@ -32,15 +39,22 @@ const settings: DevHubSettings = {
       ],
     },
   },
+  logging: {
+    enabled: true,
+    level: "info",
+    retention_days: 14,
+    include_sql: false,
+  },
   connection_groups: [],
   connections: [],
 };
 
 vi.mock("../../lib/tauri", () => ({
-  callBackend: (command: string) => {
-    if (command === "list_system_fonts") return listSystemFonts();
-    throw new Error(`unexpected command: ${command}`);
-  },
+  callBackend: (command: string, _args?: Record<string, unknown>) => callBackendMock(command),
+}));
+
+vi.mock("../../lib/clipboard", () => ({
+  writeClipboardText: (text: string) => writeClipboardTextMock(text),
 }));
 
 vi.mock("./useSettings", () => ({
@@ -59,6 +73,8 @@ describe("SettingsPanel", () => {
     cleanup();
     saveSettings.mockClear();
     listSystemFonts.mockClear();
+    callBackendMock.mockClear();
+    writeClipboardTextMock.mockClear();
   });
 
   function renderSettingsPanel() {
@@ -291,5 +307,40 @@ describe("SettingsPanel", () => {
         },
       },
     });
+  });
+
+  it("edits logging settings and opens the log directory", async () => {
+    renderSettingsPanel();
+
+    await userEvent.click(within(screen.getByLabelText("设置分类")).getByRole("button", { name: "日志" }));
+    await userEvent.click(screen.getByLabelText("启用日志"));
+    await userEvent.selectOptions(screen.getByLabelText("日志级别"), "debug");
+    await userEvent.clear(screen.getByLabelText("日志保留天数"));
+    await userEvent.type(screen.getByLabelText("日志保留天数"), "3");
+    await userEvent.tab();
+    await userEvent.click(screen.getByLabelText("记录完整 SQL"));
+    await userEvent.click(screen.getByRole("button", { name: "打开日志目录" }));
+
+    expect(callBackendMock).toHaveBeenCalledWith("open_log_directory");
+    expect(saveSettings).toHaveBeenLastCalledWith({
+      ...settings,
+      logging: {
+        enabled: false,
+        level: "debug",
+        retention_days: 3,
+        include_sql: true,
+      },
+    });
+  });
+
+  it("copies the log directory path", async () => {
+    renderSettingsPanel();
+
+    await userEvent.click(within(screen.getByLabelText("设置分类")).getByRole("button", { name: "日志" }));
+    await userEvent.click(screen.getByRole("button", { name: "复制日志目录路径" }));
+
+    expect(callBackendMock).toHaveBeenCalledWith("get_log_directory");
+    expect(writeClipboardTextMock).toHaveBeenCalledWith("C:\\Users\\ttat\\AppData\\Roaming\\devhub\\logs");
+    expect(screen.getByText("日志目录路径已复制")).toBeInTheDocument();
   });
 });

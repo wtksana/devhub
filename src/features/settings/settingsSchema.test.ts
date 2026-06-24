@@ -254,6 +254,57 @@ describe("settings schema", () => {
     expect(settings.connection_groups).toEqual([]);
   });
 
+  it("fills default logging settings", () => {
+    const settings = parseSettings({
+      appearance: {
+        theme: "dark",
+        ui_font_family: "Consolas",
+        terminal_font_family: "Consolas",
+        terminal_font_size: 14,
+      },
+      layout: {
+        connection_sidebar_width: 280,
+      },
+      connections: [],
+    });
+
+    expect(settings.logging).toEqual({
+      enabled: true,
+      level: "info",
+      retention_days: 14,
+      include_sql: false,
+    });
+  });
+
+  it("accepts logging settings", () => {
+    const settings = parseSettings({
+      appearance: {
+        theme: "dark",
+        ui_font_family: "Consolas",
+        ui_font_size: 16,
+        terminal_font_family: "Consolas",
+        terminal_font_size: 14,
+      },
+      layout: {
+        connection_sidebar_width: 280,
+      },
+      logging: {
+        enabled: false,
+        level: "debug",
+        retention_days: 3,
+        include_sql: true,
+      },
+      connections: [],
+    });
+
+    expect(settings.logging).toEqual({
+      enabled: false,
+      level: "debug",
+      retention_days: 3,
+      include_sql: true,
+    });
+  });
+
   it("accepts terminal log highlight settings", () => {
     const settings = parseSettings({
       appearance: {

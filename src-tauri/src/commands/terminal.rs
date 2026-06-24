@@ -1,5 +1,7 @@
 use tauri::{AppHandle, State};
 
+use crate::commands::logging::log_operation;
+use crate::core::app_logger::AppLogger;
 use crate::core::credential_store::CredentialStore;
 use crate::core::settings_store::SettingsStore;
 use crate::models::terminal::{
@@ -13,9 +15,12 @@ pub async fn open_terminal(
     sessions: State<'_, SessionManager>,
     settings_store: State<'_, SettingsStore>,
     credential_store: State<'_, CredentialStore>,
+    logger: State<'_, AppLogger>,
     request: OpenTerminalRequest,
 ) -> Result<TerminalSessionResponse, String> {
-    let session_id = sessions
+    let started_at = std::time::Instant::now();
+    let connection_id = request.connection_id.clone();
+    let result = sessions
         .open_terminal(
             app,
             settings_store.inner(),
@@ -25,8 +30,33 @@ pub async fn open_terminal(
             request.rows,
         )
         .await
-        .map_err(|error| error.to_string())?;
-    Ok(TerminalSessionResponse { session_id })
+        .map(|session_id| TerminalSessionResponse { session_id })
+        .map_err(|error| error.to_string());
+    match &result {
+        Ok(_) => log_operation(
+            settings_store.inner(),
+            logger.inner(),
+            "info",
+            "terminal",
+            "open_terminal",
+            Some(connection_id),
+            "success",
+            Some(started_at),
+            None,
+        ),
+        Err(error) => log_operation(
+            settings_store.inner(),
+            logger.inner(),
+            "error",
+            "terminal",
+            "open_terminal",
+            Some(connection_id),
+            "failed",
+            Some(started_at),
+            Some(error.clone()),
+        ),
+    }
+    result
 }
 
 #[tauri::command]
@@ -54,8 +84,23 @@ pub async fn resize_terminal(
 #[tauri::command]
 pub async fn close_terminal(
     sessions: State<'_, SessionManager>,
+    settings_store: State<'_, SettingsStore>,
+    logger: State<'_, AppLogger>,
     session_id: String,
 ) -> Result<(), String> {
+    let started_at = std::time::Instant::now();
+    let target = session_id.clone();
     sessions.close(&session_id).await;
+    log_operation(
+        settings_store.inner(),
+        logger.inner(),
+        "info",
+        "terminal",
+        "close_terminal",
+        Some(target),
+        "success",
+        Some(started_at),
+        None,
+    );
     Ok(())
 }

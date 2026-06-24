@@ -9,6 +9,7 @@ pub mod ssh;
 mod tests;
 
 use crate::commands::redis::RedisConnectionManager;
+use crate::core::app_logger::AppLogger;
 use crate::core::credential_store::CredentialStore;
 use crate::core::settings_store::SettingsStore;
 use crate::core::window_state::{WindowState, WindowStateStore};
@@ -59,6 +60,7 @@ pub fn run() {
             }
 
             app.manage(SettingsStore::new_for_dir(app_dir.clone()));
+            app.manage(AppLogger::new_for_dir(app_dir.clone()));
             app.manage(DatabaseSqlFileStore::new_for_dir(app_dir));
             app.manage(CredentialStore::new("devhub"));
             app.manage(DatabaseConnectionManager::default());
@@ -74,6 +76,9 @@ pub fn run() {
             commands::settings::load_settings,
             commands::settings::save_settings,
             commands::settings::list_system_fonts,
+            commands::logging::get_log_directory,
+            commands::logging::open_log_directory,
+            commands::logging::write_app_log,
             commands::database::test_database_connection,
             commands::database::test_database_connection_config,
             commands::database::list_database_objects,

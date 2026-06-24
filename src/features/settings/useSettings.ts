@@ -30,6 +30,12 @@ const defaultSettings: DevHubSettings = {
       ],
     },
   },
+  logging: {
+    enabled: true,
+    level: "info",
+    retention_days: 14,
+    include_sql: false,
+  },
   connection_groups: [],
   connections: [],
 };

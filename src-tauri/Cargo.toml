@@ -36,6 +36,7 @@ tauri-plugin-dialog = "2"
 redis = "0.32"
 percent-encoding = "2"
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "mysql", "postgres", "chrono", "bigdecimal"] }
+chrono = { version = "0.4", features = ["serde"] }
 
 [dev-dependencies]
 tempfile = "3"

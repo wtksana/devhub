@@ -2,11 +2,12 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNod
 import { SettingsJsonEditor } from "./SettingsJsonEditor";
 import { KeymapEditor } from "./KeymapEditor";
 import { useSettings } from "./useSettings";
-import type { DevHubSettings, LanguageSetting, SftpFileSizeUnit, ThemeName } from "./settingsTypes";
+import type { DevHubSettings, LanguageSetting, LogLevel, SftpFileSizeUnit, ThemeName } from "./settingsTypes";
 import { callBackend } from "../../lib/tauri";
+import { writeClipboardText } from "../../lib/clipboard";
 import { useI18n } from "../../i18n/useI18n";
 
-const navItems = ["通用", "外观", "布局", "连接", "SFTP", "快捷键", "settings.json"] as const;
+const navItems = ["通用", "外观", "布局", "连接", "SFTP", "日志", "快捷键", "settings.json"] as const;
 type SettingsCategory = (typeof navItems)[number];
 type SettingsState = ReturnType<typeof useSettings>;
 const fallbackFonts = ["Inter", "Segoe UI", "Zed Sans", "JetBrains Mono", "Consolas"];
@@ -93,12 +94,14 @@ function SettingsPanelView({ settingsState }: { settingsState: SettingsState }) 
   const [draftSettings, setDraftSettings] = useState(settings);
   const [activeCategory, setActiveCategory] = useState<SettingsCategory>("外观");
   const [systemFonts, setSystemFonts] = useState<string[]>(fallbackFonts);
+  const [logDirectoryCopied, setLogDirectoryCopied] = useState(false);
   const sectionRefs = useRef<Record<SettingsCategory, HTMLElement | null>>({
     通用: null,
     外观: null,
     布局: null,
     连接: null,
     SFTP: null,
+    日志: null,
     快捷键: null,
     "settings.json": null,
   });
@@ -180,6 +183,16 @@ function SettingsPanelView({ settingsState }: { settingsState: SettingsState }) 
     });
   }
 
+  function updateLogging(nextLogging: Partial<DevHubSettings["logging"]>) {
+    updateSettings({
+      ...draftSettings,
+      logging: {
+        ...draftSettings.logging,
+        ...nextLogging,
+      },
+    });
+  }
+
   function updateLogHighlight(nextLogHighlight: Partial<DevHubSettings["terminal"]["log_highlight"]>) {
     updateTerminal({
       log_highlight: {
@@ -237,10 +250,21 @@ function SettingsPanelView({ settingsState }: { settingsState: SettingsState }) 
       布局: t("settings.layout"),
       连接: t("settings.connections"),
       SFTP: "SFTP",
+      日志: t("settings.logging"),
       快捷键: t("settings.shortcuts"),
       "settings.json": "settings.json",
     };
     return labels[category];
+  }
+
+  async function openLogDirectory() {
+    await callBackend<void>("open_log_directory");
+  }
+
+  async function copyLogDirectory() {
+    const logDirectory = await callBackend<string>("get_log_directory");
+    await writeClipboardText(logDirectory);
+    setLogDirectoryCopied(true);
   }
 
   return (
@@ -482,6 +506,74 @@ function SettingsPanelView({ settingsState }: { settingsState: SettingsState }) 
               <option value="bytes">B</option>
               <option value="auto">B / KB / MB</option>
             </select>
+          </SettingsRow>
+        </section>
+
+        <section
+          className="settings-section"
+          aria-labelledby="settings-logging-heading"
+          ref={(element) => {
+            sectionRefs.current["日志"] = element;
+          }}
+        >
+          <header>
+            <h2 id="settings-logging-heading">{t("settings.logging")}</h2>
+          </header>
+          <SettingsRow title={t("settings.logging_enabled")} description={t("settings.logging_enabled_desc")}>
+            <input
+              aria-label={t("settings.logging_enabled")}
+              type="checkbox"
+              checked={draftSettings.logging.enabled}
+              onChange={(event) => updateLogging({ enabled: event.target.checked })}
+            />
+          </SettingsRow>
+          <SettingsRow title={t("settings.logging_level")} description={t("settings.logging_level_desc")}>
+            <select
+              aria-label={t("settings.logging_level")}
+              value={draftSettings.logging.level}
+              onChange={(event) => updateLogging({ level: event.target.value as LogLevel })}
+            >
+              <option value="debug">debug</option>
+              <option value="info">info</option>
+              <option value="warn">warn</option>
+              <option value="error">error</option>
+            </select>
+          </SettingsRow>
+          <SettingsRow title={t("settings.logging_retention_days")} description={t("settings.logging_retention_days_desc")}>
+            <input
+              aria-label={t("settings.logging_retention_days")}
+              type="number"
+              min={1}
+              max={365}
+              value={draftSettings.logging.retention_days}
+              onChange={(event) =>
+                setDraftSettings({
+                  ...draftSettings,
+                  logging: { ...draftSettings.logging, retention_days: Number(event.target.value) },
+                })
+              }
+              onBlur={(event) => updateLogging({ retention_days: Number(event.target.value) })}
+              onKeyDown={commitOnEnter}
+            />
+          </SettingsRow>
+          <SettingsRow title={t("settings.logging_include_sql")} description={t("settings.logging_include_sql_desc")}>
+            <input
+              aria-label={t("settings.logging_include_sql")}
+              type="checkbox"
+              checked={draftSettings.logging.include_sql}
+              onChange={(event) => updateLogging({ include_sql: event.target.checked })}
+            />
+          </SettingsRow>
+          <SettingsRow title={t("settings.logging_directory")} description={t("settings.logging_directory_desc")}>
+            <div className="settings-action-row">
+              <button type="button" onClick={openLogDirectory}>
+                {t("settings.open_log_directory")}
+              </button>
+              <button type="button" onClick={copyLogDirectory}>
+                {t("settings.copy_log_directory")}
+              </button>
+              {logDirectoryCopied ? <span className="settings-value">{t("settings.log_directory_copied")}</span> : null}
+            </div>
           </SettingsRow>
         </section>
 

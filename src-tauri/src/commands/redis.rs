@@ -5,6 +5,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tauri::State;
 
+use crate::commands::logging::log_operation;
+use crate::core::app_logger::AppLogger;
 use crate::core::settings_store::SettingsStore;
 use crate::models::settings::{ConnectionSettings, RedisConnectionSettings};
 
@@ -376,10 +378,37 @@ enum NormalizedCreateRedisKeyValue {
 #[tauri::command]
 pub async fn test_redis_connection(
     settings_store: State<'_, SettingsStore>,
+    logger: State<'_, AppLogger>,
     connection_id: String,
 ) -> Result<String, String> {
+    let started_at = std::time::Instant::now();
     let connection = load_redis_connection(settings_store.inner(), &connection_id)?;
-    test_redis_connection_value(connection).await
+    let result = test_redis_connection_value(connection).await;
+    match &result {
+        Ok(_) => log_operation(
+            settings_store.inner(),
+            logger.inner(),
+            "info",
+            "redis",
+            "test_redis_connection",
+            Some(connection_id),
+            "success",
+            Some(started_at),
+            None,
+        ),
+        Err(error) => log_operation(
+            settings_store.inner(),
+            logger.inner(),
+            "error",
+            "redis",
+            "test_redis_connection",
+            Some(connection_id),
+            "failed",
+            Some(started_at),
+            Some(error.clone()),
+        ),
+    }
+    result
 }
 
 #[tauri::command]
@@ -393,14 +422,17 @@ pub async fn test_redis_connection_config(
 pub async fn list_redis_keys(
     settings_store: State<'_, SettingsStore>,
     redis_manager: State<'_, RedisConnectionManager>,
+    logger: State<'_, AppLogger>,
     request: ListRedisKeysRequest,
 ) -> Result<RedisKeyListResponse, String> {
+    let started_at = std::time::Instant::now();
+    let target = format!("{}:{}", request.connection_id, request.database);
     let mut connection = load_redis_connection(settings_store.inner(), &request.connection_id)?;
     let normalized = normalize_list_redis_keys_request(&request);
     connection.database = normalized.database;
     let redis_manager = redis_manager.inner().clone();
 
-    tokio::task::spawn_blocking(move || {
+    let result = tokio::task::spawn_blocking(move || {
         with_redis_connection(&redis_manager, &connection, |redis_connection| {
             let total_count = redis::cmd("DBSIZE")
                 .query::<u64>(redis_connection)
@@ -431,7 +463,32 @@ pub async fn list_redis_keys(
         })
     })
     .await
-    .map_err(|error| error.to_string())?
+    .map_err(|error| error.to_string())?;
+    match &result {
+        Ok(_) => log_operation(
+            settings_store.inner(),
+            logger.inner(),
+            "info",
+            "redis",
+            "list_redis_keys",
+            Some(target),
+            "success",
+            Some(started_at),
+            None,
+        ),
+        Err(error) => log_operation(
+            settings_store.inner(),
+            logger.inner(),
+            "error",
+            "redis",
+            "list_redis_keys",
+            Some(target),
+            "failed",
+            Some(started_at),
+            Some(error.clone()),
+        ),
+    }
+    result
 }
 
 #[tauri::command]

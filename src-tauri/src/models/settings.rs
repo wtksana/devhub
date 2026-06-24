@@ -59,8 +59,28 @@ pub struct TerminalSettings {
     pub log_highlight: TerminalLogHighlightSettings,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LoggingSettings {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default = "default_log_level")]
+    pub level: String,
+    #[serde(default = "default_log_retention_days")]
+    pub retention_days: u16,
+    #[serde(default)]
+    pub include_sql: bool,
+}
+
 fn default_true() -> bool {
     true
+}
+
+fn default_log_level() -> String {
+    "info".to_string()
+}
+
+fn default_log_retention_days() -> u16 {
+    14
 }
 
 fn default_log_highlight_rules() -> Vec<TerminalLogHighlightRule> {
@@ -423,6 +443,8 @@ pub struct DevHubSettings {
     #[serde(default)]
     pub terminal: TerminalSettings,
     #[serde(default)]
+    pub logging: LoggingSettings,
+    #[serde(default)]
     pub connection_groups: Vec<String>,
     pub connections: Vec<ConnectionSettings>,
 }
@@ -453,6 +475,17 @@ impl Default for TerminalSettings {
     }
 }
 
+impl Default for LoggingSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            level: default_log_level(),
+            retention_days: default_log_retention_days(),
+            include_sql: false,
+        }
+    }
+}
+
 impl Default for DevHubSettings {
     fn default() -> Self {
         Self {
@@ -469,6 +502,7 @@ impl Default for DevHubSettings {
             },
             sftp: SftpSettings::default(),
             terminal: TerminalSettings::default(),
+            logging: LoggingSettings::default(),
             connection_groups: Vec::new(),
             connections: Vec::new(),
         }
