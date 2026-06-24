@@ -1,6 +1,8 @@
 use tauri::State;
 
-use crate::commands::logging::{log_operation, metadata, metadata_number, metadata_string};
+use crate::commands::logging::{
+    log_operation, metadata, metadata_bool, metadata_number, metadata_string,
+};
 use crate::core::app_logger::AppLogger;
 use crate::core::settings_store::SettingsStore;
 use crate::db::connection::DatabaseConnectionManager;
@@ -40,7 +42,7 @@ pub async fn test_database_connection(
             "success",
             Some(started_at),
             None,
-            None,
+            Some(database_connection_metadata(&connection)),
         ),
         Err(error) => log_operation(
             settings_store.inner(),
@@ -52,7 +54,7 @@ pub async fn test_database_connection(
             "failed",
             Some(started_at),
             Some(error.clone()),
-            None,
+            Some(database_connection_metadata(&connection)),
         ),
     }
     result
@@ -83,22 +85,35 @@ pub async fn list_database_objects(
         }
         _ => request.connection_id.clone(),
     };
-    let metadata = request
-        .database
-        .clone()
-        .map(|database| metadata([("database", metadata_string(database))]));
     let connection = load_database_connection(settings_store.inner(), &request.connection_id)?;
     let result =
         metadata::list_database_objects(database_manager.inner(), &connection, &request).await;
-    log_database_result(
-        settings_store.inner(),
-        logger.inner(),
-        "list_database_objects",
-        target,
-        started_at,
-        &result,
-        metadata,
-    );
+    match &result {
+        Ok(nodes) => log_operation(
+            settings_store.inner(),
+            logger.inner(),
+            "info",
+            "database",
+            "list_database_objects",
+            Some(target),
+            "success",
+            Some(started_at),
+            None,
+            Some(database_object_list_metadata(&request, nodes)),
+        ),
+        Err(error) => log_operation(
+            settings_store.inner(),
+            logger.inner(),
+            "error",
+            "database",
+            "list_database_objects",
+            Some(target),
+            "failed",
+            Some(started_at),
+            Some(error.clone()),
+            Some(database_object_request_metadata(&request)),
+        ),
+    }
     result
 }
 
@@ -430,6 +445,114 @@ fn database_table_metadata(
     ])
 }
 
+const DATABASE_OBJECT_LOG_NAME_LIMIT: usize = 50;
+
+fn database_connection_metadata(
+    connection: &DatabaseConnectionSettings,
+) -> serde_json::Map<String, serde_json::Value> {
+    let mut items = vec![
+        ("kind", metadata_string(connection.kind.clone())),
+        ("username", metadata_string(connection.username.clone())),
+        ("host", metadata_string(connection.host.clone())),
+        ("port", metadata_number(i64::from(connection.port))),
+        ("address", metadata_string(database_log_address(connection))),
+    ];
+    if let Some(database) = connection
+        .database
+        .as_ref()
+        .filter(|value| !value.is_empty())
+    {
+        items.push(("database", metadata_string(database.clone())));
+    }
+    metadata(items)
+}
+
+fn database_log_address(connection: &DatabaseConnectionSettings) -> String {
+    let base = format!(
+        "{}://{}@{}:{}",
+        connection.kind, connection.username, connection.host, connection.port
+    );
+    match connection
+        .database
+        .as_deref()
+        .filter(|database| !database.is_empty())
+    {
+        Some(database) => format!("{base}/{database}"),
+        None => base,
+    }
+}
+
+fn database_object_request_metadata(
+    request: &ListDatabaseObjectsRequest,
+) -> serde_json::Map<String, serde_json::Value> {
+    let mut items = Vec::new();
+    if let Some(parent_kind) = request
+        .parent_kind
+        .as_ref()
+        .filter(|value| !value.is_empty())
+    {
+        items.push(("parent_kind", metadata_string(parent_kind.clone())));
+    }
+    if let Some(database) = request.database.as_ref().filter(|value| !value.is_empty()) {
+        items.push(("database", metadata_string(database.clone())));
+    }
+    if let Some(schema) = request.schema.as_ref().filter(|value| !value.is_empty()) {
+        items.push(("schema", metadata_string(schema.clone())));
+    }
+    if let Some(table) = request.table.as_ref().filter(|value| !value.is_empty()) {
+        items.push(("table", metadata_string(table.clone())));
+    }
+    metadata(items)
+}
+
+fn database_object_list_metadata(
+    request: &ListDatabaseObjectsRequest,
+    nodes: &[DatabaseTreeNode],
+) -> serde_json::Map<String, serde_json::Value> {
+    let mut log_metadata = database_object_request_metadata(request);
+    append_database_object_summary(&mut log_metadata, nodes, "database", "databases");
+    append_database_object_summary(&mut log_metadata, nodes, "schema", "schemas");
+    append_database_object_summary(&mut log_metadata, nodes, "table", "tables");
+    append_database_object_summary(&mut log_metadata, nodes, "view", "views");
+    append_database_object_summary(&mut log_metadata, nodes, "column", "columns");
+    log_metadata
+}
+
+fn append_database_object_summary(
+    log_metadata: &mut serde_json::Map<String, serde_json::Value>,
+    nodes: &[DatabaseTreeNode],
+    kind: &str,
+    plural_name: &str,
+) {
+    let names = nodes
+        .iter()
+        .filter(|node| node.kind == kind)
+        .map(|node| node.name.clone())
+        .collect::<Vec<_>>();
+    if names.is_empty() {
+        return;
+    }
+
+    let count_key = format!("returned_{kind}_count");
+    log_metadata.insert(count_key, metadata_number(names.len() as i64));
+    let truncated = names.len() > DATABASE_OBJECT_LOG_NAME_LIMIT;
+    let values = names
+        .into_iter()
+        .take(DATABASE_OBJECT_LOG_NAME_LIMIT)
+        .map(serde_json::Value::String)
+        .collect::<Vec<_>>();
+    log_metadata.insert(
+        format!("returned_{plural_name}"),
+        serde_json::Value::Array(values),
+    );
+    if truncated {
+        log_metadata.insert(
+            format!("returned_{plural_name}_truncated"),
+            metadata_bool(true),
+        );
+    }
+}
+
 fn log_database_result<T>(
     settings_store: &SettingsStore,
     logger: &AppLogger,
@@ -469,7 +592,13 @@ fn log_database_result<T>(
 
 #[cfg(test)]
 mod tests {
-    use super::{database_sql_file_target, database_table_target, sql_kind};
+    use super::{
+        database_connection_metadata, database_object_list_metadata, database_sql_file_target,
+        database_table_target, sql_kind,
+    };
+    use crate::models::database::{DatabaseTreeNode, ListDatabaseObjectsRequest};
+    use crate::models::settings::DatabaseConnectionSettings;
+    use serde_json::json;
 
     #[test]
     fn builds_database_log_targets() {
@@ -495,5 +624,91 @@ mod tests {
         assert_eq!(sql_kind("delete from users"), "delete");
         assert_eq!(sql_kind("create table t(id int)"), "ddl");
         assert_eq!(sql_kind("show tables"), "other");
+    }
+
+    #[test]
+    fn builds_database_connection_metadata_without_password() {
+        let connection = DatabaseConnectionSettings {
+            kind: "mysql".to_string(),
+            id: "mysql-local".to_string(),
+            name: "本地 MySQL".to_string(),
+            group: Some("测试".to_string()),
+            host: "127.0.0.1".to_string(),
+            port: 3306,
+            username: "root".to_string(),
+            password: "secret".to_string(),
+            database: Some("app".to_string()),
+        };
+
+        let metadata = database_connection_metadata(&connection);
+
+        assert_eq!(metadata["kind"], "mysql");
+        assert_eq!(metadata["username"], "root");
+        assert_eq!(metadata["host"], "127.0.0.1");
+        assert_eq!(metadata["port"], 3306);
+        assert_eq!(metadata["database"], "app");
+        assert_eq!(metadata["address"], "mysql://root@127.0.0.1:3306/app");
+        assert!(!metadata.contains_key("password"));
+    }
+
+    #[test]
+    fn summarizes_returned_databases_for_root_object_list() {
+        let request = ListDatabaseObjectsRequest {
+            connection_id: "mysql-local".to_string(),
+            parent_kind: None,
+            database: None,
+            schema: None,
+            table: None,
+        };
+        let nodes = vec![
+            tree_node("database", "app"),
+            tree_node("database", "information_schema"),
+            tree_node("schema", "public"),
+        ];
+
+        let metadata = database_object_list_metadata(&request, &nodes);
+
+        assert_eq!(metadata["returned_database_count"], 2);
+        assert_eq!(metadata["returned_schema_count"], 1);
+        assert_eq!(
+            metadata["returned_databases"],
+            json!(["app", "information_schema"])
+        );
+        assert_eq!(metadata["returned_schemas"], json!(["public"]));
+    }
+
+    #[test]
+    fn summarizes_returned_tables_and_truncates_names() {
+        let request = ListDatabaseObjectsRequest {
+            connection_id: "mysql-local".to_string(),
+            parent_kind: Some("database".to_string()),
+            database: Some("app".to_string()),
+            schema: None,
+            table: None,
+        };
+        let mut nodes = (0..55)
+            .map(|index| tree_node("table", &format!("table_{index:02}")))
+            .collect::<Vec<_>>();
+        nodes.push(tree_node("view", "v_users"));
+
+        let metadata = database_object_list_metadata(&request, &nodes);
+
+        assert_eq!(metadata["database"], "app");
+        assert_eq!(metadata["parent_kind"], "database");
+        assert_eq!(metadata["returned_table_count"], 55);
+        assert_eq!(metadata["returned_view_count"], 1);
+        assert_eq!(metadata["returned_tables"].as_array().unwrap().len(), 50);
+        assert_eq!(metadata["returned_tables_truncated"], true);
+        assert_eq!(metadata["returned_views"], json!(["v_users"]));
+    }
+
+    fn tree_node(kind: &str, name: &str) -> DatabaseTreeNode {
+        DatabaseTreeNode {
+            id: format!("{kind}:{name}"),
+            name: name.to_string(),
+            kind: kind.to_string(),
+            has_children: true,
+            detail: None,
+        }
     }
 }
