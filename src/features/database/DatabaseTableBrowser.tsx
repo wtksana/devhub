@@ -624,6 +624,18 @@ export function DatabaseTableBrowser({ connectionId, target, exportMessage, onEx
         >
           <AppIcon icon={RefreshIcon} decorative />
         </button>
+        {result ? (
+          <button
+            type="button"
+            className="database-icon-button database-icon-button--ghost"
+            aria-label={t("database.export")}
+            title={t("database.export")}
+            onClick={(event) => onExport?.(event, result.columns, displayedRows(), target.table)}
+          >
+            <AppIcon icon={ExportIcon} decorative />
+          </button>
+        ) : null}
+        {exportMessage ? <span role="status">{exportMessage}</span> : null}
       </header>
       <div className="database-table-browser__criteria">
         <label className="database-table-browser__criteria-field database-table-browser__filter">
@@ -701,20 +713,6 @@ export function DatabaseTableBrowser({ connectionId, target, exportMessage, onEx
           onClearCellRequest={clearCell}
           onPasteCellsRequest={(rowIndex, columnIndex) => void pasteClipboardIntoCells(rowIndex, columnIndex)}
           getContextMenuItems={cellContextMenuItems}
-          toolbarActions={(
-            <div className="database-table-browser__export-actions">
-              <button
-                type="button"
-                className="database-icon-button"
-                aria-label={t("database.export")}
-                title={t("database.export")}
-                onClick={(event) => onExport?.(event, result.columns, displayedRows(), target.table)}
-              >
-                <AppIcon icon={ExportIcon} decorative />
-              </button>
-              {exportMessage ? <span role="status">{exportMessage}</span> : null}
-            </div>
-          )}
           footer={(
             <div className="database-table-browser__pagination" aria-label={t("database.pagination")}>
           <button

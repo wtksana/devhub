@@ -1,7 +1,7 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { StrictMode } from "react";
+import { StrictMode, type ComponentProps } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "../../i18n/I18nProvider";
 import { readClipboardText, writeClipboardText } from "../../lib/clipboard";
@@ -110,10 +110,11 @@ describe("DatabaseWorkspace", () => {
   afterEach(() => {
     cleanup();
     vi.clearAllMocks();
+    vi.useRealTimers();
     setSelectedSqlText("");
   });
 
-  function renderDatabaseWorkspace(initialDatabase?: string) {
+  function renderDatabaseWorkspace(initialDatabase?: string, props?: Partial<ComponentProps<typeof DatabaseWorkspace>>) {
     return render(
       <I18nProvider language="zh-CN">
         <DatabaseWorkspace
@@ -122,6 +123,7 @@ describe("DatabaseWorkspace", () => {
           theme="light"
           fontFamily="Consolas"
           fontSize={14}
+          {...props}
         />
       </I18nProvider>,
     );
@@ -342,6 +344,90 @@ describe("DatabaseWorkspace", () => {
       "复制列名",
     ]);
     expect(screen.getByText("true")).toBeInTheDocument();
+  });
+
+  it("shows running state, disables duplicate execution and ignores canceled SQL results", async () => {
+    let resolveQuery: (value: {
+      columns: Array<{ name: string; data_type: string }>;
+      rows: Array<Array<{ kind: "number"; value: string }>>;
+      affected_rows: number;
+      duration_ms: number;
+      limited: boolean;
+    }) => void = () => {};
+    callBackendMock.mockImplementation((command) => {
+      if (command === "execute_database_query") {
+        return new Promise((resolve) => {
+          resolveQuery = resolve;
+        });
+      }
+      return Promise.resolve([]);
+    });
+
+    renderDatabaseWorkspace("app");
+
+    const editor = screen.getByLabelText("SQL 编辑器");
+    setSelectedSqlText("select * from users");
+    await executeSelectedSqlFromContextMenu(editor);
+
+    expect(screen.getByText("SQL 执行中...")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "取消执行" })).toBeInTheDocument();
+    fireEvent.contextMenu(editor, { clientX: 10, clientY: 20 });
+    expect(screen.getByRole("menuitem", { name: "执行选择 SQL" })).toBeDisabled();
+    expect(callBackendMock.mock.calls.filter(([command]) => command === "execute_database_query")).toHaveLength(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "取消执行" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("SQL 执行已取消");
+
+    resolveQuery({
+      columns: [{ name: "id", data_type: "INT" }],
+      rows: [[{ kind: "number", value: "1" }]],
+      affected_rows: 0,
+      duration_ms: 99,
+      limited: false,
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByText("1 行，耗时 99 ms")).not.toBeInTheDocument();
+    });
+  });
+
+  it("times out long SQL execution and ignores late results", async () => {
+    let resolveQuery: (value: {
+      columns: Array<{ name: string; data_type: string }>;
+      rows: Array<Array<{ kind: "number"; value: string }>>;
+      affected_rows: number;
+      duration_ms: number;
+      limited: boolean;
+    }) => void = () => {};
+    callBackendMock.mockImplementation((command) => {
+      if (command === "execute_database_query") {
+        return new Promise((resolve) => {
+          resolveQuery = resolve;
+        });
+      }
+      return Promise.resolve([]);
+    });
+
+    renderDatabaseWorkspace("app", { queryTimeoutMs: 10 });
+
+    const editor = screen.getByLabelText("SQL 编辑器");
+    setSelectedSqlText("select sleep(60)");
+    await executeSelectedSqlFromContextMenu(editor);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("SQL 执行超时，已忽略后续返回结果");
+    expect(screen.queryByText("SQL 执行中...")).not.toBeInTheDocument();
+
+    resolveQuery({
+      columns: [{ name: "id", data_type: "INT" }],
+      rows: [[{ kind: "number", value: "1" }]],
+      affected_rows: 0,
+      duration_ms: 60_000,
+      limited: false,
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByText("1 行，耗时 60000 ms")).not.toBeInTheDocument();
+    });
   });
 
   it("shows affected rows and query errors", async () => {
@@ -1473,6 +1559,41 @@ describe("DatabaseWorkspace", () => {
     });
   });
 
+  it("renders table export actions in the table browser toolbar", async () => {
+    callBackendMock.mockImplementation((command, payload) => {
+      if (command === "list_database_objects") {
+        const request = (payload as { request: { parent_kind?: string } }).request;
+        if (!request.parent_kind) {
+          return Promise.resolve([{ id: "database:app", name: "app", kind: "database", has_children: true }]);
+        }
+        return Promise.resolve([{ id: "table:app.users", name: "users", kind: "table", has_children: true }]);
+      }
+      if (command === "load_database_table_page") {
+        return Promise.resolve({
+          columns: [{ name: "id", data_type: "INT" }],
+          rows: [[{ kind: "number", value: "1" }]],
+          total_rows: 1,
+          page: 1,
+          page_size: 200,
+          duration_ms: 9,
+          primary_key_columns: ["id"],
+          editable: true,
+        });
+      }
+      return Promise.resolve([]);
+    });
+
+    renderDatabaseWorkspace("app");
+    await userEvent.dblClick(await screen.findByText("users"));
+
+    const tableLabel = await screen.findByText("表 users");
+    const toolbar = tableLabel.closest(".database-table-browser__toolbar");
+
+    expect(toolbar).not.toBeNull();
+    expect(within(toolbar as HTMLElement).getByRole("button", { name: "导出" })).toBeInTheDocument();
+    expect(document.querySelector(".database-table-browser__grid-actions")).not.toBeInTheDocument();
+  });
+
   it("omits empty new row fields so database defaults can apply", async () => {
     callBackendMock.mockImplementation((command, payload) => {
       if (command === "list_database_objects") {
@@ -1953,6 +2074,11 @@ describe("DatabaseWorkspace", () => {
 
   it("previews and executes a selected SQL file", async () => {
     pickSqlFileMock.mockResolvedValue("C:\\tmp\\seed.sql");
+    let resolveExecution: (value: {
+      executed_statements: number;
+      affected_rows: number;
+      duration_ms: number;
+    }) => void = () => {};
     callBackendMock.mockImplementation((command) => {
       if (command === "preview_database_sql_file") {
         return Promise.resolve({
@@ -1965,10 +2091,8 @@ describe("DatabaseWorkspace", () => {
         });
       }
       if (command === "execute_database_sql_file") {
-        return Promise.resolve({
-          executed_statements: 1,
-          affected_rows: 1,
-          duration_ms: 12,
+        return new Promise((resolve) => {
+          resolveExecution = resolve;
         });
       }
       if (command === "list_database_sql_files") {
@@ -1994,10 +2118,16 @@ describe("DatabaseWorkspace", () => {
     expect(dialog).toHaveTextContent("42 B");
     expect(dialog).toHaveTextContent("1 条语句");
     expect(dialog).toHaveTextContent("insert into users");
-    expect(dialog).toHaveTextContent("检测到危险 SQL 关键词");
+    expect(dialog).toHaveTextContent("检测到危险 SQL 关键词：insert、update、delete、drop、truncate、alter、create、replace、grant、revoke");
 
     await userEvent.click(within(dialog).getByRole("button", { name: "执行" }));
 
+    expect(within(dialog).getByRole("button", { name: "执行中..." })).toBeDisabled();
+    resolveExecution({
+      executed_statements: 1,
+      affected_rows: 1,
+      duration_ms: 12,
+    });
     expect(callBackendMock).toHaveBeenCalledWith("execute_database_sql_file", {
       request: {
         connection_id: "mysql-dev",
@@ -2005,7 +2135,41 @@ describe("DatabaseWorkspace", () => {
         path: "C:\\tmp\\seed.sql",
       },
     });
-    expect(await screen.findByText("执行完成：1 条语句，影响 1 行，耗时 12 ms")).toBeInTheDocument();
+    expect(await within(dialog).findByText("执行完成：1 条语句，影响 1 行，耗时 12 ms")).toBeInTheDocument();
+    expect(screen.getAllByText("执行完成：1 条语句，影响 1 行，耗时 12 ms")).toHaveLength(1);
+    expect(within(dialog).getByRole("button", { name: "已执行" })).toBeDisabled();
+  });
+
+  it("shows SQL file execution errors inside the preview dialog", async () => {
+    pickSqlFileMock.mockResolvedValue("C:\\tmp\\bad.sql");
+    callBackendMock.mockImplementation((command) => {
+      if (command === "preview_database_sql_file") {
+        return Promise.resolve({
+          path: "C:\\tmp\\bad.sql",
+          file_name: "bad.sql",
+          size_bytes: 15,
+          preview: "select * from missing;",
+          estimated_statement_count: 1,
+          dangerous: false,
+        });
+      }
+      if (command === "execute_database_sql_file") {
+        return Promise.reject(new Error("table missing"));
+      }
+      if (command === "list_database_sql_files") {
+        return Promise.resolve([{ name: "default", content: "" }]);
+      }
+      return Promise.resolve([]);
+    });
+
+    renderDatabaseWorkspace("app");
+
+    await userEvent.click(await screen.findByRole("button", { name: "执行 SQL 文件" }));
+    const dialog = await screen.findByRole("dialog", { name: "执行 SQL 文件" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "执行" }));
+
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("table missing");
+    expect(within(dialog).getByRole("button", { name: "执行" })).not.toBeDisabled();
   });
 
   it("exports the current query result to CSV", async () => {
@@ -2036,7 +2200,14 @@ describe("DatabaseWorkspace", () => {
     await executeSelectedSqlFromContextMenu(editor);
 
     await userEvent.click(await screen.findByRole("button", { name: "导出" }));
-    await userEvent.click(screen.getByRole("menuitem", { name: "导出为 CSV" }));
+    const dialog = await screen.findByRole("dialog", { name: "导出结果" });
+    expect(within(dialog).getByLabelText("导出格式")).toHaveValue("csv");
+    expect(within(dialog).getByLabelText("添加列标题")).toBeChecked();
+    expect(within(dialog).getByLabelText("id")).toBeChecked();
+    expect(within(dialog).getByLabelText("name")).toBeChecked();
+    await userEvent.click(within(dialog).getByLabelText("id"));
+    await userEvent.click(within(dialog).getByLabelText("添加列标题"));
+    await userEvent.click(within(dialog).getByRole("button", { name: "导出" }));
 
     expect(pickDatabaseExportPathMock).toHaveBeenCalledWith(expect.stringMatching(/app\.result\.\d{14}\.csv/), "csv");
     expect(callBackendMock).toHaveBeenCalledWith("export_database_result", {
@@ -2046,11 +2217,43 @@ describe("DatabaseWorkspace", () => {
         table: null,
         path: "C:\\tmp\\app.result.20260625093000.csv",
         format: "csv",
-        columns: [{ name: "id", data_type: "INT" }, { name: "name", data_type: "VARCHAR" }],
-        rows: [[{ kind: "number", value: "1" }, { kind: "text", value: "Alice" }]],
+        include_header: false,
+        columns: [{ name: "name", data_type: "VARCHAR" }],
+        rows: [[{ kind: "text", value: "Alice" }]],
       },
     });
     expect(await screen.findByText("已导出 1 行，耗时 3 ms")).toBeInTheDocument();
+  });
+
+  it("renders query result summary and export actions in the unified toolbar", async () => {
+    callBackendMock.mockImplementation((command) => {
+      if (command === "execute_database_query") {
+        return Promise.resolve({
+          columns: [{ name: "id", data_type: "INT" }],
+          rows: [[{ kind: "number", value: "1" }]],
+          affected_rows: 0,
+          duration_ms: 8,
+          limited: false,
+        });
+      }
+      if (command === "list_database_sql_files") {
+        return Promise.resolve([{ name: "default", content: "" }]);
+      }
+      return Promise.resolve([]);
+    });
+
+    renderDatabaseWorkspace("app");
+    const editor = await screen.findByLabelText("SQL 编辑器");
+    await userEvent.type(editor, "select id from users");
+    setSelectedSqlText("select id from users");
+    await executeSelectedSqlFromContextMenu(editor);
+
+    const summary = await screen.findByText("1 行，耗时 8 ms");
+    const toolbar = summary.closest(".database-table-browser__toolbar");
+
+    expect(toolbar).not.toBeNull();
+    expect(within(toolbar as HTMLElement).getByRole("button", { name: "导出" })).toBeInTheDocument();
+    expect(document.querySelector(".database-table-browser__grid-actions")).not.toBeInTheDocument();
   });
 
   it("asks for a target table when exporting free query result as INSERT SQL", async () => {
@@ -2081,7 +2284,9 @@ describe("DatabaseWorkspace", () => {
     await executeSelectedSqlFromContextMenu(editor);
 
     await userEvent.click(await screen.findByRole("button", { name: "导出" }));
-    await userEvent.click(screen.getByRole("menuitem", { name: "导出为 INSERT SQL" }));
+    const exportDialog = await screen.findByRole("dialog", { name: "导出结果" });
+    await userEvent.selectOptions(within(exportDialog).getByLabelText("导出格式"), "insert_sql");
+    await userEvent.click(within(exportDialog).getByRole("button", { name: "导出" }));
 
     const dialog = await screen.findByRole("dialog", { name: "导出 INSERT SQL" });
     await userEvent.type(within(dialog).getByLabelText("目标表名"), "users");

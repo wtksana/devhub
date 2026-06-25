@@ -4,6 +4,7 @@ export interface DatabaseWorkspaceProps {
   theme: "dark" | "light";
   fontFamily: string;
   fontSize: number;
+  queryTimeoutMs?: number;
 }
 
 export interface DatabaseTreeNode {
@@ -63,6 +64,17 @@ export type DatabaseResultExportFormat = "csv" | "insert_sql";
 export interface DatabaseResultExportResult {
   exported_rows: number;
   duration_ms: number;
+}
+
+export interface ExportDatabaseResultRequest {
+  connection_id: string;
+  database: string;
+  table: string | null;
+  path: string;
+  format: DatabaseResultExportFormat;
+  include_header: boolean;
+  columns: DatabaseResultColumn[];
+  rows: DatabaseCellValue[][];
 }
 
 export interface DatabaseTableDdlResult {

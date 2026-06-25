@@ -13,11 +13,12 @@ pub fn export_database_result(
     table: Option<&str>,
     path: &str,
     format: &DatabaseResultExportFormat,
+    include_header: bool,
     columns: &[DatabaseResultColumn],
     rows: &[Vec<DatabaseCellValue>],
 ) -> Result<u64, String> {
     let content = match format {
-        DatabaseResultExportFormat::Csv => build_csv(columns, rows)?,
+        DatabaseResultExportFormat::Csv => build_csv(columns, rows, include_header)?,
         DatabaseResultExportFormat::InsertSql => {
             let table = table
                 .map(str::trim)
@@ -33,20 +34,23 @@ pub fn export_database_result(
 pub fn build_csv(
     columns: &[DatabaseResultColumn],
     rows: &[Vec<DatabaseCellValue>],
+    include_header: bool,
 ) -> Result<String, String> {
     if columns.is_empty() {
         return Err("columns are required".to_string());
     }
 
     let mut output = String::new();
-    output.push_str(
-        &columns
-            .iter()
-            .map(|column| csv_escape(&column.name))
-            .collect::<Vec<_>>()
-            .join(","),
-    );
-    output.push('\n');
+    if include_header {
+        output.push_str(
+            &columns
+                .iter()
+                .map(|column| csv_escape(&column.name))
+                .collect::<Vec<_>>()
+                .join(","),
+        );
+        output.push('\n');
+    }
 
     for row in rows {
         let values = columns
@@ -222,12 +226,19 @@ mod tests {
 
     #[test]
     fn exports_csv_with_header_and_escaped_values() {
-        let csv = build_csv(&columns(), &rows()).expect("csv");
+        let csv = build_csv(&columns(), &rows(), true).expect("csv");
 
         assert_eq!(
             csv,
             "id,name,active\n1,\"Alice, \"\"A\"\"\",true\n2,,false\n"
         );
+    }
+
+    #[test]
+    fn exports_csv_without_header() {
+        let csv = build_csv(&columns(), &rows(), false).expect("csv");
+
+        assert_eq!(csv, "1,\"Alice, \"\"A\"\"\",true\n2,,false\n");
     }
 
     #[test]

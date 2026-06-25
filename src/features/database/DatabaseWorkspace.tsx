@@ -33,6 +33,7 @@ import ExecuteSqlFileIcon from "../../assets/icons/tabler--file-import.svg?react
 import ExportIcon from "../../assets/icons/mdi--table-export.svg?react";
 
 const DEFAULT_SQL_LIMIT = 200;
+const DEFAULT_QUERY_TIMEOUT_MS = 30_000;
 const DEFAULT_OBJECT_TREE_WIDTH = 220;
 const MIN_OBJECT_TREE_WIDTH = 180;
 const MAX_OBJECT_TREE_WIDTH = 420;
@@ -52,6 +53,27 @@ const DANGEROUS_SQL_KEYWORDS = new Set([
 
 const pendingSqlFileRequests = new Map<string, Promise<DatabaseSqlFile[]>>();
 
+type PendingExport = {
+  columns: DatabaseResultColumn[];
+  rows: DatabaseCellValue[][];
+  table: string | null;
+  format: DatabaseResultExportFormat;
+  includeHeader: boolean;
+  selectedColumns: string[];
+};
+
+type SqlFileExecutionState =
+  | { status: "idle"; message: string }
+  | { status: "running"; message: string }
+  | { status: "success"; message: string }
+  | { status: "error"; message: string };
+
+type QueryExecutionState =
+  | { status: "idle"; message: string }
+  | { status: "running"; message: string }
+  | { status: "canceled"; message: string }
+  | { status: "timeout"; message: string };
+
 function listDatabaseSqlFilesOnce(connectionId: string, database: string) {
   const key = `${connectionId}:${database}`;
   const pendingRequest = pendingSqlFileRequests.get(key);
@@ -69,13 +91,21 @@ function listDatabaseSqlFilesOnce(connectionId: string, database: string) {
   return requestPromise;
 }
 
-export function DatabaseWorkspace({ connectionId, initialDatabase, theme, fontFamily, fontSize }: DatabaseWorkspaceProps) {
+export function DatabaseWorkspace({
+  connectionId,
+  initialDatabase,
+  theme,
+  fontFamily,
+  fontSize,
+  queryTimeoutMs = DEFAULT_QUERY_TIMEOUT_MS,
+}: DatabaseWorkspaceProps) {
   const { t } = useI18n();
   const [sql, setSql] = useState("");
   const [result, setResult] = useState<DatabaseQueryResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isExecuting, setIsExecuting] = useState(false);
   const [dangerousSqlToConfirm, setDangerousSqlToConfirm] = useState<string | null>(null);
+  const [queryExecutionState, setQueryExecutionState] = useState<QueryExecutionState>({ status: "idle", message: "" });
   const [currentDatabase, setCurrentDatabase] = useState(initialDatabase?.trim() ?? "");
   const [tableBrowserTarget, setTableBrowserTarget] = useState<DatabaseTableBrowserTarget | null>(null);
   const [isEditorOpen, setIsEditorOpen] = useState(true);
@@ -92,16 +122,17 @@ export function DatabaseWorkspace({ connectionId, initialDatabase, theme, fontFa
   const [tableStructureDialog, setTableStructureDialog] = useState<{ table: DatabaseTreeNode; columns: DatabaseTreeNode[]; error: string | null } | null>(null);
   const [tableDdlDialog, setTableDdlDialog] = useState<{ table: DatabaseTreeNode; ddl: string; durationMs: number | null; error: string | null } | null>(null);
   const [sqlFilePreview, setSqlFilePreview] = useState<DatabaseSqlFilePreview | null>(null);
-  const [sqlFileMessage, setSqlFileMessage] = useState("");
   const [isSqlFileExecuting, setIsSqlFileExecuting] = useState(false);
-  const [exportContextMenu, setExportContextMenu] = useState<ContextMenuState | null>(null);
+  const [sqlFileExecutionState, setSqlFileExecutionState] = useState<SqlFileExecutionState>({ status: "idle", message: "" });
   const [exportMessage, setExportMessage] = useState("");
-  const [pendingInsertExport, setPendingInsertExport] = useState<{ columns: DatabaseResultColumn[]; rows: DatabaseCellValue[][] } | null>(null);
+  const [pendingExport, setPendingExport] = useState<PendingExport | null>(null);
+  const [pendingInsertExport, setPendingInsertExport] = useState<{ columns: DatabaseResultColumn[]; rows: DatabaseCellValue[][]; includeHeader: boolean } | null>(null);
   const [insertExportTableName, setInsertExportTableName] = useState("");
   const objectTreeResizeRef = useRef({ startX: 0, startWidth: DEFAULT_OBJECT_TREE_WIDTH });
   const latestSqlFileKeyRef = useRef("");
   const dirtySqlFileKeysRef = useRef(new Set<string>());
   const monacoEditorRef = useRef<Parameters<OnMount>[0] | null>(null);
+  const queryExecutionIdRef = useRef(0);
 
   useEffect(() => {
     setCurrentDatabase(initialDatabase?.trim() ?? "");
@@ -179,13 +210,14 @@ export function DatabaseWorkspace({ connectionId, initialDatabase, theme, fontFa
   }, [isResizingObjectTree]);
 
   useEffect(() => {
-    if (!tableStructureDialog && !tableDdlDialog && !sqlFilePreview && !pendingInsertExport) return;
+    if (!tableStructureDialog && !tableDdlDialog && !sqlFilePreview && !pendingExport && !pendingInsertExport) return;
 
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
         if (tableStructureDialog) requestCloseTableStructureDialog();
         if (tableDdlDialog) setTableDdlDialog(null);
-        if (sqlFilePreview) setSqlFilePreview(null);
+        if (sqlFilePreview) closeSqlFilePreview();
+        if (pendingExport) setPendingExport(null);
         if (pendingInsertExport) setPendingInsertExport(null);
       }
     }
@@ -194,7 +226,13 @@ export function DatabaseWorkspace({ connectionId, initialDatabase, theme, fontFa
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [pendingInsertExport, sqlFilePreview, tableDdlDialog, tableStructureDialog]);
+  }, [pendingExport, pendingInsertExport, sqlFilePreview, tableDdlDialog, tableStructureDialog]);
+
+  function closeSqlFilePreview() {
+    setSqlFilePreview(null);
+    setSqlFileExecutionState({ status: "idle", message: "" });
+    setIsSqlFileExecuting(false);
+  }
 
   function startObjectTreeResize(event: React.MouseEvent) {
     event.preventDefault();
@@ -220,10 +258,13 @@ export function DatabaseWorkspace({ connectionId, initialDatabase, theme, fontFa
   }
 
   async function executeSql(sqlToExecute: string) {
+    const executionId = queryExecutionIdRef.current + 1;
+    queryExecutionIdRef.current = executionId;
     setIsExecuting(true);
+    setQueryExecutionState({ status: "running", message: t("database.query_running") });
     setError(null);
     try {
-      const nextResult = await callBackend<DatabaseQueryResult>("execute_database_query", {
+      const queryPromise = callBackend<DatabaseQueryResult>("execute_database_query", {
         request: {
           connection_id: connectionId,
           database: currentDatabase || null,
@@ -231,17 +272,40 @@ export function DatabaseWorkspace({ connectionId, initialDatabase, theme, fontFa
           limit: normalizeLimit(defaultLimit),
         },
       });
+      const nextResult = await withTimeout(queryPromise, queryTimeoutMs, () => new Error(t("database.query_timeout")));
+      if (queryExecutionIdRef.current !== executionId) return;
       setResult(nextResult);
       setTableBrowserTarget(null);
+      setQueryExecutionState({ status: "idle", message: "" });
     } catch (caught) {
+      if (queryExecutionIdRef.current !== executionId) return;
       setResult(null);
-      setError(caught instanceof Error ? caught.message : String(caught));
+      const message = caught instanceof Error ? caught.message : String(caught);
+      setError(message);
+      if (message === t("database.query_timeout")) {
+        setQueryExecutionState({ status: "timeout", message });
+        queryExecutionIdRef.current += 1;
+        setIsExecuting(false);
+      } else {
+        setQueryExecutionState({ status: "idle", message: "" });
+      }
       void logFrontendError("frontend.database", "execute_database_query", caught, `${connectionId}:${currentDatabase || ""}`, {
         sql_kind: sqlKind(sqlToExecute),
       });
     } finally {
-      setIsExecuting(false);
+      if (queryExecutionIdRef.current === executionId) {
+        setIsExecuting(false);
+      }
     }
+  }
+
+  function cancelQueryExecution() {
+    if (!isExecuting) return;
+    queryExecutionIdRef.current += 1;
+    setIsExecuting(false);
+    setResult(null);
+    setError(t("database.query_canceled"));
+    setQueryExecutionState({ status: "canceled", message: t("database.query_canceled") });
   }
 
   function openTable(node: DatabaseTreeNode) {
@@ -404,7 +468,7 @@ export function DatabaseWorkspace({ connectionId, initialDatabase, theme, fontFa
       items: [
         {
           label: t("database.execute_selected_sql"),
-          disabled: !selectedSql.trim(),
+          disabled: !selectedSql.trim() || isExecuting,
           onSelect: () => void requestExecuteSql(selectedSql),
         },
         { type: "separator" },
@@ -484,6 +548,7 @@ export function DatabaseWorkspace({ connectionId, initialDatabase, theme, fontFa
         },
       });
       setSqlFilePreview(preview);
+      setSqlFileExecutionState({ status: "idle", message: "" });
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
       void logFrontendError("frontend.database", "preview_database_sql_file", caught, `${connectionId}:${currentDatabase}:${path}`, {
@@ -495,6 +560,7 @@ export function DatabaseWorkspace({ connectionId, initialDatabase, theme, fontFa
   async function executeSqlFile() {
     if (!sqlFilePreview || !currentDatabase) return;
     setIsSqlFileExecuting(true);
+    setSqlFileExecutionState({ status: "running", message: "" });
     setError(null);
     try {
       const execution = await callBackend<DatabaseSqlFileExecutionResult>("execute_database_sql_file", {
@@ -504,14 +570,15 @@ export function DatabaseWorkspace({ connectionId, initialDatabase, theme, fontFa
           path: sqlFilePreview.path,
         },
       });
-      setSqlFilePreview(null);
-      setSqlFileMessage(t("database.sql_file_execute_summary", {
+      const message = t("database.sql_file_execute_summary", {
         statements: execution.executed_statements,
         affected: execution.affected_rows,
         duration: execution.duration_ms,
-      }));
+      });
+      setSqlFileExecutionState({ status: "success", message });
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
+      const message = caught instanceof Error ? caught.message : String(caught);
+      setSqlFileExecutionState({ status: "error", message });
       void logFrontendError("frontend.database", "execute_database_sql_file", caught, `${connectionId}:${currentDatabase}:${sqlFilePreview.path}`, {
         database: currentDatabase,
       });
@@ -522,20 +589,59 @@ export function DatabaseWorkspace({ connectionId, initialDatabase, theme, fontFa
 
   function openExportMenu(event: ReactMouseEvent, columns: DatabaseResultColumn[], rows: DatabaseCellValue[][], table: string | null) {
     event.preventDefault();
-    setExportContextMenu({
-      x: event.clientX,
-      y: event.clientY,
-      items: [
-        {
-          label: t("database.export_csv"),
-          onSelect: () => void exportResult("csv", columns, rows, table),
-        },
-        {
-          label: t("database.export_insert_sql"),
-          onSelect: () => void exportResult("insert_sql", columns, rows, table),
-        },
-      ],
+    setPendingExport({
+      columns,
+      rows,
+      table,
+      format: "csv",
+      includeHeader: true,
+      selectedColumns: columns.map((column) => column.name),
     });
+  }
+
+  function updatePendingExportFormat(format: DatabaseResultExportFormat) {
+    setPendingExport((current) => current ? { ...current, format } : current);
+  }
+
+  function updatePendingExportIncludeHeader(includeHeader: boolean) {
+    setPendingExport((current) => current ? { ...current, includeHeader } : current);
+  }
+
+  function togglePendingExportColumn(columnName: string) {
+    setPendingExport((current) => {
+      if (!current) return current;
+      const selected = new Set(current.selectedColumns);
+      if (selected.has(columnName)) {
+        selected.delete(columnName);
+      } else {
+        selected.add(columnName);
+      }
+      return { ...current, selectedColumns: current.columns.map((column) => column.name).filter((name) => selected.has(name)) };
+    });
+  }
+
+  function selectedExportPayload(exportState: PendingExport) {
+    const selectedIndexes = exportState.columns
+      .map((column, index) => ({ column, index }))
+      .filter(({ column }) => exportState.selectedColumns.includes(column.name));
+    return {
+      columns: selectedIndexes.map(({ column }) => column),
+      rows: exportState.rows.map((row) => selectedIndexes.map(({ index }) => row[index] ?? { kind: "null" as const })),
+    };
+  }
+
+  function confirmPendingExport() {
+    if (!pendingExport) return;
+    const payload = selectedExportPayload(pendingExport);
+    if (payload.columns.length === 0) return;
+    setPendingExport(null);
+    void exportResult(
+      pendingExport.format,
+      payload.columns,
+      payload.rows,
+      pendingExport.table,
+      pendingExport.includeHeader,
+    );
   }
 
   async function exportResult(
@@ -543,9 +649,10 @@ export function DatabaseWorkspace({ connectionId, initialDatabase, theme, fontFa
     columns: DatabaseResultColumn[],
     rows: DatabaseCellValue[][],
     table: string | null,
+    includeHeader: boolean,
   ) {
     if (format === "insert_sql" && !table) {
-      setPendingInsertExport({ columns, rows });
+      setPendingInsertExport({ columns, rows, includeHeader });
       setInsertExportTableName("");
       return;
     }
@@ -565,6 +672,7 @@ export function DatabaseWorkspace({ connectionId, initialDatabase, theme, fontFa
           table,
           path,
           format,
+          include_header: includeHeader,
           columns,
           rows,
         },
@@ -647,6 +755,14 @@ export function DatabaseWorkspace({ connectionId, initialDatabase, theme, fontFa
             >
               <AppIcon icon={ExecuteSqlFileIcon} decorative />
             </button>
+            {queryExecutionState.status === "running" ? (
+              <span className="database-query-panel__status" role="status">{queryExecutionState.message}</span>
+            ) : null}
+            {isExecuting ? (
+              <button type="button" onClick={cancelQueryExecution}>
+                {t("database.cancel_query")}
+              </button>
+            ) : null}
             <span className="database-query-panel__monaco">{t("database.monaco_support")}</span>
           </div>
           {isEditorOpen ? (
@@ -674,7 +790,6 @@ export function DatabaseWorkspace({ connectionId, initialDatabase, theme, fontFa
             </div>
           ) : null}
           {error ? <p className="database-query-panel__error" role="alert">{error}</p> : null}
-          {sqlFileMessage ? <p className="database-query-panel__status" role="status">{sqlFileMessage}</p> : null}
         </div>
         <div className="database-workspace__content">
           {tableBrowserTarget ? (
@@ -697,7 +812,6 @@ export function DatabaseWorkspace({ connectionId, initialDatabase, theme, fontFa
       </div>
       <ContextMenu menu={editorContextMenu} onClose={() => setEditorContextMenu(null)} />
       <ContextMenu menu={tableContextMenu} onClose={() => setTableContextMenu(null)} />
-      <ContextMenu menu={exportContextMenu} onClose={() => setExportContextMenu(null)} />
       {dangerousSqlToConfirm ? (
         <div className="connection-dialog__backdrop">
           <div
@@ -785,17 +899,91 @@ export function DatabaseWorkspace({ connectionId, initialDatabase, theme, fontFa
               <p>{t("database.sql_file_execute_hint")}</p>
               {sqlFilePreview.dangerous ? (
                 <p className="database-sql-file-execute-dialog__danger" role="alert">
-                  {t("database.sql_file_dangerous")}
+                  {t("database.sql_file_dangerous", { keywords: dangerousSqlKeywordsText() })}
                 </p>
               ) : null}
               <pre>{sqlFilePreview.preview}</pre>
+              {sqlFileExecutionState.status === "success" ? (
+                <p className="database-sql-file-execute-dialog__result" role="status">
+                  {sqlFileExecutionState.message}
+                </p>
+              ) : null}
+              {sqlFileExecutionState.status === "error" ? (
+                <p className="database-sql-file-execute-dialog__error" role="alert">
+                  {sqlFileExecutionState.message}
+                </p>
+              ) : null}
             </div>
             <div className="database-dialog__actions">
-              <button type="button" onClick={() => setSqlFilePreview(null)}>
+              <button type="button" onClick={closeSqlFilePreview}>
                 {t("database.cancel")}
               </button>
-              <button type="button" disabled={isSqlFileExecuting} onClick={() => void executeSqlFile()}>
-                {t("database.sql_file_execute")}
+              <button
+                type="button"
+                disabled={isSqlFileExecuting || sqlFileExecutionState.status === "success"}
+                onClick={() => void executeSqlFile()}
+              >
+                {sqlFileExecutionButtonLabel(sqlFileExecutionState.status, t)}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {pendingExport ? (
+        <div className="connection-dialog__backdrop">
+          <div
+            className="connection-dialog database-dialog database-export-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-label={t("database.export_result_title")}
+          >
+            <header className="database-dialog__header">
+              <h2>{t("database.export_result_title")}</h2>
+            </header>
+            <div className="database-export-dialog__body">
+              <label className="database-export-dialog__row">
+                <span>{t("database.export_format")}</span>
+                <select
+                  aria-label={t("database.export_format")}
+                  value={pendingExport.format}
+                  onChange={(event) => updatePendingExportFormat(event.target.value as DatabaseResultExportFormat)}
+                >
+                  <option value="csv">{t("database.export_format_csv")}</option>
+                  <option value="insert_sql">{t("database.export_format_insert_sql")}</option>
+                </select>
+              </label>
+              {pendingExport.format === "csv" ? (
+                <label className="database-export-dialog__checkbox">
+                  <input
+                    type="checkbox"
+                    checked={pendingExport.includeHeader}
+                    onChange={(event) => updatePendingExportIncludeHeader(event.target.checked)}
+                  />
+                  <span>{t("database.export_include_header")}</span>
+                </label>
+              ) : null}
+              <fieldset className="database-export-dialog__columns">
+                <legend>{t("database.export_columns")}</legend>
+                <div>
+                  {pendingExport.columns.map((column) => (
+                    <label key={column.name}>
+                      <input
+                        type="checkbox"
+                        checked={pendingExport.selectedColumns.includes(column.name)}
+                        onChange={() => togglePendingExportColumn(column.name)}
+                      />
+                      <span>{column.name}</span>
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+            </div>
+            <div className="database-dialog__actions">
+              <button type="button" onClick={() => setPendingExport(null)}>
+                {t("database.cancel")}
+              </button>
+              <button type="button" disabled={pendingExport.selectedColumns.length === 0} onClick={confirmPendingExport}>
+                {t("database.export")}
               </button>
             </div>
           </div>
@@ -832,7 +1020,7 @@ export function DatabaseWorkspace({ connectionId, initialDatabase, theme, fontFa
                   const pending = pendingInsertExport;
                   const table = insertExportTableName.trim();
                   setPendingInsertExport(null);
-                  void exportResult("insert_sql", pending.columns, pending.rows, table);
+                  void exportResult("insert_sql", pending.columns, pending.rows, table, pending.includeHeader);
                 }}
               >
                 {t("database.export")}
@@ -952,12 +1140,12 @@ function DatabaseResultView({
 
   return (
     <section className="database-result" aria-label={t("database.query_result")}>
-      <header>
+      <header className="database-table-browser__toolbar database-result__toolbar">
         <span>{summary}</span>
         {result.columns.length > 0 ? (
           <button
             type="button"
-            className="database-icon-button"
+            className="database-icon-button database-icon-button--ghost"
             aria-label={t("database.export")}
             title={t("database.export")}
             onClick={(event) => onExport(event, result.columns, result.rows)}
@@ -980,6 +1168,34 @@ function DatabaseResultView({
 function defaultExportName(database: string, table: string | null, extension: "csv" | "sql") {
   const timestamp = new Date().toISOString().replace(/\D/g, "").slice(0, 14);
   return `${database || "database"}.${table?.trim() || "result"}.${timestamp}.${extension}`;
+}
+
+function dangerousSqlKeywordsText() {
+  return Array.from(DANGEROUS_SQL_KEYWORDS).join("、");
+}
+
+function sqlFileExecutionButtonLabel(status: SqlFileExecutionState["status"], t: ReturnType<typeof useI18n>["t"]) {
+  if (status === "running") return t("database.executing");
+  if (status === "success") return t("database.sql_file_executed");
+  return t("database.sql_file_execute");
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, createError: () => Error) {
+  return new Promise<T>((resolve, reject) => {
+    const timeout = window.setTimeout(() => {
+      reject(createError());
+    }, timeoutMs);
+    promise.then(
+      (value) => {
+        window.clearTimeout(timeout);
+        resolve(value);
+      },
+      (error) => {
+        window.clearTimeout(timeout);
+        reject(error);
+      },
+    );
+  });
 }
 
 function isDangerousSql(sql: string) {

@@ -1495,6 +1495,21 @@ p {
   color: var(--danger) !important;
 }
 
+.database-sql-file-execute-dialog__result,
+.database-sql-file-execute-dialog__error {
+  padding: 8px 10px;
+  border: 1px solid var(--border-subtle);
+  background: var(--panel-soft);
+}
+
+.database-sql-file-execute-dialog__result {
+  color: var(--success) !important;
+}
+
+.database-sql-file-execute-dialog__error {
+  color: var(--danger) !important;
+}
+
 .database-sql-file-execute-dialog pre {
   max-height: 300px;
   margin: 0;
@@ -1545,49 +1560,10 @@ p {
   background: var(--panel);
 }
 
-.database-result header {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  min-width: 0;
-  overflow: hidden;
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--border-subtle);
-  color: var(--muted);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.database-result header > span:first-child {
+.database-result__toolbar > span:first-child {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.database-result header > span[role="status"] {
-  margin-left: auto;
-  color: var(--success);
-}
-
-.database-table-browser__grid-actions {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  justify-content: flex-end;
-  min-width: 0;
-  padding: 4px 8px;
-  border-bottom: 1px solid var(--border-subtle);
-}
-
-.database-table-browser__export-actions {
-  display: inline-flex;
-  gap: 8px;
-  align-items: center;
-  min-width: 0;
-}
-
-.database-table-browser__export-actions span[role="status"] {
-  color: var(--success);
 }
 
 .database-export-dialog__field {
@@ -1595,6 +1571,76 @@ p {
   gap: 6px;
   min-width: 0;
   padding: 12px;
+}
+
+.database-export-dialog {
+  width: min(520px, calc(100vw - 48px));
+}
+
+.database-export-dialog__body {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  overflow: auto;
+  padding: 12px;
+}
+
+.database-export-dialog__row {
+  display: grid;
+  grid-template-columns: 80px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+  color: var(--muted);
+}
+
+.database-export-dialog__row select {
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+}
+
+.database-export-dialog__checkbox {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  width: fit-content;
+  min-width: 0;
+  color: var(--text);
+}
+
+.database-export-dialog__columns {
+  min-width: 0;
+  margin: 0;
+  padding: 8px;
+  border: 1px solid var(--border-subtle);
+}
+
+.database-export-dialog__columns legend {
+  padding: 0 4px;
+  color: var(--muted);
+}
+
+.database-export-dialog__columns > div {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 6px 10px;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.database-export-dialog__columns label {
+  display: inline-flex;
+  gap: 7px;
+  align-items: center;
+  min-width: 0;
+}
+
+.database-export-dialog__columns span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .database-export-dialog__field input {
@@ -1686,6 +1732,11 @@ p {
 .database-table-browser__toolbar > span:first-child {
   color: var(--text);
   font-weight: 600;
+}
+
+.database-table-browser__toolbar > span[role="status"] {
+  margin-left: auto;
+  color: var(--success);
 }
 
 .database-table-browser__criteria {

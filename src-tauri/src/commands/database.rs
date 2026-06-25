@@ -449,6 +449,7 @@ pub fn export_database_result(
         request.table.as_deref(),
         &request.path,
         &request.format,
+        request.include_header,
         &request.columns,
         &request.rows,
     )

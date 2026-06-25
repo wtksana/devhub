@@ -144,8 +144,14 @@ pub struct ExportDatabaseResultRequest {
     pub table: Option<String>,
     pub path: String,
     pub format: DatabaseResultExportFormat,
+    #[serde(default = "default_true")]
+    pub include_header: bool,
     pub columns: Vec<DatabaseResultColumn>,
     pub rows: Vec<Vec<DatabaseCellValue>>,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
