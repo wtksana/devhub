@@ -69,11 +69,29 @@ pub fn metadata_query_for_columns(
 ) -> Result<MetadataQuery, String> {
     match kind {
         "mysql" => Ok(MetadataQuery {
-            sql: "select column_name, column_type as data_type, is_nullable from information_schema.columns where table_schema = ? and table_name = ? order by ordinal_position".to_string(),
+            sql: "select column_name, column_type as data_type, is_nullable, coalesce(column_default, '') as column_default, case when column_default is null then 'YES' else 'NO' end as column_default_is_null, coalesce(extra, '') as extra, coalesce(column_comment, '') as column_comment from information_schema.columns where table_schema = ? and table_name = ? order by ordinal_position".to_string(),
             binds: vec![schema.to_string(), table.to_string()],
         }),
         "postgresql" => Ok(MetadataQuery {
-            sql: "select column_name, data_type, is_nullable from information_schema.columns where table_schema = $1 and table_name = $2 order by ordinal_position".to_string(),
+            sql: "select column_name, data_type, is_nullable, coalesce(column_default, '') as column_default, case when column_default is null then 'YES' else 'NO' end as column_default_is_null, '' as extra, '' as column_comment from information_schema.columns where table_schema = $1 and table_name = $2 order by ordinal_position".to_string(),
+            binds: vec![schema.to_string(), table.to_string()],
+        }),
+        kind => Err(format!("unsupported database connection kind: {kind}")),
+    }
+}
+
+pub fn metadata_query_for_indexes(
+    kind: &str,
+    schema: &str,
+    table: &str,
+) -> Result<MetadataQuery, String> {
+    match kind {
+        "mysql" => Ok(MetadataQuery {
+            sql: "select index_name, case when non_unique = 0 then 'YES' else 'NO' end as is_unique, group_concat(column_name order by seq_in_index separator ', ') as columns, concat(case when non_unique = 0 then 'UNIQUE KEY' else 'KEY' end, ' `', index_name, '` (', group_concat(concat('`', column_name, '`') order by seq_in_index separator ', '), ')') as definition from information_schema.statistics where table_schema = ? and table_name = ? group by index_name, non_unique order by index_name".to_string(),
+            binds: vec![schema.to_string(), table.to_string()],
+        }),
+        "postgresql" => Ok(MetadataQuery {
+            sql: "select indexname as index_name, case when indexdef ilike 'create unique index%' then 'YES' else 'NO' end as is_unique, '' as columns, indexdef as definition from pg_indexes where schemaname = $1 and tablename = $2 order by indexname".to_string(),
             binds: vec![schema.to_string(), table.to_string()],
         }),
         kind => Err(format!("unsupported database connection kind: {kind}")),
@@ -143,7 +161,9 @@ async fn list_mysql_objects(
                 .table
                 .as_deref()
                 .ok_or_else(|| "table is required".to_string())?;
-            list_mysql_columns(&mut *connection, schema, table).await?
+            let mut nodes = list_mysql_columns(&mut *connection, schema, table).await?;
+            nodes.extend(list_mysql_indexes(&mut *connection, schema, table).await?);
+            nodes
         }
         Some(kind) => return Err(format!("unsupported database object kind: {kind}")),
     };
@@ -211,7 +231,9 @@ async fn list_postgresql_objects(
                 .table
                 .as_deref()
                 .ok_or_else(|| "table is required".to_string())?;
-            list_postgresql_columns(&mut *connection, schema, table).await?
+            let mut nodes = list_postgresql_columns(&mut *connection, schema, table).await?;
+            nodes.extend(list_postgresql_indexes(&mut *connection, schema, table).await?);
+            nodes
         }
         Some(kind) => return Err(format!("unsupported database object kind: {kind}")),
     };
@@ -250,6 +272,38 @@ async fn list_postgresql_columns(
     Ok(column_nodes(rows, schema, table))
 }
 
+async fn list_mysql_indexes(
+    connection: &mut MySqlConnection,
+    schema: &str,
+    table: &str,
+) -> Result<Vec<DatabaseTreeNode>, String> {
+    let query = metadata_query_for_indexes("mysql", schema, table)?;
+    let rows = sqlx::query(&query.sql)
+        .bind(&query.binds[0])
+        .bind(&query.binds[1])
+        .fetch_all(connection)
+        .await
+        .map_err(|error| error.to_string())?;
+
+    Ok(index_nodes(rows, schema, table))
+}
+
+async fn list_postgresql_indexes(
+    connection: &mut PgConnection,
+    schema: &str,
+    table: &str,
+) -> Result<Vec<DatabaseTreeNode>, String> {
+    let query = metadata_query_for_indexes("postgresql", schema, table)?;
+    let rows = sqlx::query(&query.sql)
+        .bind(&query.binds[0])
+        .bind(&query.binds[1])
+        .fetch_all(connection)
+        .await
+        .map_err(|error| error.to_string())?;
+
+    Ok(index_nodes(rows, schema, table))
+}
+
 fn column_nodes<R>(rows: Vec<R>, schema: &str, table: &str) -> Vec<DatabaseTreeNode>
 where
     R: Row,
@@ -261,12 +315,43 @@ where
             let name: String = row.get("column_name");
             let data_type: String = row.get("data_type");
             let is_nullable: String = row.get("is_nullable");
+            let default_value: String = row.get("column_default");
+            let default_is_null: String = row.get("column_default_is_null");
+            let extra: String = row.get("extra");
+            let comment: String = row.get("column_comment");
             DatabaseTreeNode {
                 id: format!("column:{schema}.{table}.{name}"),
                 name,
                 kind: "column".to_string(),
                 has_children: false,
-                detail: Some(format!("{data_type} {is_nullable}")),
+                detail: Some(format!(
+                    "type={data_type};nullable={is_nullable};default={default_value};default_null={default_is_null};extra={extra};comment={comment}"
+                )),
+            }
+        })
+        .collect()
+}
+
+fn index_nodes<R>(rows: Vec<R>, schema: &str, table: &str) -> Vec<DatabaseTreeNode>
+where
+    R: Row,
+    for<'r> &'r str: sqlx::ColumnIndex<R>,
+    for<'r> String: sqlx::Decode<'r, R::Database> + sqlx::Type<R::Database>,
+{
+    rows.into_iter()
+        .map(|row| {
+            let name: String = row.get("index_name");
+            let is_unique: String = row.get("is_unique");
+            let columns: String = row.get("columns");
+            let definition: String = row.get("definition");
+            DatabaseTreeNode {
+                id: format!("index:{schema}.{table}.{name}"),
+                name,
+                kind: "index".to_string(),
+                has_children: false,
+                detail: Some(format!(
+                    "unique={is_unique};columns={columns};definition={definition}"
+                )),
             }
         })
         .collect()

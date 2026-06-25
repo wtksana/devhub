@@ -883,6 +883,259 @@ describe("DatabaseWorkspace", () => {
     expect(within(dialog).queryByText("耗时 0 ms")).not.toBeInTheDocument();
   });
 
+  it("edits column default value and comment in table structure dialog", async () => {
+    callBackendMock.mockImplementation((command, payload) => {
+      if (command === "list_database_objects") {
+        const request = (payload as { request: { parent_kind?: string; table?: string } }).request;
+        if (!request.parent_kind) {
+          return Promise.resolve([{ id: "database:app", name: "app", kind: "database", has_children: true }]);
+        }
+        if (request.parent_kind === "table" && request.table === "users") {
+          return Promise.resolve([
+            {
+              id: "column:app.users.name",
+              name: "name",
+              kind: "column",
+              has_children: false,
+              detail: "type=varchar(255);nullable=YES;default=;extra=;comment=",
+            },
+          ]);
+        }
+        return Promise.resolve([{ id: "table:app.users", name: "users", kind: "table", has_children: true }]);
+      }
+      if (command === "preview_database_table_structure") {
+        return Promise.resolve({
+          ddl: "ALTER TABLE `users`\n  CHANGE COLUMN `name` `name` varchar(255) NULL DEFAULT 'anonymous' COMMENT '用户名';",
+          duration_ms: 0,
+        });
+      }
+      return Promise.resolve([]);
+    });
+
+    renderDatabaseWorkspace("app");
+    const tableRow = (await screen.findByRole("button", { name: "users" })).closest("li");
+    expect(tableRow).not.toBeNull();
+    fireEvent.contextMenu(tableRow!, { clientX: 10, clientY: 20 });
+    await userEvent.click(screen.getByRole("menuitem", { name: "编辑" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "编辑表 users" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "name varchar(255)" }));
+    await userEvent.clear(within(dialog).getByLabelText("默认值"));
+    await userEvent.type(within(dialog).getByLabelText("默认值"), "anonymous");
+    fireEvent.blur(within(dialog).getByLabelText("默认值"));
+    await userEvent.clear(within(dialog).getByLabelText("注释"));
+    await userEvent.type(within(dialog).getByLabelText("注释"), "用户名");
+    fireEvent.blur(within(dialog).getByLabelText("注释"));
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("preview_database_table_structure", {
+        request: {
+          connection_id: "mysql-dev",
+          database: "app",
+          table: "users",
+          operations: [
+            {
+              kind: "modify_column",
+              original_name: "name",
+              column: {
+                name: "name",
+                data_type: "varchar(255)",
+                nullable: true,
+                default_value: "anonymous",
+                comment: "用户名",
+              },
+            },
+          ],
+        },
+      });
+    });
+    expect(within(dialog).getByText(/DEFAULT 'anonymous' COMMENT '用户名'/)).toBeInTheDocument();
+  });
+
+  it("renames table from table structure dialog", async () => {
+    callBackendMock.mockImplementation((command, payload) => {
+      if (command === "list_database_objects") {
+        const request = (payload as { request: { parent_kind?: string; table?: string } }).request;
+        if (!request.parent_kind) {
+          return Promise.resolve([{ id: "database:app", name: "app", kind: "database", has_children: true }]);
+        }
+        if (request.parent_kind === "database") {
+          const hasRenamed = callBackendMock.mock.calls.some(([calledCommand]) => calledCommand === "update_database_table_structure");
+          return Promise.resolve([
+            hasRenamed
+              ? { id: "table:app.members", name: "members", kind: "table", has_children: true }
+              : { id: "table:app.users", name: "users", kind: "table", has_children: true },
+          ]);
+        }
+        if (request.parent_kind === "table" && request.table === "users") {
+          return Promise.resolve([
+            { id: "column:app.users.id", name: "id", kind: "column", has_children: false, detail: "int(11) NO" },
+          ]);
+        }
+        if (request.parent_kind === "table" && request.table === "members") {
+          return Promise.resolve([
+            { id: "column:app.members.id", name: "id", kind: "column", has_children: false, detail: "int(11) NO" },
+          ]);
+        }
+        return Promise.resolve([{ id: "table:app.users", name: "users", kind: "table", has_children: true }]);
+      }
+      if (command === "preview_database_table_structure") {
+        return Promise.resolve({
+          ddl: "RENAME TABLE `users` TO `members`;",
+          duration_ms: 0,
+        });
+      }
+      if (command === "update_database_table_structure") {
+        return Promise.resolve({
+          ddl: "RENAME TABLE `users` TO `members`;",
+          duration_ms: 9,
+        });
+      }
+      return Promise.resolve([]);
+    });
+
+    renderDatabaseWorkspace("app");
+    const tableRow = (await screen.findByRole("button", { name: "users" })).closest("li");
+    expect(tableRow).not.toBeNull();
+    fireEvent.contextMenu(tableRow!, { clientX: 10, clientY: 20 });
+    await userEvent.click(screen.getByRole("menuitem", { name: "编辑" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "编辑表 users" });
+    await userEvent.clear(within(dialog).getByLabelText("表名"));
+    await userEvent.type(within(dialog).getByLabelText("表名"), "members");
+    fireEvent.blur(within(dialog).getByLabelText("表名"));
+
+    await waitFor(() => {
+      expect(within(dialog).getByText("RENAME TABLE `users` TO `members`;")).toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("preview_database_table_structure", {
+        request: {
+          connection_id: "mysql-dev",
+          database: "app",
+          table: "users",
+          operations: [
+            {
+              kind: "rename_table",
+              new_name: "members",
+            },
+          ],
+        },
+      });
+    });
+
+    await userEvent.click(within(dialog).getByRole("button", { name: "执行更改" }));
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("update_database_table_structure", {
+        request: {
+          connection_id: "mysql-dev",
+          database: "app",
+          table: "users",
+          operations: [
+            {
+              kind: "rename_table",
+              new_name: "members",
+            },
+          ],
+        },
+      });
+    });
+    expect(within(dialog).getByDisplayValue("members")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "members" })).toBeInTheDocument();
+    });
+  });
+
+  it("shows table indexes in table structure dialog", async () => {
+    callBackendMock.mockImplementation((command, payload) => {
+      if (command === "list_database_objects") {
+        const request = (payload as { request: { parent_kind?: string; table?: string } }).request;
+        if (!request.parent_kind) {
+          return Promise.resolve([{ id: "database:app", name: "app", kind: "database", has_children: true }]);
+        }
+        if (request.parent_kind === "table" && request.table === "users") {
+          return Promise.resolve([
+            { id: "column:app.users.id", name: "id", kind: "column", has_children: false, detail: "int(11) NO" },
+            {
+              id: "index:app.users.idx_users_name",
+              name: "idx_users_name",
+              kind: "index",
+              has_children: false,
+              detail: "unique=NO;columns=name;definition=KEY `idx_users_name` (`name`)",
+            },
+          ]);
+        }
+        return Promise.resolve([{ id: "table:app.users", name: "users", kind: "table", has_children: true }]);
+      }
+      return Promise.resolve([]);
+    });
+
+    renderDatabaseWorkspace("app");
+    const tableRow = (await screen.findByRole("button", { name: "users" })).closest("li");
+    expect(tableRow).not.toBeNull();
+    fireEvent.contextMenu(tableRow!, { clientX: 10, clientY: 20 });
+    await userEvent.click(screen.getByRole("menuitem", { name: "编辑" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "编辑表 users" });
+    expect(within(dialog).getByRole("button", { name: "idx_users_name name" })).toBeInTheDocument();
+
+    await userEvent.click(within(dialog).getByRole("button", { name: "idx_users_name name" }));
+
+    expect(within(dialog).getByText("索引 idx_users_name")).toBeInTheDocument();
+    expect(within(dialog).getByDisplayValue("idx_users_name")).toBeInTheDocument();
+    expect(within(dialog).getByDisplayValue("普通索引")).toBeInTheDocument();
+    expect(within(dialog).getByDisplayValue("name")).toBeInTheDocument();
+    expect(within(dialog).getByText("KEY `idx_users_name` (`name`)")).toBeInTheDocument();
+  });
+
+  it("shows extended column metadata in table structure dialog", async () => {
+    callBackendMock.mockImplementation((command, payload) => {
+      if (command === "list_database_objects") {
+        const request = (payload as { request: { parent_kind?: string; table?: string } }).request;
+        if (!request.parent_kind) {
+          return Promise.resolve([{ id: "database:app", name: "app", kind: "database", has_children: true }]);
+        }
+        if (request.parent_kind === "table" && request.table === "users") {
+          return Promise.resolve([
+            {
+              id: "column:app.users.id",
+              name: "id",
+              kind: "column",
+              has_children: false,
+              detail: "type=int(11);nullable=NO;default=;extra=auto_increment;comment=主键",
+            },
+            {
+              id: "column:app.users.empty_text",
+              name: "empty_text",
+              kind: "column",
+              has_children: false,
+              detail: "type=varchar(122);nullable=YES;default=;default_null=NO;extra=;comment=测试",
+            },
+          ]);
+        }
+        return Promise.resolve([{ id: "table:app.users", name: "users", kind: "table", has_children: true }]);
+      }
+      return Promise.resolve([]);
+    });
+
+    renderDatabaseWorkspace("app");
+    const tableRow = (await screen.findByRole("button", { name: "users" })).closest("li");
+    expect(tableRow).not.toBeNull();
+    fireEvent.contextMenu(tableRow!, { clientX: 10, clientY: 20 });
+    await userEvent.click(screen.getByRole("menuitem", { name: "编辑" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "编辑表 users" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "id int(11)" }));
+
+    expect(within(dialog).getByDisplayValue("auto_increment")).toBeInTheDocument();
+    expect(within(dialog).getByDisplayValue("主键")).toBeInTheDocument();
+    expect(within(dialog).getByPlaceholderText("<无默认值>")).toBeInTheDocument();
+
+    await userEvent.click(within(dialog).getByRole("button", { name: "empty_text varchar(122)" }));
+    expect(within(dialog).getByDisplayValue("''")).toBeInTheDocument();
+  });
+
   it("shows table column types only in tooltip and constrains long cell values", async () => {
     callBackendMock.mockImplementation((command, payload) => {
       if (command === "list_database_objects") {

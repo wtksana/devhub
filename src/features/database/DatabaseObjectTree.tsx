@@ -9,6 +9,7 @@ import TableIcon from "../../assets/icons/mdi-light--table.svg?react";
 interface DatabaseObjectTreeProps {
   connectionId: string;
   selectedDatabase: string;
+  refreshKey?: number;
   onDatabaseChange: (database: string) => void;
   onOpenTable?: (node: DatabaseTreeNode) => void;
   onTableContextMenu?: (event: ReactMouseEvent, node: DatabaseTreeNode) => void;
@@ -72,7 +73,7 @@ function listDatabaseObjectsOnce(request: DatabaseObjectRequest) {
   return requestPromise;
 }
 
-export function DatabaseObjectTree({ connectionId, selectedDatabase, onDatabaseChange, onOpenTable, onTableContextMenu }: DatabaseObjectTreeProps) {
+export function DatabaseObjectTree({ connectionId, selectedDatabase, refreshKey = 0, onDatabaseChange, onOpenTable, onTableContextMenu }: DatabaseObjectTreeProps) {
   const { t } = useI18n();
   const [databases, setDatabases] = useState<DatabaseTreeNode[]>([]);
   const [tables, setTables] = useState<DatabaseTreeNode[]>([]);
@@ -109,7 +110,7 @@ export function DatabaseObjectTree({ connectionId, selectedDatabase, onDatabaseC
     return () => {
       canceled = true;
     };
-  }, [connectionId, selectedDatabase]);
+  }, [connectionId, selectedDatabase, refreshKey]);
 
   async function loadNodes(parent?: DatabaseTreeNode) {
     try {

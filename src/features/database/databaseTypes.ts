@@ -86,9 +86,12 @@ export interface TableStructureColumnDefinition {
   name: string;
   data_type: string;
   nullable: boolean;
+  default_value?: string | null;
+  comment?: string | null;
 }
 
 export type TableStructureOperation =
+  | { kind: "rename_table"; new_name: string }
   | { kind: "add_column"; column: TableStructureColumnDefinition }
   | { kind: "modify_column"; original_name: string; column: TableStructureColumnDefinition }
   | { kind: "drop_column"; name: string };

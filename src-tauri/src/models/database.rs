@@ -108,11 +108,16 @@ pub struct TableStructureColumnDefinition {
     pub name: String,
     pub data_type: String,
     pub nullable: bool,
+    pub default_value: Option<String>,
+    pub comment: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum TableStructureOperation {
+    RenameTable {
+        new_name: String,
+    },
     AddColumn {
         column: TableStructureColumnDefinition,
     },

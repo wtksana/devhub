@@ -85,14 +85,27 @@ type TableStructureColumnDraft = {
   name: string;
   dataType: string;
   nullable: boolean;
+  defaultValue: string;
+  extra: string;
+  comment: string;
+};
+
+type TableStructureIndexInfo = {
+  id: string;
+  name: string;
+  unique: boolean;
+  columns: string;
+  definition: string;
 };
 
 type TableStructureDialogState = {
   table: DatabaseTreeNode;
+  draftTableName: string;
   originalColumns: TableStructureColumnDraft[];
   draftColumns: TableStructureColumnDraft[];
   deletedColumns: TableStructureColumnDraft[];
-  selectedItem: { kind: "table" } | { kind: "column"; id: string } | { kind: "indexes" };
+  indexes: TableStructureIndexInfo[];
+  selectedItem: { kind: "table" } | { kind: "column"; id: string } | { kind: "indexes" } | { kind: "index"; id: string };
   error: string | null;
   ddlPreview: string;
   durationMs: number | null;
@@ -143,6 +156,7 @@ export function DatabaseWorkspace({
   const [newSqlFileName, setNewSqlFileName] = useState("");
   const [isCreateSqlFileDialogOpen, setIsCreateSqlFileDialogOpen] = useState(false);
   const [objectTreeWidth, setObjectTreeWidth] = useState(DEFAULT_OBJECT_TREE_WIDTH);
+  const [objectTreeRefreshKey, setObjectTreeRefreshKey] = useState(0);
   const [isResizingObjectTree, setIsResizingObjectTree] = useState(false);
   const [tableStructureObjectsWidth, setTableStructureObjectsWidth] = useState(DEFAULT_TABLE_STRUCTURE_OBJECTS_WIDTH);
   const [isResizingTableStructureObjects, setIsResizingTableStructureObjects] = useState(false);
@@ -331,7 +345,14 @@ export function DatabaseWorkspace({
       isActive = false;
       window.clearTimeout(timer);
     };
-  }, [connectionId, currentDatabase, tableStructureDialog?.draftColumns, tableStructureDialog?.deletedColumns, tableStructureDialog?.table.id]);
+  }, [
+    connectionId,
+    currentDatabase,
+    tableStructureDialog?.draftTableName,
+    tableStructureDialog?.draftColumns,
+    tableStructureDialog?.deletedColumns,
+    tableStructureDialog?.table.id,
+  ]);
 
   function closeSqlFilePreview() {
     setSqlFilePreview(null);
@@ -456,11 +477,14 @@ export function DatabaseWorkspace({
           table: node.name,
         },
       });
-      const draftColumns = (Array.isArray(columns) ? columns : []).map(columnNodeToDraft);
+      const nodes = Array.isArray(columns) ? columns : [];
+      const draftColumns = nodes.filter((node) => node.kind === "column").map(columnNodeToDraft);
+      const indexes = nodes.filter((node) => node.kind === "index").map(indexNodeToInfo);
       setTableStructureDialog({
         ...emptyTableStructureDialog(node),
         originalColumns: draftColumns,
         draftColumns,
+        indexes,
       });
     } catch (caught) {
       void logFrontendError("frontend.database", "list_database_objects", caught, `${connectionId}:${currentDatabase}:${node.name}`, {
@@ -483,7 +507,7 @@ export function DatabaseWorkspace({
     setTableStructureDialog(null);
   }
 
-  const updateTableStructureColumn = useCallback((id: string, changes: Partial<Pick<TableStructureColumnDraft, "name" | "dataType" | "nullable">>) => {
+  const updateTableStructureColumn = useCallback((id: string, changes: Partial<Pick<TableStructureColumnDraft, "name" | "dataType" | "nullable" | "defaultValue" | "comment">>) => {
     setTableStructureDialog((current) => current ? {
       ...current,
       draftColumns: current.draftColumns.map((column) => (
@@ -505,6 +529,9 @@ export function DatabaseWorkspace({
         name: "",
         dataType: "varchar(255)",
         nullable: true,
+        defaultValue: "",
+        extra: "",
+        comment: "",
       };
       return {
         ...current,
@@ -537,6 +564,16 @@ export function DatabaseWorkspace({
     });
   }, []);
 
+  const updateTableStructureName = useCallback((name: string) => {
+    setTableStructureDialog((current) => current ? {
+      ...current,
+      draftTableName: name.trim(),
+      durationMs: null,
+      statusMessage: "",
+      error: null,
+    } : current);
+  }, []);
+
   const selectTableStructureItem = useCallback((selectedItem: TableStructureDialogState["selectedItem"]) => {
     setTableStructureDialog((current) => current ? { ...current, selectedItem } : current);
   }, []);
@@ -548,6 +585,7 @@ export function DatabaseWorkspace({
       setTableStructureDialog({ ...tableStructureDialog, error: t("database.table_structure_no_changes") });
       return;
     }
+    const nextTableName = tableStructureDialog.draftTableName.trim() || tableStructureDialog.table.name;
     setIsTableStructurePreviewing(false);
     setTableStructureDialog({ ...tableStructureDialog, isSaving: true, error: null, statusMessage: "" });
     try {
@@ -565,18 +603,27 @@ export function DatabaseWorkspace({
           parent_kind: tableStructureDialog.table.kind,
           database: currentDatabase,
           schema: currentDatabase,
-          table: tableStructureDialog.table.name,
+          table: nextTableName,
         },
       });
-      const draftColumns = (Array.isArray(columns) ? columns : []).map(columnNodeToDraft);
+      const nodes = Array.isArray(columns) ? columns : [];
+      const draftColumns = nodes.filter((node) => node.kind === "column").map(columnNodeToDraft);
+      const indexes = nodes.filter((node) => node.kind === "index").map(indexNodeToInfo);
+      const nextTable = {
+        ...tableStructureDialog.table,
+        id: tableStructureDialog.table.id.replace(tableStructureDialog.table.name, nextTableName),
+        name: nextTableName,
+      };
       setTableStructureDialog({
-        ...emptyTableStructureDialog(tableStructureDialog.table),
+        ...emptyTableStructureDialog(nextTable),
         originalColumns: draftColumns,
         draftColumns,
+        indexes,
         ddlPreview: result.ddl,
         durationMs: result.duration_ms,
         statusMessage: t("database.table_structure_updated", { duration: result.duration_ms }),
       });
+      setObjectTreeRefreshKey((current) => current + 1);
     } catch (caught) {
       setTableStructureDialog((current) => current ? {
         ...current,
@@ -913,6 +960,7 @@ export function DatabaseWorkspace({
       <DatabaseObjectTree
         connectionId={connectionId}
         selectedDatabase={currentDatabase}
+        refreshKey={objectTreeRefreshKey}
         onDatabaseChange={setCurrentDatabase}
         onOpenTable={openTable}
         onTableContextMenu={openTableContextMenu}
@@ -1283,6 +1331,7 @@ export function DatabaseWorkspace({
                 />
                 <TableStructureEditor
                   dialog={tableStructureDialog}
+                  onUpdateTableName={updateTableStructureName}
                   onUpdateColumn={updateTableStructureColumn}
                   onDeleteColumn={deleteTableStructureColumn}
                 />
@@ -1483,8 +1532,21 @@ const TableStructureObjectList = memo(function TableStructureObjectList({
           onClick={() => onSelect({ kind: "indexes" })}
         >
           <span>{t("database.indexes_group")}</span>
+          <span className="database-table-structure-dialog__column-type">{dialog.indexes.length}</span>
         </button>
-        <p className="database-table-structure-dialog__empty">{t("database.no_index_metadata")}</p>
+        {dialog.indexes.map((index) => (
+          <button
+            key={index.id}
+            type="button"
+            aria-label={t("database.index_object", { name: index.name, columns: index.columns || "-" })}
+            className={`database-table-structure-dialog__node database-table-structure-dialog__node--child${dialog.selectedItem.kind === "index" && dialog.selectedItem.id === index.id ? " database-table-structure-dialog__node--active" : ""}`}
+            onClick={() => onSelect({ kind: "index", id: index.id })}
+          >
+            <span className="database-table-structure-dialog__column-name">{index.name}</span>
+            <span className="database-table-structure-dialog__column-type">{index.columns || "-"}</span>
+          </button>
+        ))}
+        {dialog.indexes.length === 0 ? <p className="database-table-structure-dialog__empty">{t("database.no_index_metadata")}</p> : null}
       </div>
     </aside>
   );
@@ -1492,11 +1554,13 @@ const TableStructureObjectList = memo(function TableStructureObjectList({
 
 const TableStructureEditor = memo(function TableStructureEditor({
   dialog,
+  onUpdateTableName,
   onUpdateColumn,
   onDeleteColumn,
 }: {
   dialog: TableStructureDialogState;
-  onUpdateColumn: (id: string, changes: Partial<Pick<TableStructureColumnDraft, "name" | "dataType" | "nullable">>) => void;
+  onUpdateTableName: (name: string) => void;
+  onUpdateColumn: (id: string, changes: Partial<Pick<TableStructureColumnDraft, "name" | "dataType" | "nullable" | "defaultValue" | "comment">>) => void;
   onDeleteColumn: (id: string) => void;
 }) {
   const { t } = useI18n();
@@ -1506,7 +1570,11 @@ const TableStructureEditor = memo(function TableStructureEditor({
         <h3>{t("database.table_object", { table: dialog.table.name })}</h3>
         <label className="database-table-structure-dialog__field">
           <span>{t("database.table_name")}</span>
-          <input value={dialog.table.name} readOnly />
+          <TableStructureTextInput
+            ariaLabel={t("database.table_name")}
+            value={dialog.draftTableName}
+            onCommit={onUpdateTableName}
+          />
         </label>
         <label className="database-table-structure-dialog__field">
           <span>{t("database.columns_count")}</span>
@@ -1520,7 +1588,52 @@ const TableStructureEditor = memo(function TableStructureEditor({
     return (
       <section className="database-table-structure-dialog__editor" aria-label={t("database.index_editor")}>
         <h3>{t("database.indexes_group")}</h3>
-        <p className="database-table-structure-dialog__empty">{t("database.no_index_metadata")}</p>
+        <label className="database-table-structure-dialog__field">
+          <span>{t("database.index_count")}</span>
+          <input value={String(dialog.indexes.length)} readOnly />
+        </label>
+        {dialog.indexes.length === 0 ? <p className="database-table-structure-dialog__empty">{t("database.no_index_metadata")}</p> : null}
+      </section>
+    );
+  }
+
+  if (dialog.selectedItem.kind === "index") {
+    const selectedIndexId = dialog.selectedItem.id;
+    const index = dialog.indexes.find((candidate) => candidate.id === selectedIndexId);
+    if (!index) {
+      return (
+        <section className="database-table-structure-dialog__editor" aria-label={t("database.index_editor")}>
+          <p className="database-table-structure-dialog__empty">{t("database.no_index_selected")}</p>
+        </section>
+      );
+    }
+    return (
+      <section className="database-table-structure-dialog__editor" aria-label={t("database.index_editor")}>
+        <h3>{t("database.edit_index_title", { name: index.name })}</h3>
+        <label className="database-table-structure-dialog__field">
+          <span>{t("database.index_name")}</span>
+          <input value={index.name} readOnly />
+        </label>
+        <label className="database-table-structure-dialog__field">
+          <span>{t("database.index_type")}</span>
+          <input value={index.unique ? t("database.unique_index") : t("database.normal_index")} readOnly />
+        </label>
+        <label className="database-table-structure-dialog__field">
+          <span>{t("database.index_columns")}</span>
+          <input value={index.columns || "-"} readOnly />
+        </label>
+        <div className="database-table-structure-dialog__definition">
+          <span>{t("database.index_definition")}</span>
+          <pre>{index.definition || "-"}</pre>
+        </div>
+      </section>
+    );
+  }
+
+  if (dialog.selectedItem.kind !== "column") {
+    return (
+      <section className="database-table-structure-dialog__editor" aria-label={t("database.column_editor")}>
+        <p className="database-table-structure-dialog__empty">{t("database.no_column_selected")}</p>
       </section>
     );
   }
@@ -1550,39 +1663,10 @@ const TableStructureColumnEditor = memo(function TableStructureColumnEditor({
   onDeleteColumn,
 }: {
   column: TableStructureColumnDraft;
-  onUpdateColumn: (id: string, changes: Partial<Pick<TableStructureColumnDraft, "name" | "dataType" | "nullable">>) => void;
+  onUpdateColumn: (id: string, changes: Partial<Pick<TableStructureColumnDraft, "name" | "dataType" | "nullable" | "defaultValue" | "comment">>) => void;
   onDeleteColumn: (id: string) => void;
 }) {
   const { t } = useI18n();
-  const [nameDraft, setNameDraft] = useState(column.name);
-  const [typeDraft, setTypeDraft] = useState(column.dataType);
-
-  useEffect(() => {
-    setNameDraft(column.name);
-    setTypeDraft(column.dataType);
-  }, [column.id, column.name, column.dataType]);
-
-  function commitName() {
-    const nextName = nameDraft.trim();
-    if (nextName !== column.name) {
-      onUpdateColumn(column.id, { name: nextName });
-    }
-  }
-
-  function commitType() {
-    const nextType = typeDraft.trim();
-    if (nextType !== column.dataType) {
-      onUpdateColumn(column.id, { dataType: nextType });
-    }
-  }
-
-  function commitOnEnter(event: React.KeyboardEvent<HTMLInputElement>, commit: () => void) {
-    if (event.key !== "Enter") return;
-    event.preventDefault();
-    commit();
-    event.currentTarget.blur();
-  }
-
   const title = column.originalName
     ? t("database.edit_column_title", { name: column.originalName })
     : t("database.edit_new_column_title");
@@ -1604,22 +1688,22 @@ const TableStructureColumnEditor = memo(function TableStructureColumnEditor({
       </header>
       <label className="database-table-structure-dialog__field">
         <span>{t("database.column_name")}</span>
-        <input
-          aria-label={t("database.column_name")}
-          value={nameDraft}
-          onBlur={commitName}
-          onChange={(event) => setNameDraft(event.target.value)}
-          onKeyDown={(event) => commitOnEnter(event, commitName)}
+        <TableStructureTextInput
+          ariaLabel={t("database.column_name")}
+          value={column.name}
+          onCommit={(name) => {
+            if (name !== column.name) onUpdateColumn(column.id, { name });
+          }}
         />
       </label>
       <label className="database-table-structure-dialog__field">
         <span>{t("database.column_type")}</span>
-        <input
-          aria-label={t("database.column_type")}
-          value={typeDraft}
-          onBlur={commitType}
-          onChange={(event) => setTypeDraft(event.target.value)}
-          onKeyDown={(event) => commitOnEnter(event, commitType)}
+        <TableStructureTextInput
+          ariaLabel={t("database.column_type")}
+          value={column.dataType}
+          onCommit={(dataType) => {
+            if (dataType !== column.dataType) onUpdateColumn(column.id, { dataType });
+          }}
         />
       </label>
       <label className="database-table-structure-dialog__checkbox-field">
@@ -1631,9 +1715,75 @@ const TableStructureColumnEditor = memo(function TableStructureColumnEditor({
         />
         <span>{t("database.nullable")}</span>
       </label>
+      <label className="database-table-structure-dialog__field">
+        <span>{t("database.column_default")}</span>
+        <TableStructureTextInput
+          ariaLabel={t("database.column_default")}
+          value={column.defaultValue}
+          placeholder={t("database.no_default_value")}
+          onCommit={(defaultValue) => {
+            if (defaultValue !== column.defaultValue) onUpdateColumn(column.id, { defaultValue });
+          }}
+        />
+      </label>
+      <label className="database-table-structure-dialog__field">
+        <span>{t("database.column_extra")}</span>
+        <input value={column.extra || "-"} readOnly />
+      </label>
+      <label className="database-table-structure-dialog__field">
+        <span>{t("database.column_comment")}</span>
+        <TableStructureTextInput
+          ariaLabel={t("database.column_comment")}
+          value={column.comment}
+          onCommit={(comment) => {
+            if (comment !== column.comment) onUpdateColumn(column.id, { comment });
+          }}
+        />
+      </label>
     </section>
   );
 });
+
+function TableStructureTextInput({
+  ariaLabel,
+  value,
+  placeholder,
+  onCommit,
+}: {
+  ariaLabel: string;
+  value: string;
+  placeholder?: string;
+  onCommit: (value: string) => void;
+}) {
+  const [draft, setDraft] = useState(value);
+
+  useEffect(() => {
+    setDraft(value);
+  }, [value]);
+
+  function commit() {
+    const nextValue = draft.trim();
+    if (nextValue !== value) {
+      onCommit(nextValue);
+    }
+  }
+
+  return (
+    <input
+      aria-label={ariaLabel}
+      value={draft}
+      placeholder={placeholder}
+      onBlur={commit}
+      onChange={(event) => setDraft(event.target.value)}
+      onKeyDown={(event) => {
+        if (event.key !== "Enter") return;
+        event.preventDefault();
+        commit();
+        event.currentTarget.blur();
+      }}
+    />
+  );
+}
 
 function defaultExportName(database: string, table: string | null, extension: "csv" | "sql") {
   const timestamp = new Date().toISOString().replace(/\D/g, "").slice(0, 14);
@@ -1719,9 +1869,11 @@ function sortSqlFiles(files: DatabaseSqlFile[]) {
 function emptyTableStructureDialog(table: DatabaseTreeNode): TableStructureDialogState {
   return {
     table,
+    draftTableName: table.name,
     originalColumns: [],
     draftColumns: [],
     deletedColumns: [],
+    indexes: [],
     selectedItem: { kind: "table" },
     error: null,
     ddlPreview: "",
@@ -1740,12 +1892,43 @@ function columnNodeToDraft(column: DatabaseTreeNode): TableStructureColumnDraft 
     name: column.name,
     dataType: detail.dataType,
     nullable: detail.nullable === "YES",
+    defaultValue: detail.defaultValue,
+    extra: detail.extra,
+    comment: detail.comment,
+  };
+}
+
+function indexNodeToInfo(index: DatabaseTreeNode): TableStructureIndexInfo {
+  const detail = parseIndexDetail(index.detail);
+  return {
+    id: index.id,
+    name: index.name,
+    unique: detail.unique === "YES",
+    columns: detail.columns,
+    definition: detail.definition,
+  };
+}
+
+function parseIndexDetail(detail?: string | null) {
+  const values = Object.fromEntries((detail ?? "").split(";").map((part) => {
+    const separatorIndex = part.indexOf("=");
+    if (separatorIndex < 0) return [part.trim(), ""];
+    return [part.slice(0, separatorIndex).trim(), part.slice(separatorIndex + 1).trim()];
+  }));
+  return {
+    unique: values.unique ?? "",
+    columns: values.columns ?? "",
+    definition: values.definition ?? "",
   };
 }
 
 function tableStructureOperations(dialog: TableStructureDialogState): TableStructureOperation[] {
   const originalByName = new Map(dialog.originalColumns.map((column) => [column.originalName, column]));
   const operations: TableStructureOperation[] = [];
+  const draftTableName = dialog.draftTableName.trim();
+  if (draftTableName && draftTableName !== dialog.table.name) {
+    operations.push({ kind: "rename_table", new_name: draftTableName });
+  }
   for (const column of dialog.draftColumns) {
     const name = column.name.trim();
     const dataType = column.dataType.trim();
@@ -1753,7 +1936,7 @@ function tableStructureOperations(dialog: TableStructureDialogState): TableStruc
     if (!column.originalName) {
       operations.push({
         kind: "add_column",
-        column: { name, data_type: dataType, nullable: column.nullable },
+        column: tableStructureColumnDefinition(column, name, dataType),
       });
       continue;
     }
@@ -1763,11 +1946,13 @@ function tableStructureOperations(dialog: TableStructureDialogState): TableStruc
       original.name !== name
       || original.dataType !== dataType
       || original.nullable !== column.nullable
+      || original.defaultValue !== column.defaultValue
+      || original.comment !== column.comment
     ) {
       operations.push({
         kind: "modify_column",
         original_name: column.originalName,
-        column: { name, data_type: dataType, nullable: column.nullable },
+        column: tableStructureColumnDefinition(column, name, dataType),
       });
     }
   }
@@ -1777,6 +1962,16 @@ function tableStructureOperations(dialog: TableStructureDialogState): TableStruc
     }
   }
   return operations;
+}
+
+function tableStructureColumnDefinition(column: TableStructureColumnDraft, name: string, dataType: string) {
+  return {
+    name,
+    data_type: dataType,
+    nullable: column.nullable,
+    ...(column.defaultValue.trim() ? { default_value: column.defaultValue.trim() } : {}),
+    ...(column.comment.trim() ? { comment: column.comment.trim() } : {}),
+  };
 }
 
 function isTableStructureDirty(dialog: TableStructureDialogState) {
@@ -1791,10 +1986,27 @@ function normalizeLimit(value: string) {
 
 function parseColumnDetail(detail?: string | null) {
   const trimmed = detail?.trim() ?? "";
+  if (trimmed.includes("type=") || trimmed.includes("nullable=")) {
+    const values = Object.fromEntries(trimmed.split(";").map((part) => {
+      const separatorIndex = part.indexOf("=");
+      if (separatorIndex < 0) return [part.trim(), ""];
+      return [part.slice(0, separatorIndex).trim(), part.slice(separatorIndex + 1).trim()];
+    }));
+    return {
+      dataType: values.type ?? "",
+      nullable: values.nullable ?? "",
+      defaultValue: values.default === "" && values.default_null === "NO" ? "''" : values.default ?? "",
+      extra: values.extra ?? "",
+      comment: values.comment ?? "",
+    };
+  }
   const nullableMatch = trimmed.match(/\s+(YES|NO)$/i);
   return {
     dataType: nullableMatch ? trimmed.slice(0, nullableMatch.index).trim() : trimmed,
     nullable: nullableMatch?.[1]?.toUpperCase() ?? "",
+    defaultValue: "",
+    extra: "",
+    comment: "",
   };
 }
 

@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use crate::db::connection::{database_connection_url, database_pool_key};
-use crate::db::metadata::{metadata_query_for_columns, metadata_query_for_tables};
+use crate::db::metadata::{metadata_query_for_columns, metadata_query_for_indexes, metadata_query_for_tables};
 use crate::db::query::{
     append_postgresql_indexes_to_ddl, apply_select_limit, build_table_delete_queries,
     build_table_insert_queries, build_table_page_queries, build_table_structure_ddl,
@@ -100,10 +100,32 @@ fn builds_mysql_table_column_metadata_query_with_default_and_generated_flags() {
 }
 
 #[test]
+fn builds_mysql_index_metadata_query() {
+    let query = metadata_query_for_indexes("mysql", "app", "users").unwrap();
+
+    assert!(query.sql.contains("information_schema.statistics"));
+    assert!(query.sql.contains("group_concat(column_name"));
+    assert_eq!(query.binds, vec!["app".to_string(), "users".to_string()]);
+}
+
+#[test]
+fn builds_postgresql_index_metadata_query() {
+    let query = metadata_query_for_indexes("postgresql", "public", "users").unwrap();
+
+    assert!(query.sql.contains("pg_indexes"));
+    assert!(query.sql.contains("indexdef"));
+    assert_eq!(query.binds, vec!["public".to_string(), "users".to_string()]);
+}
+
+#[test]
 fn builds_mysql_object_column_query_with_full_column_type() {
     let query = metadata_query_for_columns("mysql", "app", "users").unwrap();
 
     assert!(query.sql.contains("column_type as data_type"));
+    assert!(query.sql.contains("column_default"));
+    assert!(query.sql.contains("column_default_is_null"));
+    assert!(query.sql.contains("column_comment"));
+    assert!(query.sql.contains("extra"));
     assert_eq!(query.binds, vec!["app".to_string(), "users".to_string()]);
 }
 
@@ -357,6 +379,8 @@ fn builds_mysql_table_structure_ddl_for_add_modify_and_drop() {
                     name: "username".to_string(),
                     data_type: "varchar(100)".to_string(),
                     nullable: false,
+                    default_value: None,
+                    comment: None,
                 },
             },
             TableStructureOperation::AddColumn {
@@ -364,6 +388,8 @@ fn builds_mysql_table_structure_ddl_for_add_modify_and_drop() {
                     name: "age".to_string(),
                     data_type: "int".to_string(),
                     nullable: true,
+                    default_value: None,
+                    comment: None,
                 },
             },
             TableStructureOperation::DropColumn {
@@ -377,6 +403,68 @@ fn builds_mysql_table_structure_ddl_for_add_modify_and_drop() {
         ddl,
         "ALTER TABLE `users`\n  CHANGE COLUMN `name` `username` varchar(100) NOT NULL,\n  ADD COLUMN `age` int NULL,\n  DROP COLUMN `remark`;"
     );
+}
+
+#[test]
+fn builds_mysql_table_structure_ddl_with_default_and_comment() {
+    let ddl = build_table_structure_ddl(
+        "mysql",
+        "users",
+        &[TableStructureOperation::ModifyColumn {
+            original_name: "name".to_string(),
+            column: TableStructureColumnDefinition {
+                name: "name".to_string(),
+                data_type: "varchar(100)".to_string(),
+                nullable: false,
+                default_value: Some("anonymous".to_string()),
+                comment: Some("用户'昵称".to_string()),
+            },
+        }],
+    )
+    .unwrap();
+
+    assert_eq!(
+        ddl,
+        "ALTER TABLE `users`\n  CHANGE COLUMN `name` `name` varchar(100) NOT NULL DEFAULT 'anonymous' COMMENT '用户''昵称';"
+    );
+}
+
+#[test]
+fn keeps_mysql_empty_string_default_literal() {
+    let ddl = build_table_structure_ddl(
+        "mysql",
+        "oss_file_log",
+        &[TableStructureOperation::ModifyColumn {
+            original_name: "test".to_string(),
+            column: TableStructureColumnDefinition {
+                name: "test".to_string(),
+                data_type: "varchar(122)".to_string(),
+                nullable: true,
+                default_value: Some("''".to_string()),
+                comment: Some("测试".to_string()),
+            },
+        }],
+    )
+    .unwrap();
+
+    assert_eq!(
+        ddl,
+        "ALTER TABLE `oss_file_log`\n  CHANGE COLUMN `test` `test` varchar(122) NULL DEFAULT '' COMMENT '测试';"
+    );
+}
+
+#[test]
+fn builds_mysql_table_structure_ddl_for_rename_table() {
+    let ddl = build_table_structure_ddl(
+        "mysql",
+        "users",
+        &[TableStructureOperation::RenameTable {
+            new_name: "members".to_string(),
+        }],
+    )
+    .unwrap();
+
+    assert_eq!(ddl, "RENAME TABLE `users` TO `members`;");
 }
 
 #[test]

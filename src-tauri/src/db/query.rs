@@ -264,10 +264,25 @@ fn build_mysql_table_structure_ddl(
     table: &str,
     operations: &[TableStructureOperation],
 ) -> Result<String, String> {
-    let clauses = operations
-        .iter()
-        .map(|operation| match operation {
-            TableStructureOperation::AddColumn { column } => Ok(format!(
+    let mut current_table = table.trim().to_string();
+    let mut statements = Vec::new();
+    let mut column_operations = Vec::new();
+
+    for operation in operations {
+        match operation {
+            TableStructureOperation::RenameTable { new_name } => {
+                let new_name = new_name.trim();
+                if new_name.is_empty() {
+                    return Err("new table name is required".to_string());
+                }
+                statements.push(format!(
+                    "RENAME TABLE {} TO {};",
+                    quote_identifier("mysql", &current_table)?,
+                    quote_identifier("mysql", new_name)?
+                ));
+                current_table = new_name.to_string();
+            }
+            TableStructureOperation::AddColumn { column } => column_operations.push(format!(
                 "ADD COLUMN {}",
                 mysql_column_definition(column)?
             )),
@@ -279,27 +294,37 @@ fn build_mysql_table_structure_ddl(
                 if original.is_empty() {
                     return Err("original column name is required".to_string());
                 }
-                Ok(format!(
+                column_operations.push(format!(
                     "CHANGE COLUMN {} {}",
                     quote_identifier("mysql", original)?,
                     mysql_column_definition(column)?
-                ))
+                ));
             }
             TableStructureOperation::DropColumn { name } => {
                 let name = name.trim();
                 if name.is_empty() {
                     return Err("column name is required".to_string());
                 }
-                Ok(format!("DROP COLUMN {}", quote_identifier("mysql", name)?))
+                column_operations.push(format!(
+                    "DROP COLUMN {}",
+                    quote_identifier("mysql", name)?
+                ));
             }
-        })
-        .collect::<Result<Vec<String>, String>>()?;
+        }
+    }
 
-    Ok(format!(
-        "ALTER TABLE {}\n  {};",
-        quote_identifier("mysql", table.trim())?,
-        clauses.join(",\n  ")
-    ))
+    if !column_operations.is_empty() {
+        statements.push(format!(
+            "ALTER TABLE {}\n  {};",
+            quote_identifier("mysql", &current_table)?,
+            column_operations.join(",\n  ")
+        ));
+    }
+
+    if statements.is_empty() {
+        return Err("no table structure changes".to_string());
+    }
+    Ok(statements.join("\n"))
 }
 
 fn mysql_column_definition(column: &TableStructureColumnDefinition) -> Result<String, String> {
@@ -311,12 +336,63 @@ fn mysql_column_definition(column: &TableStructureColumnDefinition) -> Result<St
     if data_type.is_empty() {
         return Err("column type is required".to_string());
     }
-    Ok(format!(
+    let mut definition = format!(
         "{} {} {}",
         quote_identifier("mysql", name)?,
         data_type,
         if column.nullable { "NULL" } else { "NOT NULL" }
-    ))
+    );
+    if let Some(default_value) = mysql_column_default_clause(column) {
+        definition.push_str(&default_value);
+    }
+    if let Some(comment) = column.comment.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+        definition.push_str(" COMMENT ");
+        definition.push_str(&mysql_string_literal(comment));
+    }
+    Ok(definition)
+}
+
+fn mysql_column_default_clause(column: &TableStructureColumnDefinition) -> Option<String> {
+    let default_value = column.default_value.as_deref()?.trim();
+    if default_value.is_empty() {
+        return None;
+    }
+    if default_value.eq_ignore_ascii_case("null") {
+        return Some(" DEFAULT NULL".to_string());
+    }
+    if is_mysql_default_expression(default_value) {
+        return Some(format!(" DEFAULT {default_value}"));
+    }
+    if is_mysql_quoted_string_literal(default_value) {
+        return Some(format!(" DEFAULT {default_value}"));
+    }
+    Some(format!(" DEFAULT {}", mysql_string_literal(default_value)))
+}
+
+fn is_mysql_quoted_string_literal(value: &str) -> bool {
+    if value.len() < 2 || !value.starts_with('\'') || !value.ends_with('\'') {
+        return false;
+    }
+    let mut chars = value[1..value.len() - 1].chars().peekable();
+    while let Some(current) = chars.next() {
+        if current == '\'' && chars.next() != Some('\'') {
+            return false;
+        }
+    }
+    true
+}
+
+fn is_mysql_default_expression(value: &str) -> bool {
+    let upper = value.to_ascii_uppercase();
+    matches!(
+        upper.as_str(),
+        "CURRENT_TIMESTAMP" | "CURRENT_TIMESTAMP()" | "CURRENT_DATE" | "CURRENT_DATE()" | "CURRENT_TIME" | "CURRENT_TIME()"
+    ) || value.parse::<i64>().is_ok()
+        || value.parse::<f64>().is_ok()
+}
+
+fn mysql_string_literal(value: &str) -> String {
+    format!("'{}'", value.replace('\\', "\\\\").replace('\'', "''"))
 }
 
 pub fn postgresql_table_ddl_query(schema: &str, table: &str) -> Result<MetadataQuery, String> {
