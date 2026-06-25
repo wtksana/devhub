@@ -69,7 +69,7 @@ pub fn metadata_query_for_columns(
 ) -> Result<MetadataQuery, String> {
     match kind {
         "mysql" => Ok(MetadataQuery {
-            sql: "select column_name, data_type, is_nullable from information_schema.columns where table_schema = ? and table_name = ? order by ordinal_position".to_string(),
+            sql: "select column_name, column_type as data_type, is_nullable from information_schema.columns where table_schema = ? and table_name = ? order by ordinal_position".to_string(),
             binds: vec![schema.to_string(), table.to_string()],
         }),
         "postgresql" => Ok(MetadataQuery {

@@ -82,6 +82,22 @@ export interface DatabaseTableDdlResult {
   duration_ms: number;
 }
 
+export interface TableStructureColumnDefinition {
+  name: string;
+  data_type: string;
+  nullable: boolean;
+}
+
+export type TableStructureOperation =
+  | { kind: "add_column"; column: TableStructureColumnDefinition }
+  | { kind: "modify_column"; original_name: string; column: TableStructureColumnDefinition }
+  | { kind: "drop_column"; name: string };
+
+export interface DatabaseTableStructureUpdateResult {
+  ddl: string;
+  duration_ms: number;
+}
+
 export type DatabaseSortDirection = "asc" | "desc";
 
 export interface DatabaseTablePageResult {

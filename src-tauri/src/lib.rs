@@ -88,6 +88,8 @@ pub fn run() {
             commands::database::insert_database_table_rows,
             commands::database::delete_database_table_rows,
             commands::database::get_database_table_ddl,
+            commands::database::preview_database_table_structure,
+            commands::database::update_database_table_structure,
             commands::database::list_database_sql_files,
             commands::database::save_database_sql_file,
             commands::database::preview_database_sql_file,

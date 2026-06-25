@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent } from "react";
+import { memo, useCallback, useEffect, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent } from "react";
 import Editor from "@monaco-editor/react";
 import type { OnMount } from "@monaco-editor/react";
 import { logFrontendError } from "../../lib/appLogging";
@@ -14,8 +14,10 @@ import type {
   DatabaseSqlFilePreview,
   DatabaseTableBrowserTarget,
   DatabaseTableDdlResult,
+  DatabaseTableStructureUpdateResult,
   DatabaseTreeNode,
   DatabaseWorkspaceProps,
+  TableStructureOperation,
 } from "./databaseTypes";
 import { DatabaseObjectTree } from "./DatabaseObjectTree";
 import { DatabaseTableBrowser } from "./DatabaseTableBrowser";
@@ -37,6 +39,9 @@ const DEFAULT_QUERY_TIMEOUT_MS = 30_000;
 const DEFAULT_OBJECT_TREE_WIDTH = 220;
 const MIN_OBJECT_TREE_WIDTH = 180;
 const MAX_OBJECT_TREE_WIDTH = 420;
+const DEFAULT_TABLE_STRUCTURE_OBJECTS_WIDTH = 270;
+const MIN_TABLE_STRUCTURE_OBJECTS_WIDTH = 190;
+const MAX_TABLE_STRUCTURE_OBJECTS_WIDTH = 420;
 const CREATE_SQL_FILE_VALUE = "__create_sql_file__";
 const DANGEROUS_SQL_KEYWORDS = new Set([
   "insert",
@@ -73,6 +78,28 @@ type QueryExecutionState =
   | { status: "running"; message: string }
   | { status: "canceled"; message: string }
   | { status: "timeout"; message: string };
+
+type TableStructureColumnDraft = {
+  id: string;
+  originalName: string | null;
+  name: string;
+  dataType: string;
+  nullable: boolean;
+};
+
+type TableStructureDialogState = {
+  table: DatabaseTreeNode;
+  originalColumns: TableStructureColumnDraft[];
+  draftColumns: TableStructureColumnDraft[];
+  deletedColumns: TableStructureColumnDraft[];
+  selectedItem: { kind: "table" } | { kind: "column"; id: string } | { kind: "indexes" };
+  error: string | null;
+  ddlPreview: string;
+  durationMs: number | null;
+  statusMessage: string;
+  isSaving: boolean;
+  confirmClose: boolean;
+};
 
 function listDatabaseSqlFilesOnce(connectionId: string, database: string) {
   const key = `${connectionId}:${database}`;
@@ -117,9 +144,12 @@ export function DatabaseWorkspace({
   const [isCreateSqlFileDialogOpen, setIsCreateSqlFileDialogOpen] = useState(false);
   const [objectTreeWidth, setObjectTreeWidth] = useState(DEFAULT_OBJECT_TREE_WIDTH);
   const [isResizingObjectTree, setIsResizingObjectTree] = useState(false);
+  const [tableStructureObjectsWidth, setTableStructureObjectsWidth] = useState(DEFAULT_TABLE_STRUCTURE_OBJECTS_WIDTH);
+  const [isResizingTableStructureObjects, setIsResizingTableStructureObjects] = useState(false);
   const [editorContextMenu, setEditorContextMenu] = useState<ContextMenuState | null>(null);
   const [tableContextMenu, setTableContextMenu] = useState<ContextMenuState | null>(null);
-  const [tableStructureDialog, setTableStructureDialog] = useState<{ table: DatabaseTreeNode; columns: DatabaseTreeNode[]; error: string | null } | null>(null);
+  const [tableStructureDialog, setTableStructureDialog] = useState<TableStructureDialogState | null>(null);
+  const [isTableStructurePreviewing, setIsTableStructurePreviewing] = useState(false);
   const [tableDdlDialog, setTableDdlDialog] = useState<{ table: DatabaseTreeNode; ddl: string; durationMs: number | null; error: string | null } | null>(null);
   const [sqlFilePreview, setSqlFilePreview] = useState<DatabaseSqlFilePreview | null>(null);
   const [isSqlFileExecuting, setIsSqlFileExecuting] = useState(false);
@@ -129,6 +159,7 @@ export function DatabaseWorkspace({
   const [pendingInsertExport, setPendingInsertExport] = useState<{ columns: DatabaseResultColumn[]; rows: DatabaseCellValue[][]; includeHeader: boolean } | null>(null);
   const [insertExportTableName, setInsertExportTableName] = useState("");
   const objectTreeResizeRef = useRef({ startX: 0, startWidth: DEFAULT_OBJECT_TREE_WIDTH });
+  const tableStructureObjectsResizeRef = useRef({ startX: 0, startWidth: DEFAULT_TABLE_STRUCTURE_OBJECTS_WIDTH });
   const latestSqlFileKeyRef = useRef("");
   const dirtySqlFileKeysRef = useRef(new Set<string>());
   const monacoEditorRef = useRef<Parameters<OnMount>[0] | null>(null);
@@ -210,6 +241,26 @@ export function DatabaseWorkspace({
   }, [isResizingObjectTree]);
 
   useEffect(() => {
+    if (!isResizingTableStructureObjects) return;
+
+    function handleMouseMove(event: MouseEvent) {
+      const nextWidth = tableStructureObjectsResizeRef.current.startWidth + event.clientX - tableStructureObjectsResizeRef.current.startX;
+      setTableStructureObjectsWidth(clamp(nextWidth, MIN_TABLE_STRUCTURE_OBJECTS_WIDTH, MAX_TABLE_STRUCTURE_OBJECTS_WIDTH));
+    }
+
+    function handleMouseUp() {
+      setIsResizingTableStructureObjects(false);
+    }
+
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [isResizingTableStructureObjects]);
+
+  useEffect(() => {
     if (!tableStructureDialog && !tableDdlDialog && !sqlFilePreview && !pendingExport && !pendingInsertExport) return;
 
     function handleKeyDown(event: KeyboardEvent) {
@@ -227,6 +278,60 @@ export function DatabaseWorkspace({
       window.removeEventListener("keydown", handleKeyDown);
     };
   }, [pendingExport, pendingInsertExport, sqlFilePreview, tableDdlDialog, tableStructureDialog]);
+
+  useEffect(() => {
+    if (!tableStructureDialog || !currentDatabase) {
+      setIsTableStructurePreviewing(false);
+      return;
+    }
+    const operations = tableStructureOperations(tableStructureDialog);
+    if (operations.length === 0) {
+      if (tableStructureDialog.ddlPreview || tableStructureDialog.durationMs !== null) {
+        setTableStructureDialog({ ...tableStructureDialog, ddlPreview: "", durationMs: null });
+      }
+      setIsTableStructurePreviewing(false);
+      return;
+    }
+    let isActive = true;
+    const timer = window.setTimeout(() => {
+      setIsTableStructurePreviewing(true);
+      setTableStructureDialog((current) => current?.error ? { ...current, error: null } : current);
+      void callBackend<DatabaseTableStructureUpdateResult>("preview_database_table_structure", {
+        request: {
+          connection_id: connectionId,
+          database: currentDatabase,
+          table: tableStructureDialog.table.name,
+          operations,
+        },
+      })
+        .then((result) => {
+          if (!isActive) return;
+          setTableStructureDialog((current) => {
+            if (!current || current.table.id !== tableStructureDialog.table.id) return current;
+            return {
+              ...current,
+              ddlPreview: result.ddl,
+              durationMs: null,
+              statusMessage: "",
+              error: null,
+            };
+          });
+          setIsTableStructurePreviewing(false);
+        })
+        .catch((caught) => {
+          if (!isActive) return;
+          setTableStructureDialog((current) => current ? {
+            ...current,
+            error: caught instanceof Error ? caught.message : String(caught),
+          } : current);
+          setIsTableStructurePreviewing(false);
+        });
+    }, 250);
+    return () => {
+      isActive = false;
+      window.clearTimeout(timer);
+    };
+  }, [connectionId, currentDatabase, tableStructureDialog?.draftColumns, tableStructureDialog?.deletedColumns, tableStructureDialog?.table.id]);
 
   function closeSqlFilePreview() {
     setSqlFilePreview(null);
@@ -339,7 +444,8 @@ export function DatabaseWorkspace({
 
   async function openTableStructureDialog(node: DatabaseTreeNode) {
     if (!currentDatabase) return;
-    setTableStructureDialog({ table: node, columns: [], error: null });
+    setIsTableStructurePreviewing(false);
+    setTableStructureDialog(emptyTableStructureDialog(node));
     try {
       const columns = await callBackend<DatabaseTreeNode[]>("list_database_objects", {
         request: {
@@ -350,23 +456,134 @@ export function DatabaseWorkspace({
           table: node.name,
         },
       });
-      setTableStructureDialog({ table: node, columns: Array.isArray(columns) ? columns : [], error: null });
+      const draftColumns = (Array.isArray(columns) ? columns : []).map(columnNodeToDraft);
+      setTableStructureDialog({
+        ...emptyTableStructureDialog(node),
+        originalColumns: draftColumns,
+        draftColumns,
+      });
     } catch (caught) {
       void logFrontendError("frontend.database", "list_database_objects", caught, `${connectionId}:${currentDatabase}:${node.name}`, {
         database: currentDatabase,
         table: node.name,
       });
       setTableStructureDialog({
-        table: node,
-        columns: [],
+        ...emptyTableStructureDialog(node),
         error: caught instanceof Error ? caught.message : String(caught),
       });
     }
   }
 
   function requestCloseTableStructureDialog() {
-    // 后续表结构支持编辑后，在这里检查 dirty 状态并弹二次确认。
+    if (tableStructureDialog && isTableStructureDirty(tableStructureDialog)) {
+      setTableStructureDialog({ ...tableStructureDialog, confirmClose: true });
+      return;
+    }
+    setIsTableStructurePreviewing(false);
     setTableStructureDialog(null);
+  }
+
+  const updateTableStructureColumn = useCallback((id: string, changes: Partial<Pick<TableStructureColumnDraft, "name" | "dataType" | "nullable">>) => {
+    setTableStructureDialog((current) => current ? {
+      ...current,
+      draftColumns: current.draftColumns.map((column) => (
+        column.id === id ? { ...column, ...changes } : column
+      )),
+      durationMs: null,
+      statusMessage: "",
+      error: null,
+    } : current);
+  }, []);
+
+  const addTableStructureColumn = useCallback(() => {
+    setTableStructureDialog((current) => {
+      if (!current) return current;
+      const index = current.draftColumns.filter((column) => column.originalName === null).length + 1;
+      const newColumn: TableStructureColumnDraft = {
+        id: `new:${Date.now()}:${index}`,
+        originalName: null,
+        name: "",
+        dataType: "varchar(255)",
+        nullable: true,
+      };
+      return {
+        ...current,
+        draftColumns: [...current.draftColumns, newColumn],
+        selectedItem: { kind: "column", id: newColumn.id },
+        durationMs: null,
+        statusMessage: "",
+        error: null,
+      };
+    });
+  }, []);
+
+  const deleteTableStructureColumn = useCallback((id: string) => {
+    setTableStructureDialog((current) => {
+      if (!current) return current;
+      const target = current.draftColumns.find((column) => column.id === id);
+      if (!target) return current;
+      const nextSelectedItem = current.selectedItem.kind === "column" && current.selectedItem.id === id
+        ? { kind: "table" as const }
+        : current.selectedItem;
+      return {
+        ...current,
+        draftColumns: current.draftColumns.filter((column) => column.id !== id),
+        deletedColumns: target.originalName ? [...current.deletedColumns, target] : current.deletedColumns,
+        selectedItem: nextSelectedItem,
+        durationMs: null,
+        statusMessage: "",
+        error: null,
+      };
+    });
+  }, []);
+
+  const selectTableStructureItem = useCallback((selectedItem: TableStructureDialogState["selectedItem"]) => {
+    setTableStructureDialog((current) => current ? { ...current, selectedItem } : current);
+  }, []);
+
+  async function applyTableStructureChanges() {
+    if (!tableStructureDialog || !currentDatabase) return;
+    const operations = tableStructureOperations(tableStructureDialog);
+    if (operations.length === 0) {
+      setTableStructureDialog({ ...tableStructureDialog, error: t("database.table_structure_no_changes") });
+      return;
+    }
+    setIsTableStructurePreviewing(false);
+    setTableStructureDialog({ ...tableStructureDialog, isSaving: true, error: null, statusMessage: "" });
+    try {
+      const result = await callBackend<DatabaseTableStructureUpdateResult>("update_database_table_structure", {
+        request: {
+          connection_id: connectionId,
+          database: currentDatabase,
+          table: tableStructureDialog.table.name,
+          operations,
+        },
+      });
+      const columns = await callBackend<DatabaseTreeNode[]>("list_database_objects", {
+        request: {
+          connection_id: connectionId,
+          parent_kind: tableStructureDialog.table.kind,
+          database: currentDatabase,
+          schema: currentDatabase,
+          table: tableStructureDialog.table.name,
+        },
+      });
+      const draftColumns = (Array.isArray(columns) ? columns : []).map(columnNodeToDraft);
+      setTableStructureDialog({
+        ...emptyTableStructureDialog(tableStructureDialog.table),
+        originalColumns: draftColumns,
+        draftColumns,
+        ddlPreview: result.ddl,
+        durationMs: result.duration_ms,
+        statusMessage: t("database.table_structure_updated", { duration: result.duration_ms }),
+      });
+    } catch (caught) {
+      setTableStructureDialog((current) => current ? {
+        ...current,
+        error: caught instanceof Error ? caught.message : String(caught),
+        isSaving: false,
+      } : current);
+    }
   }
 
   async function openTableDdlDialog(node: DatabaseTreeNode) {
@@ -1041,37 +1258,82 @@ export function DatabaseWorkspace({
               <h2>{t("database.edit_table_title", { table: tableStructureDialog.table.name })}</h2>
             </header>
             <div className="database-table-structure-dialog__body">
-              {tableStructureDialog.error ? <p role="alert">{tableStructureDialog.error}</p> : null}
-              <table>
-                <thead>
-                  <tr>
-                    <th scope="col">{t("database.column_name")}</th>
-                    <th scope="col">{t("database.column_type")}</th>
-                    <th scope="col">{t("database.nullable")}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {tableStructureDialog.columns.map((column) => {
-                    const detail = parseColumnDetail(column.detail);
-                    return (
-                      <tr key={column.id}>
-                        <td>{column.name}</td>
-                        <td>{detail.dataType}</td>
-                        <td>{formatNullable(detail.nullable, t)}</td>
-                      </tr>
-                    );
-                  })}
-                  {tableStructureDialog.columns.length === 0 && !tableStructureDialog.error ? (
-                    <tr>
-                      <td colSpan={3}>{t("database.no_columns")}</td>
-                    </tr>
-                  ) : null}
-                </tbody>
-              </table>
+              <div
+                className="database-table-structure-dialog__main"
+                style={{ "--database-table-structure-objects-width": `${tableStructureObjectsWidth}px` } as CSSProperties}
+              >
+                <TableStructureObjectList
+                  dialog={tableStructureDialog}
+                  onSelect={selectTableStructureItem}
+                  onAddColumn={addTableStructureColumn}
+                />
+                <div
+                  className="database-table-structure-dialog__resize-handle"
+                  role="separator"
+                  aria-orientation="vertical"
+                  aria-label={t("database.table_structure_objects_resize")}
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    tableStructureObjectsResizeRef.current = {
+                      startX: event.clientX,
+                      startWidth: tableStructureObjectsWidth,
+                    };
+                    setIsResizingTableStructureObjects(true);
+                  }}
+                />
+                <TableStructureEditor
+                  dialog={tableStructureDialog}
+                  onUpdateColumn={updateTableStructureColumn}
+                  onDeleteColumn={deleteTableStructureColumn}
+                />
+              </div>
+              <section className="database-table-structure-dialog__preview" aria-label={t("database.ddl_preview")}>
+                <header>
+                  <span>{t("database.ddl_preview")}</span>
+                  {isTableStructurePreviewing ? <span>{t("database.generating")}</span> : null}
+                </header>
+                <div className="database-table-structure-dialog__preview-content">
+                  {tableStructureDialog.ddlPreview ? <pre>{tableStructureDialog.ddlPreview}</pre> : <p>{t("database.ddl_preview_empty")}</p>}
+                </div>
+                {tableStructureDialog.error ? (
+                  <p className="database-table-structure-dialog__message database-table-structure-dialog__message--error" role="alert">
+                    {tableStructureDialog.error}
+                  </p>
+                ) : tableStructureDialog.statusMessage ? (
+                  <p className="database-table-structure-dialog__message" role="status">
+                    {tableStructureDialog.statusMessage}
+                  </p>
+                ) : tableStructureDialog.durationMs !== null ? (
+                  <p className="database-table-structure-dialog__message" role="status">
+                    {t("database.ddl_duration", { duration: tableStructureDialog.durationMs })}
+                  </p>
+                ) : null}
+              </section>
             </div>
             <div className="database-dialog__actions">
+              {tableStructureDialog.confirmClose ? (
+                <div className="database-table-structure-dialog__confirm" role="alert">
+                  <span>{t("database.confirm_discard_changes_message")}</span>
+                  <button type="button" onClick={() => setTableStructureDialog(null)}>
+                    {t("database.confirm")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTableStructureDialog({ ...tableStructureDialog, confirmClose: false })}
+                  >
+                    {t("database.cancel")}
+                  </button>
+                </div>
+              ) : null}
               <button type="button" onClick={requestCloseTableStructureDialog}>
                 {t("database.cancel")}
+              </button>
+              <button
+                type="button"
+                disabled={isTableStructurePreviewing || tableStructureDialog.isSaving}
+                onClick={() => void applyTableStructureChanges()}
+              >
+                {tableStructureDialog.isSaving ? t("database.executing") : t("database.apply_table_structure_changes")}
               </button>
             </div>
           </div>
@@ -1165,6 +1427,214 @@ function DatabaseResultView({
   );
 }
 
+const TableStructureObjectList = memo(function TableStructureObjectList({
+  dialog,
+  onSelect,
+  onAddColumn,
+}: {
+  dialog: TableStructureDialogState;
+  onSelect: (selectedItem: TableStructureDialogState["selectedItem"]) => void;
+  onAddColumn: () => void;
+}) {
+  const { t } = useI18n();
+  return (
+    <aside className="database-table-structure-dialog__objects" aria-label={t("database.table_structure_objects")}>
+      <button
+        type="button"
+        className={`database-table-structure-dialog__node${dialog.selectedItem.kind === "table" ? " database-table-structure-dialog__node--active" : ""}`}
+        onClick={() => onSelect({ kind: "table" })}
+      >
+        <span>{t("database.table_object", { table: dialog.table.name })}</span>
+      </button>
+      <div className="database-table-structure-dialog__group">
+        <div className="database-table-structure-dialog__group-title">
+          <span>{t("database.columns_group", { count: dialog.draftColumns.length })}</span>
+          <button
+            type="button"
+            className="database-table-structure-dialog__add-column-button"
+            aria-label={t("database.add_column")}
+            onClick={onAddColumn}
+          >
+            {t("database.add_column_short")}
+          </button>
+        </div>
+        {dialog.draftColumns.map((column, index) => {
+          const name = column.name.trim() || t("database.new_column_label", {
+            index: dialog.draftColumns.slice(0, index + 1).filter((candidate) => !candidate.originalName).length,
+          });
+          return (
+            <button
+              key={column.id}
+              type="button"
+              aria-label={t("database.column_object", { name, type: column.dataType || "-" })}
+              className={`database-table-structure-dialog__node database-table-structure-dialog__node--child${dialog.selectedItem.kind === "column" && dialog.selectedItem.id === column.id ? " database-table-structure-dialog__node--active" : ""}`}
+              onClick={() => onSelect({ kind: "column", id: column.id })}
+            >
+              <span className="database-table-structure-dialog__column-name">{name}</span>
+              <span className="database-table-structure-dialog__column-type">{column.dataType || "-"}</span>
+            </button>
+          );
+        })}
+      </div>
+      <div className="database-table-structure-dialog__group">
+        <button
+          type="button"
+          className={`database-table-structure-dialog__node${dialog.selectedItem.kind === "indexes" ? " database-table-structure-dialog__node--active" : ""}`}
+          onClick={() => onSelect({ kind: "indexes" })}
+        >
+          <span>{t("database.indexes_group")}</span>
+        </button>
+        <p className="database-table-structure-dialog__empty">{t("database.no_index_metadata")}</p>
+      </div>
+    </aside>
+  );
+});
+
+const TableStructureEditor = memo(function TableStructureEditor({
+  dialog,
+  onUpdateColumn,
+  onDeleteColumn,
+}: {
+  dialog: TableStructureDialogState;
+  onUpdateColumn: (id: string, changes: Partial<Pick<TableStructureColumnDraft, "name" | "dataType" | "nullable">>) => void;
+  onDeleteColumn: (id: string) => void;
+}) {
+  const { t } = useI18n();
+  if (dialog.selectedItem.kind === "table") {
+    return (
+      <section className="database-table-structure-dialog__editor" aria-label={t("database.table_editor")}>
+        <h3>{t("database.table_object", { table: dialog.table.name })}</h3>
+        <label className="database-table-structure-dialog__field">
+          <span>{t("database.table_name")}</span>
+          <input value={dialog.table.name} readOnly />
+        </label>
+        <label className="database-table-structure-dialog__field">
+          <span>{t("database.columns_count")}</span>
+          <input value={String(dialog.draftColumns.length)} readOnly />
+        </label>
+      </section>
+    );
+  }
+
+  if (dialog.selectedItem.kind === "indexes") {
+    return (
+      <section className="database-table-structure-dialog__editor" aria-label={t("database.index_editor")}>
+        <h3>{t("database.indexes_group")}</h3>
+        <p className="database-table-structure-dialog__empty">{t("database.no_index_metadata")}</p>
+      </section>
+    );
+  }
+
+  const selectedColumnId = dialog.selectedItem.id;
+  const column = dialog.draftColumns.find((candidate) => candidate.id === selectedColumnId);
+  if (!column) {
+    return (
+      <section className="database-table-structure-dialog__editor" aria-label={t("database.column_editor")}>
+        <p className="database-table-structure-dialog__empty">{t("database.no_column_selected")}</p>
+      </section>
+    );
+  }
+
+  return (
+    <TableStructureColumnEditor
+      column={column}
+      onUpdateColumn={onUpdateColumn}
+      onDeleteColumn={onDeleteColumn}
+    />
+  );
+});
+
+const TableStructureColumnEditor = memo(function TableStructureColumnEditor({
+  column,
+  onUpdateColumn,
+  onDeleteColumn,
+}: {
+  column: TableStructureColumnDraft;
+  onUpdateColumn: (id: string, changes: Partial<Pick<TableStructureColumnDraft, "name" | "dataType" | "nullable">>) => void;
+  onDeleteColumn: (id: string) => void;
+}) {
+  const { t } = useI18n();
+  const [nameDraft, setNameDraft] = useState(column.name);
+  const [typeDraft, setTypeDraft] = useState(column.dataType);
+
+  useEffect(() => {
+    setNameDraft(column.name);
+    setTypeDraft(column.dataType);
+  }, [column.id, column.name, column.dataType]);
+
+  function commitName() {
+    const nextName = nameDraft.trim();
+    if (nextName !== column.name) {
+      onUpdateColumn(column.id, { name: nextName });
+    }
+  }
+
+  function commitType() {
+    const nextType = typeDraft.trim();
+    if (nextType !== column.dataType) {
+      onUpdateColumn(column.id, { dataType: nextType });
+    }
+  }
+
+  function commitOnEnter(event: React.KeyboardEvent<HTMLInputElement>, commit: () => void) {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    commit();
+    event.currentTarget.blur();
+  }
+
+  const title = column.originalName
+    ? t("database.edit_column_title", { name: column.originalName })
+    : t("database.edit_new_column_title");
+  const displayName = column.originalName ?? (column.name.trim() || t("database.new_column_label", { index: 1 }));
+
+  return (
+    <section className="database-table-structure-dialog__editor" aria-label={t("database.column_editor")}>
+      <header className="database-table-structure-dialog__editor-header">
+        <h3>{title}</h3>
+        <button
+          type="button"
+          className="database-table-structure-dialog__danger-button"
+          aria-label={t("database.delete_column_short")}
+          title={t("database.delete_column", { name: displayName })}
+          onClick={() => onDeleteColumn(column.id)}
+        >
+          {t("database.delete_column_short")}
+        </button>
+      </header>
+      <label className="database-table-structure-dialog__field">
+        <span>{t("database.column_name")}</span>
+        <input
+          aria-label={t("database.column_name")}
+          value={nameDraft}
+          onBlur={commitName}
+          onChange={(event) => setNameDraft(event.target.value)}
+          onKeyDown={(event) => commitOnEnter(event, commitName)}
+        />
+      </label>
+      <label className="database-table-structure-dialog__field">
+        <span>{t("database.column_type")}</span>
+        <input
+          aria-label={t("database.column_type")}
+          value={typeDraft}
+          onBlur={commitType}
+          onChange={(event) => setTypeDraft(event.target.value)}
+          onKeyDown={(event) => commitOnEnter(event, commitType)}
+        />
+      </label>
+      <label className="database-table-structure-dialog__checkbox-field">
+        <input
+          aria-label={t("database.nullable")}
+          type="checkbox"
+          checked={column.nullable}
+          onChange={(event) => onUpdateColumn(column.id, { nullable: event.target.checked })}
+        />
+        <span>{t("database.nullable")}</span>
+      </label>
+    </section>
+  );
+});
+
 function defaultExportName(database: string, table: string | null, extension: "csv" | "sql") {
   const timestamp = new Date().toISOString().replace(/\D/g, "").slice(0, 14);
   return `${database || "database"}.${table?.trim() || "result"}.${timestamp}.${extension}`;
@@ -1246,6 +1716,73 @@ function sortSqlFiles(files: DatabaseSqlFile[]) {
   return [defaultFile, ...otherFiles];
 }
 
+function emptyTableStructureDialog(table: DatabaseTreeNode): TableStructureDialogState {
+  return {
+    table,
+    originalColumns: [],
+    draftColumns: [],
+    deletedColumns: [],
+    selectedItem: { kind: "table" },
+    error: null,
+    ddlPreview: "",
+    durationMs: null,
+    statusMessage: "",
+    isSaving: false,
+    confirmClose: false,
+  };
+}
+
+function columnNodeToDraft(column: DatabaseTreeNode): TableStructureColumnDraft {
+  const detail = parseColumnDetail(column.detail);
+  return {
+    id: column.id,
+    originalName: column.name,
+    name: column.name,
+    dataType: detail.dataType,
+    nullable: detail.nullable === "YES",
+  };
+}
+
+function tableStructureOperations(dialog: TableStructureDialogState): TableStructureOperation[] {
+  const originalByName = new Map(dialog.originalColumns.map((column) => [column.originalName, column]));
+  const operations: TableStructureOperation[] = [];
+  for (const column of dialog.draftColumns) {
+    const name = column.name.trim();
+    const dataType = column.dataType.trim();
+    if (!name || !dataType) continue;
+    if (!column.originalName) {
+      operations.push({
+        kind: "add_column",
+        column: { name, data_type: dataType, nullable: column.nullable },
+      });
+      continue;
+    }
+    const original = originalByName.get(column.originalName);
+    if (!original) continue;
+    if (
+      original.name !== name
+      || original.dataType !== dataType
+      || original.nullable !== column.nullable
+    ) {
+      operations.push({
+        kind: "modify_column",
+        original_name: column.originalName,
+        column: { name, data_type: dataType, nullable: column.nullable },
+      });
+    }
+  }
+  for (const column of dialog.deletedColumns) {
+    if (column.originalName) {
+      operations.push({ kind: "drop_column", name: column.originalName });
+    }
+  }
+  return operations;
+}
+
+function isTableStructureDirty(dialog: TableStructureDialogState) {
+  return tableStructureOperations(dialog).length > 0;
+}
+
 function normalizeLimit(value: string) {
   const parsed = Number.parseInt(value, 10);
   if (!Number.isFinite(parsed) || parsed < 1) return DEFAULT_SQL_LIMIT;
@@ -1259,12 +1796,6 @@ function parseColumnDetail(detail?: string | null) {
     dataType: nullableMatch ? trimmed.slice(0, nullableMatch.index).trim() : trimmed,
     nullable: nullableMatch?.[1]?.toUpperCase() ?? "",
   };
-}
-
-function formatNullable(nullable: string, t: ReturnType<typeof useI18n>["t"]) {
-  if (nullable === "YES") return t("database.yes");
-  if (nullable === "NO") return t("database.no");
-  return nullable || "-";
 }
 
 function clamp(value: number, min: number, max: number) {

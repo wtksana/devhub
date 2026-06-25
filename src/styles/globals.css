@@ -1382,7 +1382,7 @@ p {
 }
 
 .database-table-structure-dialog {
-  width: min(620px, calc(100vw - 48px));
+  width: min(700px, calc(100vw - 48px));
 }
 
 .database-table-ddl-dialog {
@@ -1390,9 +1390,34 @@ p {
 }
 
 .database-table-structure-dialog__body {
+  display: grid;
+  grid-template-rows: minmax(260px, 1fr) 150px;
+  gap: 10px;
   min-width: 0;
-  overflow: auto;
+  min-height: 0;
+  height: min(560px, calc(100vh - 140px));
+  overflow: hidden;
   padding: 12px;
+}
+
+.database-table-structure-dialog__message {
+  min-width: 0;
+  margin: 0;
+  padding: 0 9px;
+  border-top: 1px solid var(--border-subtle);
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 26px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.database-table-structure-dialog__message--error {
+  border-color: color-mix(in srgb, var(--danger) 28%, var(--border-subtle));
+  background: color-mix(in srgb, var(--danger) 5%, var(--panel));
+  color: var(--danger);
 }
 
 .database-table-ddl-dialog__body {
@@ -1401,23 +1426,278 @@ p {
   padding: 12px;
 }
 
-.database-table-structure-dialog table {
+.database-table-structure-dialog__main {
+  display: grid;
+  grid-template-columns: var(--database-table-structure-objects-width, 270px) 1px minmax(0, 1fr);
   width: 100%;
-  border-collapse: collapse;
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  overflow: hidden;
 }
 
-.database-table-structure-dialog th,
-.database-table-structure-dialog td {
-  height: 30px;
-  padding: 0 9px;
-  border-bottom: 1px solid var(--border-subtle);
+.database-table-structure-dialog__objects,
+.database-table-structure-dialog__editor {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  background: var(--panel);
+}
+
+.database-table-structure-dialog__objects {
+  padding: 8px;
+}
+
+.database-table-structure-dialog__resize-handle {
+  width: 1px;
+  min-height: 0;
+  background: var(--border-subtle);
+  cursor: col-resize;
+}
+
+.database-table-structure-dialog__resize-handle:hover {
+  background: color-mix(in srgb, var(--accent) 36%, var(--border-subtle));
+}
+
+.database-table-structure-dialog__editor {
+  display: block;
+  padding: 12px 14px;
+  background: var(--workspace);
+}
+
+.database-table-structure-dialog__node,
+.database-table-structure-dialog__group-title {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  height: 28px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
   text-align: left;
 }
 
-.database-table-structure-dialog th {
+.database-table-structure-dialog__node {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+  gap: 5px;
+  align-items: center;
+  padding: 0 7px;
+  cursor: default;
+}
+
+.database-table-structure-dialog__node span,
+.database-table-structure-dialog__column-name,
+.database-table-structure-dialog__column-type {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.database-table-structure-dialog__column-type {
+  color: color-mix(in srgb, var(--muted) 52%, transparent);
+  font-weight: 400;
+}
+
+.database-table-structure-dialog__node--child {
+  padding-left: 24px;
+}
+
+.database-table-structure-dialog__node:hover {
+  background: color-mix(in srgb, var(--accent) 8%, var(--panel-raised));
+}
+
+.database-table-structure-dialog__node--active {
+  background: color-mix(in srgb, var(--accent) 16%, var(--panel-raised));
+  color: var(--text);
+  font-weight: 600;
+}
+
+.database-table-structure-dialog__group {
+  margin-top: 6px;
+}
+
+.database-table-structure-dialog__group-title {
+  justify-content: space-between;
+  padding: 0 8px;
   color: var(--muted);
-  font-weight: 500;
-  background: var(--panel-soft);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.database-table-structure-dialog__add-column-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  line-height: 1;
+}
+
+.database-table-structure-dialog__add-column-button:hover {
+  background: color-mix(in srgb, var(--accent) 8%, var(--panel-raised));
+}
+
+.database-table-structure-dialog__editor-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 12px;
+}
+
+.database-table-structure-dialog__editor h3 {
+  height: 28px;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: var(--ui-font-size-small, 15px);
+  font-weight: 600;
+  line-height: 28px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.database-table-structure-dialog__field {
+  display: grid;
+  grid-template-columns: 78px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin-bottom: 8px;
+}
+
+.database-table-structure-dialog__field span,
+.database-table-structure-dialog__checkbox-field,
+.database-table-structure-dialog__empty {
+  color: var(--muted);
+}
+
+.database-table-structure-dialog__field span {
+  white-space: nowrap;
+}
+
+.database-table-structure-dialog__field input {
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 3px;
+  background: var(--input-bg);
+  color: var(--text);
+  font: inherit;
+}
+
+.database-table-structure-dialog__checkbox-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  margin: 0 0 8px 86px;
+}
+
+.database-table-structure-dialog__danger-button {
+  height: 28px;
+  margin-left: auto;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, var(--danger) 38%, var(--border-subtle));
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--danger) 8%, var(--panel-raised));
+  color: var(--danger);
+  font: inherit;
+}
+
+.database-table-structure-dialog__danger-button:hover {
+  background: color-mix(in srgb, var(--danger) 14%, var(--panel-raised));
+}
+
+.database-table-structure-dialog__empty {
+  margin: 4px 8px;
+  font-size: 12px;
+}
+
+.database-table-structure-dialog__preview {
+  display: grid;
+  grid-template-rows: 30px minmax(0, 1fr) auto;
+  width: 100%;
+  min-height: 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  background: var(--panel);
+  overflow: hidden;
+}
+
+.database-table-structure-dialog__preview header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  height: 30px;
+  padding: 0 9px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 30px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.database-table-structure-dialog__preview header span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.database-table-structure-dialog__preview-content {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.database-table-structure-dialog__preview-content pre,
+.database-table-structure-dialog__preview-content p {
+  margin: 0;
+  padding: 9px;
+}
+
+.database-table-structure-dialog__preview-content pre {
+  height: 100%;
+  overflow: auto;
+  color: var(--text);
+  font-family: var(--ui-font-family);
+  font-size: var(--ui-font-size-small, 15px);
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.database-table-structure-dialog__confirm {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  margin-right: auto;
+  color: var(--danger);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.database-table-structure-dialog__confirm button {
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  background: var(--panel-raised);
+  color: var(--text);
 }
 
 .database-dialog__actions {

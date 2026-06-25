@@ -661,15 +661,20 @@ describe("DatabaseWorkspace", () => {
 
     const structureDialog = await screen.findByRole("dialog", { name: "编辑表 users" });
     expect(structureDialog).toBeInTheDocument();
-    expect(within(structureDialog).getByRole("columnheader", { name: "字段名" })).toBeInTheDocument();
-    expect(within(structureDialog).getByRole("columnheader", { name: "字段类型" })).toBeInTheDocument();
-    expect(within(structureDialog).getByRole("columnheader", { name: "可空" })).toBeInTheDocument();
-    expect(within(structureDialog).getByText("id")).toBeInTheDocument();
-    expect(within(structureDialog).getByText("int(11)")).toBeInTheDocument();
-    expect(within(structureDialog).getByText("否")).toBeInTheDocument();
-    expect(within(structureDialog).getByText("name")).toBeInTheDocument();
-    expect(within(structureDialog).getByText("varchar(255)")).toBeInTheDocument();
-    expect(within(structureDialog).getByText("是")).toBeInTheDocument();
+    expect(within(structureDialog).getByLabelText("表结构对象")).toBeInTheDocument();
+    expect(within(structureDialog).getByRole("button", { name: "表 users" })).toHaveClass("database-table-structure-dialog__node--active");
+    expect(within(structureDialog).getByLabelText("表名")).toHaveValue("users");
+    expect(within(structureDialog).getByLabelText("字段数")).toHaveValue("2");
+    expect(within(structureDialog).getByRole("button", { name: "id int(11)" })).toBeInTheDocument();
+    expect(within(structureDialog).getByRole("button", { name: "name varchar(255)" })).toBeInTheDocument();
+    await userEvent.click(within(structureDialog).getByRole("button", { name: "id int(11)" }));
+    expect(within(structureDialog).getByLabelText("字段名")).toHaveValue("id");
+    expect(within(structureDialog).getByLabelText("字段类型")).toHaveValue("int(11)");
+    expect(within(structureDialog).getByLabelText("可空")).not.toBeChecked();
+    await userEvent.click(within(structureDialog).getByRole("button", { name: "name varchar(255)" }));
+    expect(within(structureDialog).getByLabelText("字段名")).toHaveValue("name");
+    expect(within(structureDialog).getByLabelText("字段类型")).toHaveValue("varchar(255)");
+    expect(within(structureDialog).getByLabelText("可空")).toBeChecked();
     expect(callBackendMock).toHaveBeenCalledWith("list_database_objects", {
       request: {
         connection_id: "mysql-dev",
@@ -700,6 +705,182 @@ describe("DatabaseWorkspace", () => {
 
     await userEvent.click(within(ddlDialog).getByRole("button", { name: "复制 DDL" }));
     expect(writeClipboardTextMock).toHaveBeenCalledWith("CREATE TABLE `users` (\n  `id` int NOT NULL\n)");
+  });
+
+  it("edits table columns, previews DDL and applies table structure changes", async () => {
+    let columnLoadCount = 0;
+    callBackendMock.mockImplementation((command, payload) => {
+      if (command === "list_database_objects") {
+        const request = (payload as { request: { parent_kind?: string; table?: string } }).request;
+        if (!request.parent_kind) {
+          return Promise.resolve([{ id: "database:app", name: "app", kind: "database", has_children: true }]);
+        }
+        if (request.parent_kind === "table" && request.table === "users") {
+          columnLoadCount += 1;
+          return Promise.resolve([
+            { id: "column:app.users.id", name: "id", kind: "column", has_children: false, detail: "int(11) NO" },
+            { id: "column:app.users.name", name: "name", kind: "column", has_children: false, detail: "varchar(255) YES" },
+            { id: "column:app.users.remark", name: "remark", kind: "column", has_children: false, detail: "text YES" },
+          ]);
+        }
+        return Promise.resolve([{ id: "table:app.users", name: "users", kind: "table", has_children: true }]);
+      }
+      if (command === "preview_database_table_structure") {
+        return Promise.resolve({
+          ddl: "ALTER TABLE `users`\n  CHANGE COLUMN `name` `username` varchar(100) NOT NULL,\n  ADD COLUMN `age` int NULL,\n  DROP COLUMN `remark`;",
+          duration_ms: 0,
+        });
+      }
+      if (command === "update_database_table_structure") {
+        return Promise.resolve({
+          ddl: "ALTER TABLE `users`\n  CHANGE COLUMN `name` `username` varchar(100) NOT NULL,\n  ADD COLUMN `age` int NULL,\n  DROP COLUMN `remark`;",
+          duration_ms: 12,
+        });
+      }
+      return Promise.resolve([]);
+    });
+
+    renderDatabaseWorkspace("app");
+
+    const tableRow = (await screen.findByRole("button", { name: "users" })).closest("li");
+    expect(tableRow).not.toBeNull();
+    fireEvent.contextMenu(tableRow!, { clientX: 10, clientY: 20 });
+    await userEvent.click(screen.getByRole("menuitem", { name: "编辑" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "编辑表 users" });
+    expect(within(dialog).getByLabelText("表结构对象")).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "表 users" })).toHaveClass("database-table-structure-dialog__node--active");
+    expect(within(dialog).getByRole("button", { name: "id int(11)" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "name varchar(255)" })).toBeInTheDocument();
+    expect(within(dialog).getByText("索引")).toBeInTheDocument();
+    expect(within(dialog).getByText("暂无索引元数据")).toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: "生成 DDL 预览" })).not.toBeInTheDocument();
+
+    await userEvent.click(within(dialog).getByRole("button", { name: "name varchar(255)" }));
+    expect(within(dialog).getByText("编辑字段 name")).toBeInTheDocument();
+    await userEvent.clear(within(dialog).getByLabelText("字段名"));
+    await userEvent.type(within(dialog).getByLabelText("字段名"), "username");
+    fireEvent.blur(within(dialog).getByLabelText("字段名"));
+    await userEvent.clear(within(dialog).getByLabelText("字段类型"));
+    await userEvent.type(within(dialog).getByLabelText("字段类型"), "varchar(100)");
+    fireEvent.blur(within(dialog).getByLabelText("字段类型"));
+    await userEvent.click(within(dialog).getByLabelText("可空"));
+    await userEvent.click(within(dialog).getByRole("button", { name: "remark text" }));
+    const deleteColumnButton = within(dialog).getByRole("button", { name: "删除字段" });
+    expect(deleteColumnButton).toHaveAttribute("title", "删除字段 remark");
+    await userEvent.click(deleteColumnButton);
+    await userEvent.click(within(dialog).getByRole("button", { name: "新增字段" }));
+    await userEvent.clear(within(dialog).getByLabelText("字段名"));
+    await userEvent.type(within(dialog).getByLabelText("字段名"), "age");
+    fireEvent.blur(within(dialog).getByLabelText("字段名"));
+    await userEvent.clear(within(dialog).getByLabelText("字段类型"));
+    await userEvent.type(within(dialog).getByLabelText("字段类型"), "int");
+    fireEvent.blur(within(dialog).getByLabelText("字段类型"));
+
+    await waitFor(() => {
+      expect(within(dialog).getByText(/CHANGE COLUMN `name` `username`/)).toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("preview_database_table_structure", {
+        request: {
+          connection_id: "mysql-dev",
+          database: "app",
+          table: "users",
+          operations: [
+            {
+              kind: "modify_column",
+              original_name: "name",
+              column: { name: "username", data_type: "varchar(100)", nullable: false },
+            },
+            {
+              kind: "add_column",
+              column: { name: "age", data_type: "int", nullable: true },
+            },
+            {
+              kind: "drop_column",
+              name: "remark",
+            },
+          ],
+        },
+      });
+    });
+
+    await userEvent.click(within(dialog).getByRole("button", { name: "执行更改" }));
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("update_database_table_structure", {
+        request: {
+          connection_id: "mysql-dev",
+          database: "app",
+          table: "users",
+          operations: [
+            {
+              kind: "modify_column",
+              original_name: "name",
+              column: { name: "username", data_type: "varchar(100)", nullable: false },
+            },
+            {
+              kind: "add_column",
+              column: { name: "age", data_type: "int", nullable: true },
+            },
+            {
+              kind: "drop_column",
+              name: "remark",
+            },
+          ],
+        },
+      });
+    });
+    expect(within(dialog).getByText("表结构已更新，耗时 12 ms")).toBeInTheDocument();
+    expect(within(dialog).getByLabelText("DDL 预览")).toContainElement(
+      within(dialog).getByText("表结构已更新，耗时 12 ms"),
+    );
+    expect(columnLoadCount).toBeGreaterThanOrEqual(2);
+  });
+
+  it("updates table structure preview after committing field edits", async () => {
+    callBackendMock.mockImplementation((command, payload) => {
+      if (command === "list_database_objects") {
+        const request = (payload as { request: { parent_kind?: string; table?: string } }).request;
+        if (!request.parent_kind) {
+          return Promise.resolve([{ id: "database:app", name: "app", kind: "database", has_children: true }]);
+        }
+        if (request.parent_kind === "table" && request.table === "users") {
+          return Promise.resolve([
+            { id: "column:app.users.name", name: "name", kind: "column", has_children: false, detail: "varchar(255) YES" },
+          ]);
+        }
+        return Promise.resolve([{ id: "table:app.users", name: "users", kind: "table", has_children: true }]);
+      }
+      if (command === "preview_database_table_structure") {
+        return Promise.resolve({
+          ddl: "ALTER TABLE `users`\n  CHANGE COLUMN `name` `username` varchar(255) NULL;",
+          duration_ms: 0,
+        });
+      }
+      return Promise.resolve([]);
+    });
+
+    renderDatabaseWorkspace("app");
+    const tableRow = (await screen.findByRole("button", { name: "users" })).closest("li");
+    expect(tableRow).not.toBeNull();
+    fireEvent.contextMenu(tableRow!, { clientX: 10, clientY: 20 });
+    await userEvent.click(screen.getByRole("menuitem", { name: "编辑" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "编辑表 users" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "name varchar(255)" }));
+    await userEvent.clear(within(dialog).getByLabelText("字段名"));
+    await userEvent.type(within(dialog).getByLabelText("字段名"), "username");
+
+    expect(callBackendMock.mock.calls.filter(([command]) => command === "preview_database_table_structure")).toHaveLength(0);
+    fireEvent.blur(within(dialog).getByLabelText("字段名"));
+
+    await waitFor(() => {
+      expect(callBackendMock.mock.calls.filter(([command]) => command === "preview_database_table_structure")).toHaveLength(1);
+    });
+    expect(within(dialog).queryByText("生成中...")).not.toBeInTheDocument();
+    expect(within(dialog).getByText(/CHANGE COLUMN `name` `username`/)).toBeInTheDocument();
+    expect(within(dialog).queryByText("耗时 0 ms")).not.toBeInTheDocument();
   });
 
   it("shows table column types only in tooltip and constrains long cell values", async () => {

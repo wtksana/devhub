@@ -4,17 +4,18 @@ use crate::db::connection::{database_connection_url, database_pool_key};
 use crate::db::metadata::{metadata_query_for_columns, metadata_query_for_tables};
 use crate::db::query::{
     append_postgresql_indexes_to_ddl, apply_select_limit, build_table_delete_queries,
-    build_table_insert_queries, build_table_page_queries, build_table_update_queries,
-    is_dangerous_sql, mysql_prefers_datetime_decode, mysql_prefers_numeric_decode,
-    mysql_prefers_text_decode, mysql_table_column_metadata_query, mysql_table_ddl_from_values, mysql_table_ddl_query, normalize_table_delete_request,
+    build_table_insert_queries, build_table_page_queries, build_table_structure_ddl,
+    build_table_update_queries, is_dangerous_sql, mysql_prefers_datetime_decode,
+    mysql_prefers_numeric_decode, mysql_prefers_text_decode, mysql_table_column_metadata_query,
+    mysql_table_ddl_from_values, mysql_table_ddl_query, normalize_table_delete_request,
     normalize_table_insert_request, normalize_table_page_request, normalize_table_update_request,
     postgresql_index_query_for_table, postgresql_prefers_datetime_decode,
     postgresql_table_ddl_query, primary_key_query_for_table, quote_identifier,
 };
 use crate::models::database::{
     DatabaseCellValue, DatabaseTableDeleteRow, DatabaseTableInsertRow, DatabaseTableUpdateRow,
-    InsertDatabaseTableRowsRequest, LoadDatabaseTablePageRequest, UpdateDatabaseTableRowsRequest,
-    DeleteDatabaseTableRowsRequest,
+    DeleteDatabaseTableRowsRequest, InsertDatabaseTableRowsRequest, LoadDatabaseTablePageRequest,
+    TableStructureColumnDefinition, TableStructureOperation, UpdateDatabaseTableRowsRequest,
 };
 use crate::models::settings::DatabaseConnectionSettings;
 
@@ -95,6 +96,14 @@ fn builds_mysql_table_column_metadata_query_with_default_and_generated_flags() {
     assert!(query.sql.contains("column_default"));
     assert!(query.sql.contains("is_nullable"));
     assert!(query.sql.contains("extra"));
+    assert_eq!(query.binds, vec!["app".to_string(), "users".to_string()]);
+}
+
+#[test]
+fn builds_mysql_object_column_query_with_full_column_type() {
+    let query = metadata_query_for_columns("mysql", "app", "users").unwrap();
+
+    assert!(query.sql.contains("column_type as data_type"));
     assert_eq!(query.binds, vec!["app".to_string(), "users".to_string()]);
 }
 
@@ -333,6 +342,40 @@ fn reads_mysql_table_ddl_from_second_column_before_named_column() {
         )
         .unwrap(),
         "CREATE TABLE `users` (`id` int)"
+    );
+}
+
+#[test]
+fn builds_mysql_table_structure_ddl_for_add_modify_and_drop() {
+    let ddl = build_table_structure_ddl(
+        "mysql",
+        "users",
+        &[
+            TableStructureOperation::ModifyColumn {
+                original_name: "name".to_string(),
+                column: TableStructureColumnDefinition {
+                    name: "username".to_string(),
+                    data_type: "varchar(100)".to_string(),
+                    nullable: false,
+                },
+            },
+            TableStructureOperation::AddColumn {
+                column: TableStructureColumnDefinition {
+                    name: "age".to_string(),
+                    data_type: "int".to_string(),
+                    nullable: true,
+                },
+            },
+            TableStructureOperation::DropColumn {
+                name: "remark".to_string(),
+            },
+        ],
+    )
+    .unwrap();
+
+    assert_eq!(
+        ddl,
+        "ALTER TABLE `users`\n  CHANGE COLUMN `name` `username` varchar(100) NOT NULL,\n  ADD COLUMN `age` int NULL,\n  DROP COLUMN `remark`;"
     );
 }
 

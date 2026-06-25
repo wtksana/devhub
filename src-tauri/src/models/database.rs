@@ -103,6 +103,42 @@ pub struct DatabaseTableDdlResult {
     pub duration_ms: u128,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TableStructureColumnDefinition {
+    pub name: String,
+    pub data_type: String,
+    pub nullable: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TableStructureOperation {
+    AddColumn {
+        column: TableStructureColumnDefinition,
+    },
+    ModifyColumn {
+        original_name: String,
+        column: TableStructureColumnDefinition,
+    },
+    DropColumn {
+        name: String,
+    },
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct UpdateDatabaseTableStructureRequest {
+    pub connection_id: String,
+    pub database: String,
+    pub table: String,
+    pub operations: Vec<TableStructureOperation>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct DatabaseTableStructureUpdateResult {
+    pub ddl: String,
+    pub duration_ms: u128,
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct DatabaseSqlFile {
     pub name: String,

@@ -14,11 +14,12 @@ use crate::db::sql_files::DatabaseSqlFileStore;
 use crate::models::database::{
     DatabaseQueryResult, DatabaseResultExportResult, DatabaseSqlFile,
     DatabaseSqlFileExecutionResult, DatabaseSqlFilePreview, DatabaseTableDdlResult,
-    DatabaseTablePageResult, DatabaseTableUpdateResult, DeleteDatabaseTableRowsRequest,
+    DatabaseTablePageResult, DatabaseTableStructureUpdateResult, DatabaseTableUpdateResult,
+    DeleteDatabaseTableRowsRequest,
     ExecuteDatabaseQueryRequest, ExecuteDatabaseSqlFileRequest, ExportDatabaseResultRequest,
     GetDatabaseTableDdlRequest, InsertDatabaseTableRowsRequest, ListDatabaseSqlFilesRequest,
     LoadDatabaseTablePageRequest, PreviewDatabaseSqlFileRequest, SaveDatabaseSqlFileRequest,
-    UpdateDatabaseTableRowsRequest,
+    UpdateDatabaseTableRowsRequest, UpdateDatabaseTableStructureRequest,
 };
 use crate::models::database::{DatabaseTreeNode, ListDatabaseObjectsRequest};
 use crate::models::settings::{ConnectionSettings, DatabaseConnectionSettings};
@@ -313,6 +314,63 @@ pub async fn get_database_table_ddl(
         settings_store.inner(),
         logger.inner(),
         "get_database_table_ddl",
+        target,
+        started_at,
+        &result,
+        Some(log_metadata),
+    );
+    result
+}
+
+#[tauri::command]
+pub async fn preview_database_table_structure(
+    settings_store: State<'_, SettingsStore>,
+    logger: State<'_, AppLogger>,
+    request: UpdateDatabaseTableStructureRequest,
+) -> Result<DatabaseTableStructureUpdateResult, String> {
+    let started_at = std::time::Instant::now();
+    let target = database_table_target(&request.connection_id, &request.database, &request.table);
+    let log_metadata = metadata([
+        ("database", metadata_string(request.database.clone())),
+        ("table", metadata_string(request.table.clone())),
+        ("operation_count", metadata_number(request.operations.len() as i64)),
+    ]);
+    let connection = load_database_connection(settings_store.inner(), &request.connection_id)?;
+    let result = query::preview_database_table_structure(&connection, &request).await;
+    log_database_result(
+        settings_store.inner(),
+        logger.inner(),
+        "preview_database_table_structure",
+        target,
+        started_at,
+        &result,
+        Some(log_metadata),
+    );
+    result
+}
+
+#[tauri::command]
+pub async fn update_database_table_structure(
+    settings_store: State<'_, SettingsStore>,
+    database_manager: State<'_, DatabaseConnectionManager>,
+    logger: State<'_, AppLogger>,
+    request: UpdateDatabaseTableStructureRequest,
+) -> Result<DatabaseTableStructureUpdateResult, String> {
+    let started_at = std::time::Instant::now();
+    let target = database_table_target(&request.connection_id, &request.database, &request.table);
+    let log_metadata = metadata([
+        ("database", metadata_string(request.database.clone())),
+        ("table", metadata_string(request.table.clone())),
+        ("operation_count", metadata_number(request.operations.len() as i64)),
+    ]);
+    let connection = load_database_connection(settings_store.inner(), &request.connection_id)?;
+    let result =
+        query::update_database_table_structure(database_manager.inner(), &connection, &request)
+            .await;
+    log_database_result(
+        settings_store.inner(),
+        logger.inner(),
+        "update_database_table_structure",
         target,
         started_at,
         &result,

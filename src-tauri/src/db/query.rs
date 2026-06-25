@@ -11,9 +11,10 @@ use crate::db::connection::{DatabaseConnectionManager, DatabasePool};
 use crate::db::metadata::MetadataQuery;
 use crate::models::database::{
     DatabaseCellValue, DatabaseQueryResult, DatabaseResultColumn, DatabaseTableDdlResult,
-    DatabaseTablePageResult, DatabaseTableUpdateResult, ExecuteDatabaseQueryRequest,
-    GetDatabaseTableDdlRequest, InsertDatabaseTableRowsRequest, DeleteDatabaseTableRowsRequest,
-    LoadDatabaseTablePageRequest, UpdateDatabaseTableRowsRequest,
+    DatabaseTablePageResult, DatabaseTableStructureUpdateResult, DatabaseTableUpdateResult,
+    DeleteDatabaseTableRowsRequest, ExecuteDatabaseQueryRequest, GetDatabaseTableDdlRequest,
+    InsertDatabaseTableRowsRequest, LoadDatabaseTablePageRequest, TableStructureColumnDefinition,
+    TableStructureOperation, UpdateDatabaseTableRowsRequest, UpdateDatabaseTableStructureRequest,
 };
 use crate::models::settings::DatabaseConnectionSettings;
 
@@ -242,6 +243,80 @@ pub fn mysql_table_ddl_from_values(
     named_value: Result<String, String>,
 ) -> Result<String, String> {
     indexed_value.or(named_value)
+}
+
+pub fn build_table_structure_ddl(
+    kind: &str,
+    table: &str,
+    operations: &[TableStructureOperation],
+) -> Result<String, String> {
+    if operations.is_empty() {
+        return Err("no table structure changes".to_string());
+    }
+    match kind {
+        "mysql" => build_mysql_table_structure_ddl(table, operations),
+        "postgresql" => Err("postgresql table structure editing is not supported yet".to_string()),
+        kind => Err(format!("unsupported database connection kind: {kind}")),
+    }
+}
+
+fn build_mysql_table_structure_ddl(
+    table: &str,
+    operations: &[TableStructureOperation],
+) -> Result<String, String> {
+    let clauses = operations
+        .iter()
+        .map(|operation| match operation {
+            TableStructureOperation::AddColumn { column } => Ok(format!(
+                "ADD COLUMN {}",
+                mysql_column_definition(column)?
+            )),
+            TableStructureOperation::ModifyColumn {
+                original_name,
+                column,
+            } => {
+                let original = original_name.trim();
+                if original.is_empty() {
+                    return Err("original column name is required".to_string());
+                }
+                Ok(format!(
+                    "CHANGE COLUMN {} {}",
+                    quote_identifier("mysql", original)?,
+                    mysql_column_definition(column)?
+                ))
+            }
+            TableStructureOperation::DropColumn { name } => {
+                let name = name.trim();
+                if name.is_empty() {
+                    return Err("column name is required".to_string());
+                }
+                Ok(format!("DROP COLUMN {}", quote_identifier("mysql", name)?))
+            }
+        })
+        .collect::<Result<Vec<String>, String>>()?;
+
+    Ok(format!(
+        "ALTER TABLE {}\n  {};",
+        quote_identifier("mysql", table.trim())?,
+        clauses.join(",\n  ")
+    ))
+}
+
+fn mysql_column_definition(column: &TableStructureColumnDefinition) -> Result<String, String> {
+    let name = column.name.trim();
+    if name.is_empty() {
+        return Err("column name is required".to_string());
+    }
+    let data_type = column.data_type.trim();
+    if data_type.is_empty() {
+        return Err("column type is required".to_string());
+    }
+    Ok(format!(
+        "{} {} {}",
+        quote_identifier("mysql", name)?,
+        data_type,
+        if column.nullable { "NULL" } else { "NOT NULL" }
+    ))
 }
 
 pub fn postgresql_table_ddl_query(schema: &str, table: &str) -> Result<MetadataQuery, String> {
@@ -744,6 +819,54 @@ pub async fn get_database_table_ddl(
         }
         kind => Err(format!("unsupported database connection kind: {kind}")),
     }
+}
+
+pub async fn preview_database_table_structure(
+    connection: &DatabaseConnectionSettings,
+    request: &UpdateDatabaseTableStructureRequest,
+) -> Result<DatabaseTableStructureUpdateResult, String> {
+    let started_at = Instant::now();
+    let ddl = build_table_structure_ddl(&connection.kind, request.table.trim(), &request.operations)?;
+    Ok(DatabaseTableStructureUpdateResult {
+        ddl,
+        duration_ms: started_at.elapsed().as_millis(),
+    })
+}
+
+pub async fn update_database_table_structure(
+    manager: &DatabaseConnectionManager,
+    connection: &DatabaseConnectionSettings,
+    request: &UpdateDatabaseTableStructureRequest,
+) -> Result<DatabaseTableStructureUpdateResult, String> {
+    let database = request.database.trim();
+    if database.is_empty() {
+        return Err("database is required".to_string());
+    }
+    let table = request.table.trim();
+    if table.is_empty() {
+        return Err("table is required".to_string());
+    }
+    let started_at = Instant::now();
+    let ddl = build_table_structure_ddl(&connection.kind, table, &request.operations)?;
+    match connection.kind.as_str() {
+        "mysql" => {
+            let DatabasePool::Mysql(pool) = manager.pool(connection, Some(database)).await? else {
+                return Err("database pool kind mismatch".to_string());
+            };
+            let mut connection = pool.acquire().await.map_err(|error| error.to_string())?;
+            sqlx::query(&ddl)
+                .execute(&mut *connection)
+                .await
+                .map_err(|error| error.to_string())?;
+        }
+        "postgresql" => return Err("postgresql table structure editing is not supported yet".to_string()),
+        kind => return Err(format!("unsupported database connection kind: {kind}")),
+    }
+
+    Ok(DatabaseTableStructureUpdateResult {
+        ddl,
+        duration_ms: started_at.elapsed().as_millis(),
+    })
 }
 
 async fn get_mysql_table_ddl(
