@@ -149,6 +149,14 @@ describe("global style defaults", () => {
     expect(globalsCss).toContain("box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 42%, transparent);");
   });
 
+  it("keeps table structure column order buttons compact", () => {
+    const globalsCss = readCssSource();
+
+    expect(globalsCss).toContain(".database-table-structure-dialog__node--child {\n  grid-template-columns: minmax(0, 1fr) auto;");
+    expect(globalsCss).toContain(".database-table-structure-dialog__column-order-actions button {\n  display: grid;");
+    expect(globalsCss).toContain("width: 20px;\n  height: 22px;");
+  });
+
   it("renders workspace split resize handles without occupying grid tracks", () => {
     const globalsCss = readCssSource();
 

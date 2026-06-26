@@ -89,7 +89,12 @@ export interface TableStructureColumnDefinition {
   default_value?: string | null;
   comment?: string | null;
   extra?: string | null;
+  position?: TableStructureColumnPosition | null;
 }
+
+export type TableStructureColumnPosition =
+  | { kind: "first" }
+  | { kind: "after"; column: string };
 
 export interface TableStructureIndexDefinition {
   name: string;

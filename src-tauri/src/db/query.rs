@@ -14,7 +14,8 @@ use crate::models::database::{
     DatabaseTablePageResult, DatabaseTableStructureUpdateResult, DatabaseTableUpdateResult,
     DeleteDatabaseTableRowsRequest, ExecuteDatabaseQueryRequest, GetDatabaseTableDdlRequest,
     InsertDatabaseTableRowsRequest, LoadDatabaseTablePageRequest, TableStructureColumnDefinition,
-    TableStructureOperation, UpdateDatabaseTableRowsRequest, UpdateDatabaseTableStructureRequest,
+    TableStructureColumnPosition, TableStructureOperation, UpdateDatabaseTableRowsRequest,
+    UpdateDatabaseTableStructureRequest,
 };
 use crate::models::settings::DatabaseConnectionSettings;
 
@@ -284,8 +285,9 @@ fn build_mysql_table_structure_ddl(
                 current_table = new_name.to_string();
             }
             TableStructureOperation::AddColumn { column } => column_operations.push(format!(
-                "ADD COLUMN {}",
-                mysql_column_definition(column)?
+                "ADD COLUMN {}{}",
+                mysql_column_definition(column)?,
+                mysql_column_position_clause(column)?
             )),
             TableStructureOperation::ModifyColumn {
                 original_name,
@@ -296,9 +298,10 @@ fn build_mysql_table_structure_ddl(
                     return Err("original column name is required".to_string());
                 }
                 column_operations.push(format!(
-                    "CHANGE COLUMN {} {}",
+                    "CHANGE COLUMN {} {}{}",
                     quote_identifier("mysql", original)?,
-                    mysql_column_definition(column)?
+                    mysql_column_definition(column)?,
+                    mysql_column_position_clause(column)?
                 ));
             }
             TableStructureOperation::DropColumn { name } => {
@@ -389,6 +392,20 @@ fn mysql_column_definition(column: &TableStructureColumnDefinition) -> Result<St
         definition.push_str(&mysql_string_literal(comment));
     }
     Ok(definition)
+}
+
+fn mysql_column_position_clause(column: &TableStructureColumnDefinition) -> Result<String, String> {
+    match &column.position {
+        None => Ok(String::new()),
+        Some(TableStructureColumnPosition::First) => Ok(" FIRST".to_string()),
+        Some(TableStructureColumnPosition::After { column }) => {
+            let column = column.trim();
+            if column.is_empty() {
+                return Err("column position target is required".to_string());
+            }
+            Ok(format!(" AFTER {}", quote_identifier("mysql", column)?))
+        }
+    }
 }
 
 fn mysql_column_default_clause(column: &TableStructureColumnDefinition) -> Option<String> {

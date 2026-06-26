@@ -33,6 +33,8 @@ import ExpandEditorIcon from "../../assets/icons/oi--expand-down.svg?react";
 import SqlFileIcon from "../../assets/icons/ph--file-sql-light.svg?react";
 import ExecuteSqlFileIcon from "../../assets/icons/tabler--file-import.svg?react";
 import ExportIcon from "../../assets/icons/mdi--table-export.svg?react";
+import MoveUpIcon from "../../assets/icons/material-symbols--keyboard-arrow-up-rounded.svg?react";
+import MoveDownIcon from "../../assets/icons/material-symbols--keyboard-arrow-down-rounded.svg?react";
 
 const DEFAULT_SQL_LIMIT = 200;
 const DEFAULT_QUERY_TIMEOUT_MS = 30_000;
@@ -569,6 +571,26 @@ export function DatabaseWorkspace({
         ...current,
         draftColumns: [...current.draftColumns, newColumn],
         selectedItem: { kind: "column", id: newColumn.id },
+        durationMs: null,
+        statusMessage: "",
+        error: null,
+      };
+    });
+  }, []);
+
+  const moveTableStructureColumn = useCallback((id: string, direction: -1 | 1) => {
+    setTableStructureDialog((current) => {
+      if (!current) return current;
+      const currentIndex = current.draftColumns.findIndex((column) => column.id === id);
+      const nextIndex = currentIndex + direction;
+      if (currentIndex < 0 || nextIndex < 0 || nextIndex >= current.draftColumns.length) return current;
+      const draftColumns = [...current.draftColumns];
+      const [target] = draftColumns.splice(currentIndex, 1);
+      draftColumns.splice(nextIndex, 0, target);
+      return {
+        ...current,
+        draftColumns,
+        selectedItem: { kind: "column", id },
         durationMs: null,
         statusMessage: "",
         error: null,
@@ -1489,6 +1511,7 @@ export function DatabaseWorkspace({
                   dialog={tableStructureDialog}
                   onSelect={selectTableStructureItem}
                   onAddColumn={addTableStructureColumn}
+                  onMoveColumn={moveTableStructureColumn}
                   onAddIndex={addTableStructureIndex}
                 />
                 <div
@@ -1758,11 +1781,13 @@ const TableStructureObjectList = memo(function TableStructureObjectList({
   dialog,
   onSelect,
   onAddColumn,
+  onMoveColumn,
   onAddIndex,
 }: {
   dialog: TableStructureDialogState;
   onSelect: (selectedItem: TableStructureDialogState["selectedItem"]) => void;
   onAddColumn: () => void;
+  onMoveColumn: (id: string, direction: -1 | 1) => void;
   onAddIndex: () => void;
 }) {
   const { t } = useI18n();
@@ -1792,16 +1817,40 @@ const TableStructureObjectList = memo(function TableStructureObjectList({
             index: dialog.draftColumns.slice(0, index + 1).filter((candidate) => !candidate.originalName).length,
           });
           return (
-            <button
+            <div
               key={column.id}
-              type="button"
-              aria-label={t("database.column_object", { name, type: column.dataType || "-" })}
               className={`database-table-structure-dialog__node database-table-structure-dialog__node--child${dialog.selectedItem.kind === "column" && dialog.selectedItem.id === column.id ? " database-table-structure-dialog__node--active" : ""}`}
-              onClick={() => onSelect({ kind: "column", id: column.id })}
             >
-              <span className="database-table-structure-dialog__column-name">{name}</span>
-              <span className="database-table-structure-dialog__column-type">{column.dataType || "-"}</span>
-            </button>
+              <button
+                type="button"
+                aria-label={t("database.column_object", { name, type: column.dataType || "-" })}
+                className="database-table-structure-dialog__node-main"
+                onClick={() => onSelect({ kind: "column", id: column.id })}
+              >
+                <span className="database-table-structure-dialog__column-name">{name}</span>
+                <span className="database-table-structure-dialog__column-type">{column.dataType || "-"}</span>
+              </button>
+              <div className="database-table-structure-dialog__column-order-actions">
+                <button
+                  type="button"
+                  aria-label={t("database.move_column_up", { name })}
+                  title={t("database.move_column_up", { name })}
+                  disabled={index === 0}
+                  onClick={() => onMoveColumn(column.id, -1)}
+                >
+                  <AppIcon icon={MoveUpIcon} decorative />
+                </button>
+                <button
+                  type="button"
+                  aria-label={t("database.move_column_down", { name })}
+                  title={t("database.move_column_down", { name })}
+                  disabled={index === dialog.draftColumns.length - 1}
+                  onClick={() => onMoveColumn(column.id, 1)}
+                >
+                  <AppIcon icon={MoveDownIcon} decorative />
+                </button>
+              </div>
+            </div>
           );
         })}
       </div>
@@ -2478,6 +2527,9 @@ function parseIndexDetail(detail?: string | null) {
 function tableStructureOperations(dialog: TableStructureDialogState): TableStructureOperation[] {
   const originalByName = new Map(dialog.originalColumns.map((column) => [column.originalName, column]));
   const originalIndexByName = new Map(dialog.originalIndexes.map((index) => [index.originalName, index]));
+  const originalPreviousKeysByName = tableStructurePreviousColumnKeys(dialog.originalColumns);
+  const draftPreviousKeysById = tableStructurePreviousColumnKeys(dialog.draftColumns);
+  const draftPreviousNamesById = tableStructurePreviousColumnNames(dialog.draftColumns);
   const operations: TableStructureOperation[] = [];
   const draftTableName = dialog.draftTableName.trim();
   if (draftTableName && draftTableName !== dialog.table.name) {
@@ -2490,23 +2542,25 @@ function tableStructureOperations(dialog: TableStructureDialogState): TableStruc
     if (!column.originalName) {
       operations.push({
         kind: "add_column",
-        column: tableStructureColumnDefinition(column, name, dataType),
+        column: tableStructureColumnDefinition(column, name, dataType, draftPreviousNamesById.get(column.id)),
       });
       continue;
     }
     const original = originalByName.get(column.originalName);
     if (!original) continue;
+    const positionChanged = originalPreviousKeysByName.get(column.originalName) !== draftPreviousKeysById.get(column.id);
     if (
       original.name !== name
       || original.dataType !== dataType
       || original.nullable !== column.nullable
       || original.defaultValue !== column.defaultValue
       || original.comment !== column.comment
+      || positionChanged
     ) {
       operations.push({
         kind: "modify_column",
         original_name: column.originalName,
-        column: tableStructureColumnDefinition(column, name, dataType),
+        column: tableStructureColumnDefinition(column, name, dataType, positionChanged ? draftPreviousNamesById.get(column.id) : undefined),
       });
     }
   }
@@ -2546,6 +2600,33 @@ function tableStructureOperations(dialog: TableStructureDialogState): TableStruc
     }
   }
   return operations;
+}
+
+function tableStructurePreviousColumnKeys(columns: TableStructureColumnDraft[]) {
+  const previousById = new Map<string, string | null>();
+  let previousKey: string | null = null;
+  for (const column of columns) {
+    const name = column.name.trim();
+    if (!name) continue;
+    const key = column.originalName ?? column.id;
+    previousById.set(key, previousKey);
+    previousById.set(column.id, previousKey);
+    previousKey = key;
+  }
+  return previousById;
+}
+
+function tableStructurePreviousColumnNames(columns: TableStructureColumnDraft[]) {
+  const previousById = new Map<string, string | null>();
+  let previousName: string | null = null;
+  for (const column of columns) {
+    const name = column.name.trim();
+    if (!name) continue;
+    previousById.set(column.originalName ?? column.id, previousName);
+    previousById.set(column.id, previousName);
+    previousName = name;
+  }
+  return previousById;
 }
 
 function validateTableStructureDialog(dialog: TableStructureDialogState, t: ReturnType<typeof useI18n>["t"]) {
@@ -2605,7 +2686,7 @@ function hasDangerousTableStructureOperation(operations: TableStructureOperation
   ));
 }
 
-function tableStructureColumnDefinition(column: TableStructureColumnDraft, name: string, dataType: string) {
+function tableStructureColumnDefinition(column: TableStructureColumnDraft, name: string, dataType: string, previousColumnName?: string | null) {
   return {
     name,
     data_type: dataType,
@@ -2613,6 +2694,8 @@ function tableStructureColumnDefinition(column: TableStructureColumnDraft, name:
     ...(column.defaultValue.trim() ? { default_value: column.defaultValue.trim() } : {}),
     ...(column.comment.trim() ? { comment: column.comment.trim() } : {}),
     ...(column.extra.trim() ? { extra: column.extra.trim() } : {}),
+    ...(previousColumnName === null ? { position: { kind: "first" as const } } : {}),
+    ...(typeof previousColumnName === "string" ? { position: { kind: "after" as const, column: previousColumnName } } : {}),
   };
 }
 

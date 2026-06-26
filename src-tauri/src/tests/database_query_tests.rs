@@ -15,8 +15,8 @@ use crate::db::query::{
 use crate::models::database::{
     DatabaseCellValue, DatabaseTableDeleteRow, DatabaseTableInsertRow, DatabaseTableUpdateRow,
     DeleteDatabaseTableRowsRequest, InsertDatabaseTableRowsRequest, LoadDatabaseTablePageRequest,
-    TableStructureColumnDefinition, TableStructureIndexDefinition, TableStructureOperation,
-    UpdateDatabaseTableRowsRequest,
+    TableStructureColumnDefinition, TableStructureColumnPosition, TableStructureIndexDefinition,
+    TableStructureOperation, UpdateDatabaseTableRowsRequest,
 };
 use crate::models::settings::DatabaseConnectionSettings;
 
@@ -383,6 +383,7 @@ fn builds_mysql_table_structure_ddl_for_add_modify_and_drop() {
                     default_value: None,
                     comment: None,
                     extra: None,
+                    position: None,
                 },
             },
             TableStructureOperation::AddColumn {
@@ -393,6 +394,7 @@ fn builds_mysql_table_structure_ddl_for_add_modify_and_drop() {
                     default_value: None,
                     comment: None,
                     extra: None,
+                    position: None,
                 },
             },
             TableStructureOperation::DropColumn {
@@ -422,6 +424,7 @@ fn builds_mysql_table_structure_ddl_with_default_and_comment() {
                 default_value: Some("anonymous".to_string()),
                 comment: Some("用户'昵称".to_string()),
                 extra: None,
+                position: None,
             },
         }],
     )
@@ -447,6 +450,7 @@ fn preserves_mysql_column_extra_when_building_table_structure_ddl() {
                 default_value: None,
                 comment: Some("主键".to_string()),
                 extra: Some("auto_increment".to_string()),
+                position: None,
             },
         }],
     )
@@ -455,6 +459,47 @@ fn preserves_mysql_column_extra_when_building_table_structure_ddl() {
     assert_eq!(
         ddl,
         "ALTER TABLE `users`\n  CHANGE COLUMN `id` `id` int(11) NOT NULL AUTO_INCREMENT COMMENT '主键';"
+    );
+}
+
+#[test]
+fn builds_mysql_table_structure_ddl_with_column_positions() {
+    let ddl = build_table_structure_ddl(
+        "mysql",
+        "users",
+        &[
+            TableStructureOperation::ModifyColumn {
+                original_name: "name".to_string(),
+                column: TableStructureColumnDefinition {
+                    name: "name".to_string(),
+                    data_type: "varchar(100)".to_string(),
+                    nullable: true,
+                    default_value: None,
+                    comment: None,
+                    extra: None,
+                    position: Some(TableStructureColumnPosition::First),
+                },
+            },
+            TableStructureOperation::AddColumn {
+                column: TableStructureColumnDefinition {
+                    name: "age".to_string(),
+                    data_type: "int".to_string(),
+                    nullable: true,
+                    default_value: None,
+                    comment: None,
+                    extra: None,
+                    position: Some(TableStructureColumnPosition::After {
+                        column: "name".to_string(),
+                    }),
+                },
+            },
+        ],
+    )
+    .unwrap();
+
+    assert_eq!(
+        ddl,
+        "ALTER TABLE `users`\n  CHANGE COLUMN `name` `name` varchar(100) NULL FIRST,\n  ADD COLUMN `age` int NULL AFTER `name`;"
     );
 }
 
@@ -472,6 +517,7 @@ fn keeps_mysql_empty_string_default_literal() {
                 default_value: Some("''".to_string()),
                 comment: Some("测试".to_string()),
                 extra: None,
+                position: None,
             },
         }],
     )

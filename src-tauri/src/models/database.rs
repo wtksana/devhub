@@ -111,6 +111,14 @@ pub struct TableStructureColumnDefinition {
     pub default_value: Option<String>,
     pub comment: Option<String>,
     pub extra: Option<String>,
+    pub position: Option<TableStructureColumnPosition>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TableStructureColumnPosition {
+    First,
+    After { column: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

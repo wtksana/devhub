@@ -727,13 +727,13 @@ describe("DatabaseWorkspace", () => {
       }
       if (command === "preview_database_table_structure") {
         return Promise.resolve({
-          ddl: "ALTER TABLE `users`\n  CHANGE COLUMN `name` `username` varchar(100) NOT NULL,\n  ADD COLUMN `age` int NULL,\n  DROP COLUMN `remark`;",
+          ddl: "ALTER TABLE `users`\n  CHANGE COLUMN `name` `username` varchar(100) NOT NULL,\n  ADD COLUMN `age` int NULL AFTER `username`,\n  DROP COLUMN `remark`;",
           duration_ms: 0,
         });
       }
       if (command === "update_database_table_structure") {
         return Promise.resolve({
-          ddl: "ALTER TABLE `users`\n  CHANGE COLUMN `name` `username` varchar(100) NOT NULL,\n  ADD COLUMN `age` int NULL,\n  DROP COLUMN `remark`;",
+          ddl: "ALTER TABLE `users`\n  CHANGE COLUMN `name` `username` varchar(100) NOT NULL,\n  ADD COLUMN `age` int NULL AFTER `username`,\n  DROP COLUMN `remark`;",
           duration_ms: 12,
         });
       }
@@ -795,7 +795,7 @@ describe("DatabaseWorkspace", () => {
             },
             {
               kind: "add_column",
-              column: { name: "age", data_type: "int", nullable: true },
+              column: { name: "age", data_type: "int", nullable: true, position: { kind: "after", column: "username" } },
             },
             {
               kind: "drop_column",
@@ -809,7 +809,7 @@ describe("DatabaseWorkspace", () => {
     await userEvent.click(within(dialog).getByRole("button", { name: "执行更改" }));
     const confirmDialog = await screen.findByRole("dialog", { name: "确认执行表结构变更" });
     expect(confirmDialog.querySelector("pre")?.textContent).toBe(
-      "ALTER TABLE `users`\n  CHANGE COLUMN `name` `username` varchar(100) NOT NULL,\n  ADD COLUMN `age` int NULL,\n  DROP COLUMN `remark`;",
+      "ALTER TABLE `users`\n  CHANGE COLUMN `name` `username` varchar(100) NOT NULL,\n  ADD COLUMN `age` int NULL AFTER `username`,\n  DROP COLUMN `remark`;",
     );
     expect(callBackendMock).not.toHaveBeenCalledWith("update_database_table_structure", expect.anything());
     await userEvent.click(within(confirmDialog).getByRole("button", { name: "确认执行" }));
@@ -828,7 +828,7 @@ describe("DatabaseWorkspace", () => {
             },
             {
               kind: "add_column",
-              column: { name: "age", data_type: "int", nullable: true },
+              column: { name: "age", data_type: "int", nullable: true, position: { kind: "after", column: "username" } },
             },
             {
               kind: "drop_column",
@@ -1492,6 +1492,73 @@ describe("DatabaseWorkspace", () => {
       });
     });
     expect(within(dialog).getByText(/AUTO_INCREMENT COMMENT '主键'/)).toBeInTheDocument();
+  });
+
+  it("moves a table structure column up from the object list and previews the new position", async () => {
+    callBackendMock.mockImplementation((command, payload) => {
+      if (command === "list_database_objects") {
+        const request = (payload as { request: { parent_kind?: string; table?: string } }).request;
+        if (!request.parent_kind) {
+          return Promise.resolve([{ id: "database:app", name: "app", kind: "database", has_children: true }]);
+        }
+        if (request.parent_kind === "table" && request.table === "users") {
+          return Promise.resolve([
+            { id: "column:app.users.id", name: "id", kind: "column", has_children: false, detail: "int(11) NO" },
+            { id: "column:app.users.name", name: "name", kind: "column", has_children: false, detail: "varchar(100) YES" },
+          ]);
+        }
+        return Promise.resolve([{ id: "table:app.users", name: "users", kind: "table", has_children: true }]);
+      }
+      if (command === "preview_database_table_structure") {
+        return Promise.resolve({
+          ddl: "ALTER TABLE `users`\n  CHANGE COLUMN `name` `name` varchar(100) NULL FIRST;",
+          duration_ms: 0,
+        });
+      }
+      return Promise.resolve([]);
+    });
+
+    renderDatabaseWorkspace("app");
+    const tableRow = (await screen.findByRole("button", { name: "users" })).closest("li");
+    expect(tableRow).not.toBeNull();
+    fireEvent.contextMenu(tableRow!, { clientX: 10, clientY: 20 });
+    await userEvent.click(screen.getByRole("menuitem", { name: "编辑" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "编辑表 users" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "上移字段 name" }));
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("preview_database_table_structure", {
+        request: {
+          connection_id: "mysql-dev",
+          database: "app",
+          table: "users",
+          operations: [
+            {
+              kind: "modify_column",
+              original_name: "name",
+              column: {
+                name: "name",
+                data_type: "varchar(100)",
+                nullable: true,
+                position: { kind: "first" },
+              },
+            },
+            {
+              kind: "modify_column",
+              original_name: "id",
+              column: {
+                name: "id",
+                data_type: "int(11)",
+                nullable: false,
+                position: { kind: "after", column: "name" },
+              },
+            },
+          ],
+        },
+      });
+    });
+    expect(within(dialog).getByText(/CHANGE COLUMN `name` `name` varchar\(100\) NULL FIRST/)).toBeInTheDocument();
   });
 
   it("renames table from table structure dialog", async () => {
