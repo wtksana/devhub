@@ -769,7 +769,7 @@ describe("DatabaseWorkspace", () => {
     const deleteColumnButton = within(dialog).getByRole("button", { name: "删除字段" });
     expect(deleteColumnButton).toHaveAttribute("title", "删除字段 remark");
     await userEvent.click(deleteColumnButton);
-    await userEvent.click(within(dialog).getByRole("button", { name: "确认" }));
+    await userEvent.click(within(await screen.findByRole("dialog", { name: "确认删除字段" })).getByRole("button", { name: "确认" }));
     await userEvent.click(within(dialog).getByRole("button", { name: "新增字段" }));
     await userEvent.clear(within(dialog).getByLabelText("字段名"));
     await userEvent.type(within(dialog).getByLabelText("字段名"), "age");
@@ -928,7 +928,7 @@ describe("DatabaseWorkspace", () => {
     const dialog = await screen.findByRole("dialog", { name: "编辑表 users" });
     await userEvent.click(within(dialog).getByRole("button", { name: "remark text" }));
     await userEvent.click(within(dialog).getByRole("button", { name: "删除字段" }));
-    await userEvent.click(within(dialog).getByRole("button", { name: "确认" }));
+    await userEvent.click(within(await screen.findByRole("dialog", { name: "确认删除字段" })).getByRole("button", { name: "确认" }));
     await waitFor(() => {
       expect(within(dialog).getByText(/DROP COLUMN `remark`/)).toBeInTheDocument();
     });
@@ -1063,20 +1063,62 @@ describe("DatabaseWorkspace", () => {
     await userEvent.click(within(dialog).getByRole("button", { name: "name varchar(255)" }));
     await userEvent.click(within(dialog).getByRole("button", { name: "删除字段" }));
 
-    const deleteConfirm = within(dialog).getByText("确认删除字段 name？").closest('[role="alert"]');
-    expect(deleteConfirm).not.toBeNull();
+    const deleteConfirm = await screen.findByRole("dialog", { name: "确认删除字段" });
+    expect(deleteConfirm).toHaveTextContent("确认删除字段 name？");
     expect(within(dialog).getByRole("button", { name: "name varchar(255)" })).toBeInTheDocument();
 
     await userEvent.click(within(deleteConfirm as HTMLElement).getByRole("button", { name: "取消" }));
-    expect(within(dialog).queryByText("确认删除字段 name？")).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "确认删除字段" })).not.toBeInTheDocument();
     expect(within(dialog).getByRole("button", { name: "name varchar(255)" })).toBeInTheDocument();
 
     await userEvent.click(within(dialog).getByRole("button", { name: "删除字段" }));
-    const secondDeleteConfirm = within(dialog).getByText("确认删除字段 name？").closest('[role="alert"]');
-    expect(secondDeleteConfirm).not.toBeNull();
+    const secondDeleteConfirm = await screen.findByRole("dialog", { name: "确认删除字段" });
     await userEvent.click(within(secondDeleteConfirm as HTMLElement).getByRole("button", { name: "确认" }));
 
     expect(within(dialog).queryByRole("button", { name: "name varchar(255)" })).not.toBeInTheDocument();
+  });
+
+  it("shows a dialog before discarding dirty table structure changes", async () => {
+    callBackendMock.mockImplementation((command, payload) => {
+      if (command === "list_database_objects") {
+        const request = (payload as { request: { parent_kind?: string; table?: string } }).request;
+        if (!request.parent_kind) {
+          return Promise.resolve([{ id: "database:app", name: "app", kind: "database", has_children: true }]);
+        }
+        if (request.parent_kind === "table" && request.table === "users") {
+          return Promise.resolve([
+            { id: "column:app.users.name", name: "name", kind: "column", has_children: false, detail: "varchar(255) YES" },
+          ]);
+        }
+        return Promise.resolve([{ id: "table:app.users", name: "users", kind: "table", has_children: true }]);
+      }
+      return Promise.resolve([]);
+    });
+
+    renderDatabaseWorkspace("app");
+    const tableRow = (await screen.findByRole("button", { name: "users" })).closest("li");
+    expect(tableRow).not.toBeNull();
+    fireEvent.contextMenu(tableRow!, { clientX: 10, clientY: 20 });
+    await userEvent.click(screen.getByRole("menuitem", { name: "编辑" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "编辑表 users" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "name varchar(255)" }));
+    await userEvent.clear(within(dialog).getByLabelText("字段名"));
+    await userEvent.type(within(dialog).getByLabelText("字段名"), "username");
+    await userEvent.click(within(dialog).getByRole("button", { name: "取消" }));
+
+    const discardDialog = await screen.findByRole("dialog", { name: "确认放弃更改" });
+    expect(discardDialog).toHaveTextContent("当前有未保存更改，确认放弃？");
+
+    await userEvent.click(within(discardDialog).getByRole("button", { name: "取消" }));
+    expect(screen.queryByRole("dialog", { name: "确认放弃更改" })).not.toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "编辑表 users" })).toBeInTheDocument();
+
+    await userEvent.click(within(dialog).getByRole("button", { name: "取消" }));
+    const secondDiscardDialog = await screen.findByRole("dialog", { name: "确认放弃更改" });
+    await userEvent.click(within(secondDiscardDialog).getByRole("button", { name: "确认" }));
+
+    expect(screen.queryByRole("dialog", { name: "编辑表 users" })).not.toBeInTheDocument();
   });
 
   it("rejects duplicate table structure names before applying changes", async () => {
@@ -1619,7 +1661,7 @@ describe("DatabaseWorkspace", () => {
     const dialog = await screen.findByRole("dialog", { name: "编辑表 users" });
     await userEvent.click(within(dialog).getByRole("button", { name: "email varchar(255)" }));
     await userEvent.click(within(dialog).getByRole("button", { name: "删除字段" }));
-    await userEvent.click(within(dialog).getByRole("button", { name: "确认" }));
+    await userEvent.click(within(await screen.findByRole("dialog", { name: "确认删除字段" })).getByRole("button", { name: "确认" }));
     await userEvent.click(within(dialog).getByRole("button", { name: "idx_users_name_email name" }));
 
     expect(within(dialog).getByLabelText("索引定义")).toHaveValue("KEY `idx_users_name_email` (`name`)");
@@ -1679,7 +1721,7 @@ describe("DatabaseWorkspace", () => {
     const dialog = await screen.findByRole("dialog", { name: "编辑表 users" });
     await userEvent.click(within(dialog).getByRole("button", { name: "email varchar(255)" }));
     await userEvent.click(within(dialog).getByRole("button", { name: "删除字段" }));
-    await userEvent.click(within(dialog).getByRole("button", { name: "确认" }));
+    await userEvent.click(within(await screen.findByRole("dialog", { name: "确认删除字段" })).getByRole("button", { name: "确认" }));
     await userEvent.click(within(dialog).getByRole("button", { name: "idx_users_email -" }));
 
     expect(within(dialog).getByRole("alert")).toHaveTextContent("索引字段不能为空");

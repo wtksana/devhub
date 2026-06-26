@@ -1538,48 +1538,6 @@ export function DatabaseWorkspace({
               </section>
             </div>
             <div className="database-dialog__actions">
-              {tableStructureDialog.confirmClose ? (
-                <div className="database-table-structure-dialog__confirm" role="alert">
-                  <span>{t("database.confirm_discard_changes_message")}</span>
-                  <button type="button" onClick={() => setTableStructureDialog(null)}>
-                    {t("database.confirm")}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setTableStructureDialog({ ...tableStructureDialog, confirmClose: false })}
-                  >
-                    {t("database.cancel")}
-                  </button>
-                </div>
-              ) : tableStructureDialog.pendingDelete ? (
-                <div className="database-table-structure-dialog__confirm" role="alert">
-                  <span>
-                    {tableStructureDialog.pendingDelete.kind === "column"
-                      ? t("database.confirm_delete_column_message", { name: tableStructureDialog.pendingDelete.name })
-                      : t("database.confirm_delete_index_message", { name: tableStructureDialog.pendingDelete.name })}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const pendingDelete = tableStructureDialog.pendingDelete;
-                      if (!pendingDelete) return;
-                      if (pendingDelete.kind === "column") {
-                        confirmDeleteTableStructureColumn(pendingDelete.id);
-                      } else {
-                        confirmDeleteTableStructureIndex(pendingDelete.id);
-                      }
-                    }}
-                  >
-                    {t("database.confirm")}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setTableStructureDialog({ ...tableStructureDialog, pendingDelete: null })}
-                  >
-                    {t("database.cancel")}
-                  </button>
-                </div>
-              ) : null}
               <button type="button" onClick={requestCloseTableStructureDialog}>
                 {t("database.cancel")}
               </button>
@@ -1589,6 +1547,86 @@ export function DatabaseWorkspace({
                 onClick={() => void requestApplyTableStructureChanges()}
               >
                 {tableStructureDialog.isSaving ? t("database.executing") : t("database.apply_table_structure_changes")}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {tableStructureDialog?.confirmClose ? (
+        <div className="connection-dialog__backdrop">
+          <div
+            className="connection-dialog database-dialog database-table-structure-confirm-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-label={t("database.confirm_discard_changes")}
+          >
+            <header className="database-dialog__header">
+              <h2>{t("database.confirm_discard_changes")}</h2>
+            </header>
+            <div className="database-table-structure-confirm-dialog__body">
+              <p>{t("database.confirm_discard_changes_message")}</p>
+            </div>
+            <div className="database-dialog__actions">
+              <button
+                type="button"
+                onClick={() => setTableStructureDialog({ ...tableStructureDialog, confirmClose: false })}
+              >
+                {t("database.cancel")}
+              </button>
+              <button type="button" className="sftp-dialog__danger-button" onClick={() => setTableStructureDialog(null)}>
+                {t("database.confirm")}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {tableStructureDialog?.pendingDelete ? (
+        <div className="connection-dialog__backdrop">
+          <div
+            className="connection-dialog database-dialog database-table-structure-confirm-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-label={
+              tableStructureDialog.pendingDelete.kind === "column"
+                ? t("database.confirm_delete_column")
+                : t("database.confirm_delete_index")
+            }
+          >
+            <header className="database-dialog__header">
+              <h2>
+                {tableStructureDialog.pendingDelete.kind === "column"
+                  ? t("database.confirm_delete_column")
+                  : t("database.confirm_delete_index")}
+              </h2>
+            </header>
+            <div className="database-table-structure-confirm-dialog__body">
+              <p>
+                {tableStructureDialog.pendingDelete.kind === "column"
+                  ? t("database.confirm_delete_column_message", { name: tableStructureDialog.pendingDelete.name })
+                  : t("database.confirm_delete_index_message", { name: tableStructureDialog.pendingDelete.name })}
+              </p>
+            </div>
+            <div className="database-dialog__actions">
+              <button
+                type="button"
+                onClick={() => setTableStructureDialog({ ...tableStructureDialog, pendingDelete: null })}
+              >
+                {t("database.cancel")}
+              </button>
+              <button
+                type="button"
+                className="sftp-dialog__danger-button"
+                onClick={() => {
+                  const pendingDelete = tableStructureDialog.pendingDelete;
+                  if (!pendingDelete) return;
+                  if (pendingDelete.kind === "column") {
+                    confirmDeleteTableStructureColumn(pendingDelete.id);
+                  } else {
+                    confirmDeleteTableStructureIndex(pendingDelete.id);
+                  }
+                }}
+              >
+                {t("database.confirm")}
               </button>
             </div>
           </div>

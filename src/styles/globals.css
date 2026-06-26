@@ -1825,25 +1825,6 @@ p {
   white-space: pre-wrap;
 }
 
-.database-table-structure-dialog__confirm {
-  display: inline-flex;
-  gap: 8px;
-  align-items: center;
-  margin-right: auto;
-  color: var(--danger);
-  font-size: 12px;
-  white-space: nowrap;
-}
-
-.database-table-structure-dialog__confirm button {
-  height: 26px;
-  padding: 0 8px;
-  border: 1px solid var(--border-subtle);
-  border-radius: 4px;
-  background: var(--panel-raised);
-  color: var(--text);
-}
-
 .database-table-structure-confirm-dialog {
   width: min(720px, calc(100vw - 48px));
 }
