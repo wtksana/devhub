@@ -1729,18 +1729,20 @@ p {
   white-space: nowrap;
 }
 
-.database-table-structure-dialog__definition pre {
+.database-table-structure-dialog__definition textarea {
   min-width: 0;
-  height: 30px;
+  min-height: 64px;
+  max-height: 120px;
+  resize: vertical;
   margin: 0;
-  padding: 0 8px;
+  padding: 6px 8px;
   border: 1px solid var(--border-subtle);
   border-radius: 3px;
   background: var(--input-bg);
   color: var(--text);
   font-family: var(--ui-font-family);
   font-size: var(--ui-font-size-small, 15px);
-  line-height: 28px;
+  line-height: 1.45;
   overflow: auto;
   white-space: pre-wrap;
 }

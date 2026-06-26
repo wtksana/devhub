@@ -1840,7 +1840,7 @@ const TableStructureEditor = memo(function TableStructureEditor({
         </div>
         <div className="database-table-structure-dialog__definition">
           <span>{t("database.index_definition")}</span>
-          <pre>{index.definition || "-"}</pre>
+          <textarea aria-label={t("database.index_definition")} value={index.definition || "-"} readOnly />
         </div>
       </section>
     );

@@ -1086,7 +1086,7 @@ describe("DatabaseWorkspace", () => {
               name: "idx_users_name",
               kind: "index",
               has_children: false,
-              detail: "unique=NO;columns=name;definition=KEY `idx_users_name` (`name`)",
+              detail: "unique=NO;columns=name;definition=KEY `idx_users_name` (`name`, `id`)",
             },
           ]);
         }
@@ -1364,7 +1364,7 @@ describe("DatabaseWorkspace", () => {
               name: "idx_users_name",
               kind: "index",
               has_children: false,
-              detail: "unique=NO;columns=name;definition=KEY `idx_users_name` (`name`)",
+              detail: "unique=NO;columns=name;definition=KEY `idx_users_name` (`name`, `id`)",
             },
           ]);
         }
@@ -1389,7 +1389,9 @@ describe("DatabaseWorkspace", () => {
     expect(within(dialog).getByLabelText("唯一索引")).not.toBeChecked();
     expect(within(dialog).getByRole("button", { name: "name" })).toBeInTheDocument();
     expect(within(dialog).queryByRole("checkbox", { name: "name" })).not.toBeInTheDocument();
-    expect(within(dialog).getByText("KEY `idx_users_name` (`name`)")).toBeInTheDocument();
+    const definition = within(dialog).getByLabelText("索引定义");
+    expect(definition).toHaveValue("KEY `idx_users_name` (`name`, `id`)");
+    expect(definition).toHaveAttribute("readonly");
   });
 
   it("edits table index and previews drop plus add DDL", async () => {

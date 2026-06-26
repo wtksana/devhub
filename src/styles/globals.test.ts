@@ -132,9 +132,11 @@ describe("global style defaults", () => {
     );
     expect(globalsCss).toContain(".database-table-structure-dialog__definition > span {\n  color: var(--muted);\n  line-height: 30px;");
     expect(globalsCss).toContain(
-      ".database-table-structure-dialog__definition pre {\n  min-width: 0;\n  height: 30px;\n  margin: 0;\n  padding: 0 8px;",
+      ".database-table-structure-dialog__definition textarea {\n  min-width: 0;\n  min-height: 64px;\n  max-height: 120px;",
     );
-    expect(globalsCss).toContain("line-height: 28px;");
+    expect(globalsCss).toContain("resize: vertical;");
+    expect(globalsCss).toContain("padding: 6px 8px;");
+    expect(globalsCss).toContain("line-height: 1.45;");
   });
 
   it("renders workspace split resize handles without occupying grid tracks", () => {
