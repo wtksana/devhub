@@ -1868,8 +1868,22 @@ function TableStructureIndexColumnSelect({
   onChange: (columns: string[]) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement | null>(null);
   const columnNames = columns.map((column) => column.name.trim()).filter(Boolean);
   const selectedText = selectedColumns.length > 0 ? selectedColumns.join(", ") : "-";
+
+  useEffect(() => {
+    if (!open) return;
+
+    function handlePointerDown(event: PointerEvent) {
+      if (!containerRef.current?.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => document.removeEventListener("pointerdown", handlePointerDown);
+  }, [open]);
 
   function toggleColumn(columnName: string, checked: boolean) {
     const nextColumns = checked
@@ -1879,7 +1893,7 @@ function TableStructureIndexColumnSelect({
   }
 
   return (
-    <div className="database-table-structure-dialog__index-column-select">
+    <div ref={containerRef} className="database-table-structure-dialog__index-column-select">
       <button
         type="button"
         className="database-table-structure-dialog__index-column-trigger"

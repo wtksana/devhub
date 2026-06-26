@@ -126,6 +126,11 @@ describe("global style defaults", () => {
     expect(globalsCss).toContain(
       ".database-table-structure-dialog__index-column-menu-item input {\n  flex: 0 0 auto;\n  width: 14px;",
     );
+    expect(globalsCss).toContain(".database-table-structure-dialog__field span {\n  line-height: 30px;");
+    expect(globalsCss).toContain(
+      ".database-table-structure-dialog__definition {\n  display: grid;\n  grid-template-columns: 78px minmax(0, 1fr);\n  align-items: start;",
+    );
+    expect(globalsCss).toContain(".database-table-structure-dialog__definition > span {\n  color: var(--muted);\n  line-height: 30px;");
   });
 
   it("renders workspace split resize handles without occupying grid tracks", () => {
