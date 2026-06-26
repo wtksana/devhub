@@ -6,6 +6,7 @@ import { StatusBar } from "./StatusBar";
 import { WorkspaceTabs, type WorkspaceTabItem } from "./WorkspaceTabs";
 import { ConnectionList } from "../features/connections/ConnectionList";
 import { DatabaseWorkspace } from "../features/database/DatabaseWorkspace";
+import { LogViewer } from "../features/logs/LogViewer";
 import { RedisWorkspace } from "../features/redis/RedisWorkspace";
 import { SettingsPanel } from "../features/settings/SettingsPanel";
 import type { DatabaseConnectionSettings, RedisConnectionSettings } from "../features/settings/settingsTypes";
@@ -18,6 +19,10 @@ import { useI18n } from "../i18n/useI18n";
 
 interface SettingsWorkspaceTab extends WorkspaceTabItem {
   kind: "settings";
+}
+
+interface LogsWorkspaceTab extends WorkspaceTabItem {
+  kind: "logs";
 }
 
 interface TerminalWorkspaceTab extends WorkspaceTabItem {
@@ -41,7 +46,7 @@ interface DatabaseWorkspaceTab extends WorkspaceTabItem {
   connectionId: string;
 }
 
-type AppWorkspaceTab = SettingsWorkspaceTab | TerminalWorkspaceTab | SftpWorkspaceTab | RedisWorkspaceTab | DatabaseWorkspaceTab;
+type AppWorkspaceTab = SettingsWorkspaceTab | LogsWorkspaceTab | TerminalWorkspaceTab | SftpWorkspaceTab | RedisWorkspaceTab | DatabaseWorkspaceTab;
 
 type WorkspaceSplitDirection = "horizontal" | "vertical";
 
@@ -589,6 +594,20 @@ function AppShellContent({ settingsState }: { settingsState: ReturnType<typeof u
     });
   }
 
+  function openLogsTab() {
+    const focused = workspacePanes.find((pane) => pane.id === focusedPaneId);
+    const existingLogsTab = focused?.tabs.find((tab) => tab.kind === "logs");
+    if (existingLogsTab) {
+      addTabToFocusedPane({ id: existingLogsTab.id, kind: "logs", title: t("logs.title") }, existingLogsTab.id);
+      return;
+    }
+    addTabToFocusedPane({
+      id: uniqueTabId("logs"),
+      kind: "logs",
+      title: t("logs.title"),
+    });
+  }
+
   function toggleTheme() {
     void settingsState.saveSettings({
       ...settings,
@@ -795,6 +814,13 @@ function AppShellContent({ settingsState }: { settingsState: ReturnType<typeof u
         title: count === 0 ? title : `${title} ${count + 1}`,
       };
     }
+    if (tab.kind === "logs") {
+      return {
+        ...tab,
+        id: uniqueTabId("logs"),
+        title: t("logs.title"),
+      };
+    }
     return {
       ...tab,
       id: uniqueTabId("settings"),
@@ -905,7 +931,8 @@ function AppShellContent({ settingsState }: { settingsState: ReturnType<typeof u
             fontSize={settings.appearance.terminal_font_size}
           />
         ) : null}
-        {tab.kind === "settings" ? <SettingsPanel settingsState={settingsState} /> : null}
+        {tab.kind === "settings" ? <SettingsPanel settingsState={settingsState} onOpenLogs={openLogsTab} /> : null}
+        {tab.kind === "logs" ? <LogViewer /> : null}
       </div>
     );
   }

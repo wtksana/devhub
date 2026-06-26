@@ -107,6 +107,10 @@ vi.mock("../lib/tauri", () => ({
   }),
 }));
 
+vi.mock("../features/logs/LogViewer", () => ({
+  LogViewer: () => <section aria-label="日志">日志查看器</section>,
+}));
+
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({
     minimize: vi.fn(),
@@ -118,6 +122,7 @@ vi.mock("@tauri-apps/api/window", () => ({
 describe("AppShell", () => {
   beforeEach(() => {
     cleanup();
+    window.HTMLElement.prototype.scrollIntoView = vi.fn();
     settings = createSettings();
     saveSettings.mockClear();
     callBackendMock.mockClear();
@@ -176,6 +181,24 @@ describe("AppShell", () => {
 
     expect(screen.queryByLabelText("设置分类")).not.toBeInTheDocument();
     expect(screen.getByText("未打开标签")).toBeInTheDocument();
+  });
+
+  it("opens logs from the settings logging section as a closable workspace tab", async () => {
+    render(<AppShell />);
+
+    await userEvent.click(screen.getByRole("button", { name: "打开设置" }));
+    await userEvent.click(within(screen.getByLabelText("设置分类")).getByRole("button", { name: "日志" }));
+    await userEvent.click(screen.getByRole("button", { name: "查看日志" }));
+
+    expect(within(screen.getByLabelText("工作区标签")).getByRole("button", { name: "日志" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByText("日志查看器")).toBeInTheDocument();
+
+    await userEvent.click(within(screen.getByLabelText("工作区标签")).getByRole("button", { name: "关闭 日志" }));
+
+    expect(screen.queryByText("日志查看器")).not.toBeInTheDocument();
   });
 
   it("toggles dark and light theme from the top bar", async () => {

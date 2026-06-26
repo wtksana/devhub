@@ -72,22 +72,23 @@ function FontSelect({
 
 interface SettingsPanelProps {
   settingsState?: SettingsState;
+  onOpenLogs?: () => void;
 }
 
-export function SettingsPanel({ settingsState: providedSettingsState }: SettingsPanelProps) {
+export function SettingsPanel({ settingsState: providedSettingsState, onOpenLogs }: SettingsPanelProps) {
   if (providedSettingsState) {
-    return <SettingsPanelView settingsState={providedSettingsState} />;
+    return <SettingsPanelView settingsState={providedSettingsState} onOpenLogs={onOpenLogs} />;
   }
 
-  return <SettingsPanelWithLocalSettings />;
+  return <SettingsPanelWithLocalSettings onOpenLogs={onOpenLogs} />;
 }
 
-function SettingsPanelWithLocalSettings() {
+function SettingsPanelWithLocalSettings({ onOpenLogs }: { onOpenLogs?: () => void }) {
   const settingsState = useSettings();
-  return <SettingsPanelView settingsState={settingsState} />;
+  return <SettingsPanelView settingsState={settingsState} onOpenLogs={onOpenLogs} />;
 }
 
-function SettingsPanelView({ settingsState }: { settingsState: SettingsState }) {
+function SettingsPanelView({ settingsState, onOpenLogs }: { settingsState: SettingsState; onOpenLogs?: () => void }) {
   const { settings, error, saveSettings } = settingsState;
   const { t } = useI18n();
   const [draftSettings, setDraftSettings] = useState(settings);
@@ -558,6 +559,11 @@ function SettingsPanelView({ settingsState }: { settingsState: SettingsState }) 
           </SettingsRow>
           <SettingsRow title={t("settings.logging_directory")} description={t("settings.logging_directory_desc")}>
             <div className="settings-action-row">
+              {onOpenLogs ? (
+                <button type="button" onClick={onOpenLogs}>
+                  {t("settings.view_logs")}
+                </button>
+              ) : null}
               <button type="button" onClick={openLogDirectory}>
                 {t("settings.open_log_directory")}
               </button>

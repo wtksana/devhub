@@ -33,6 +33,14 @@ pub fn open_log_directory(app: AppHandle, logger: State<'_, AppLogger>) -> Resul
 }
 
 #[tauri::command]
+pub fn list_app_logs(
+    logger: State<'_, AppLogger>,
+    limit: Option<usize>,
+) -> Result<Vec<crate::core::app_logger::AppLogRecord>, String> {
+    logger.read_recent(limit.unwrap_or(500))
+}
+
+#[tauri::command]
 pub fn write_app_log(
     settings_store: State<'_, SettingsStore>,
     logger: State<'_, AppLogger>,

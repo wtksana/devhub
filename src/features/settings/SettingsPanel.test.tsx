@@ -336,4 +336,18 @@ describe("SettingsPanel", () => {
     expect(screen.queryByRole("button", { name: "复制日志目录路径" })).not.toBeInTheDocument();
     expect(callBackendMock).not.toHaveBeenCalledWith("get_log_directory");
   });
+
+  it("shows the log viewer action when an opener is provided", async () => {
+    const onOpenLogs = vi.fn();
+    render(
+      <I18nProvider language={settings.appearance.language}>
+        <SettingsPanel onOpenLogs={onOpenLogs} />
+      </I18nProvider>,
+    );
+
+    await userEvent.click(within(screen.getByLabelText("设置分类")).getByRole("button", { name: "日志" }));
+    await userEvent.click(screen.getByRole("button", { name: "查看日志" }));
+
+    expect(onOpenLogs).toHaveBeenCalledTimes(1);
+  });
 });

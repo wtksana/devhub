@@ -223,4 +223,26 @@ describe("global style defaults", () => {
     expect(globalsCss).toContain(".command-palette__icon-button:active,\n.database-icon-button:active:not(:disabled)");
     expect(globalsCss).toContain("background: color-mix(in srgb, var(--button-active) 88%, transparent);");
   });
+
+  it("keeps the log viewer split layout scrollable with a detail pane", () => {
+    const globalsCss = readCssSource();
+
+    expect(globalsCss).toContain(".log-viewer {\n  display: flex;");
+    expect(globalsCss).toContain(".log-viewer__body {\n  display: grid;");
+    expect(globalsCss).toContain("grid-template-columns: minmax(0, 1fr) minmax(260px, 34%);");
+    expect(globalsCss).toContain(".log-viewer__list {\n  position: relative;");
+    expect(globalsCss).toContain("overflow: auto;");
+    expect(globalsCss).toContain(".log-viewer__detail {\n  display: flex;");
+  });
+
+  it("keeps log viewer table columns balanced for operation-heavy logs", () => {
+    const globalsCss = readCssSource();
+
+    expect(globalsCss).toContain(".log-viewer__list table {\n  width: max-content;");
+    expect(globalsCss).toContain(".log-viewer__column--time {\n  width: 176px;");
+    expect(globalsCss).toContain(".log-viewer__column--level {\n  width: 72px;");
+    expect(globalsCss).toContain(".log-viewer__column--module {\n  width: 220px;");
+    expect(globalsCss).toContain(".log-viewer__column--result {\n  width: 96px;");
+    expect(globalsCss).toContain(".log-viewer__column--action {\n  width: 280px;");
+  });
 });

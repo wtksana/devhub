@@ -29,6 +29,23 @@ pub struct AppLogger {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct AppLogRecord {
+    file_name: String,
+    line_number: usize,
+    raw: String,
+    ts: Option<String>,
+    level: Option<String>,
+    module: Option<String>,
+    action: Option<String>,
+    target: Option<String>,
+    result: Option<String>,
+    duration_ms: Option<u64>,
+    message: Option<String>,
+    error: Option<String>,
+    metadata: Option<Value>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct AppLogEntry {
     ts: DateTime<Local>,
     level: String,
@@ -159,6 +176,42 @@ impl AppLogger {
         Ok(())
     }
 
+    pub fn read_recent(&self, limit: usize) -> Result<Vec<AppLogRecord>, String> {
+        let limit = limit.clamp(1, 2000);
+        let log_dir = self.log_dir();
+        if !log_dir.exists() {
+            return Ok(Vec::new());
+        }
+
+        let mut log_files = fs::read_dir(log_dir)
+            .map_err(|error| error.to_string())?
+            .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+            .filter(|path| is_log_file(path))
+            .collect::<Vec<_>>();
+        log_files.sort_by(|left, right| right.file_name().cmp(&left.file_name()));
+
+        let mut records = Vec::new();
+        for path in log_files {
+            let content = fs::read_to_string(&path).map_err(|error| error.to_string())?;
+            let file_name = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or_default()
+                .to_string();
+            let lines = content.lines().enumerate().collect::<Vec<_>>();
+            for (line_index, line) in lines.into_iter().rev() {
+                if records.len() >= limit {
+                    return Ok(records);
+                }
+                if let Some(record) = parse_log_record(&file_name, line_index + 1, line) {
+                    records.push(record);
+                }
+            }
+        }
+
+        Ok(records)
+    }
+
     fn log_file_path(&self, now: DateTime<Local>) -> PathBuf {
         self.log_dir().join(format!(
             "devhub-{:04}-{:02}-{:02}.log",
@@ -167,6 +220,29 @@ impl AppLogger {
             now.day()
         ))
     }
+}
+
+fn parse_log_record(file_name: &str, line_number: usize, line: &str) -> Option<AppLogRecord> {
+    let value = serde_json::from_str::<Value>(line).ok()?;
+    Some(AppLogRecord {
+        file_name: file_name.to_string(),
+        line_number,
+        raw: line.to_string(),
+        ts: string_field(&value, "ts"),
+        level: string_field(&value, "level"),
+        module: string_field(&value, "module"),
+        action: string_field(&value, "action"),
+        target: string_field(&value, "target"),
+        result: string_field(&value, "result"),
+        duration_ms: value.get("duration_ms").and_then(Value::as_u64),
+        message: string_field(&value, "message"),
+        error: string_field(&value, "error"),
+        metadata: value.get("metadata").cloned(),
+    })
+}
+
+fn string_field(value: &Value, key: &str) -> Option<String> {
+    value.get(key).and_then(Value::as_str).map(str::to_string)
 }
 
 fn should_log(configured: &str, entry: &str) -> bool {
@@ -262,6 +338,19 @@ fn level_rank(level: &str) -> u8 {
 }
 
 fn should_remove_log_file(path: &Path, cutoff: NaiveDate) -> bool {
+    if !is_log_file(path) {
+        return false;
+    }
+    let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+
+    NaiveDate::parse_from_str(&file_name[7..17], "%Y-%m-%d")
+        .map(|date| date < cutoff)
+        .unwrap_or(false)
+}
+
+fn is_log_file(path: &Path) -> bool {
     let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
         return false;
     };
@@ -269,9 +358,7 @@ fn should_remove_log_file(path: &Path, cutoff: NaiveDate) -> bool {
         return false;
     }
 
-    NaiveDate::parse_from_str(&file_name[7..17], "%Y-%m-%d")
-        .map(|date| date < cutoff)
-        .unwrap_or(false)
+    NaiveDate::parse_from_str(&file_name[7..17], "%Y-%m-%d").is_ok()
 }
 
 #[cfg(test)]
@@ -355,6 +442,43 @@ mod tests {
         logger.cleanup_old_logs(&config).unwrap();
 
         assert!(!log_dir.join("devhub-2000-01-01.log").exists());
+    }
+
+    #[test]
+    fn reads_recent_log_records_from_newest_lines_first() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let logger = AppLogger::new_for_dir(temp_dir.path().to_path_buf());
+        let log_dir = logger.log_dir();
+        fs::create_dir_all(&log_dir).unwrap();
+        fs::write(
+            log_dir.join("devhub-2026-06-26.log"),
+            r#"{"ts":"2026-06-26T10:00:00+08:00","level":"info","module":"sftp","action":"list_directory","result":"success"}"#,
+        )
+        .unwrap();
+        fs::write(
+            log_dir.join("devhub-2026-06-27.log"),
+            [
+                r#"{"ts":"2026-06-27T10:00:00+08:00","level":"warn","module":"redis","action":"list_keys","duration_ms":12}"#,
+                r#"{"ts":"2026-06-27T10:01:00+08:00","level":"error","module":"database","action":"execute_query","error":"table missing","metadata":{"database":"app"}}"#,
+            ]
+            .join("\n"),
+        )
+        .unwrap();
+
+        let records = logger.read_recent(2).unwrap();
+
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].file_name, "devhub-2026-06-27.log");
+        assert_eq!(records[0].line_number, 2);
+        assert_eq!(records[0].level.as_deref(), Some("error"));
+        assert_eq!(records[0].module.as_deref(), Some("database"));
+        assert_eq!(records[0].error.as_deref(), Some("table missing"));
+        assert_eq!(
+            records[0].metadata.as_ref().unwrap()["database"].as_str(),
+            Some("app"),
+        );
+        assert_eq!(records[1].line_number, 1);
+        assert_eq!(records[1].duration_ms, Some(12));
     }
 
     #[test]
