@@ -652,6 +652,11 @@ export function DatabaseWorkspace({
 
   function requestApplyTableStructureChanges() {
     if (!tableStructureDialog || !currentDatabase) return;
+    const validationError = validateTableStructureDialog(tableStructureDialog, t);
+    if (validationError) {
+      setTableStructureDialog({ ...tableStructureDialog, error: validationError });
+      return;
+    }
     const operations = tableStructureOperations(tableStructureDialog);
     if (operations.length === 0) {
       setTableStructureDialog({ ...tableStructureDialog, error: t("database.table_structure_no_changes") });
@@ -2169,6 +2174,39 @@ function tableStructureOperations(dialog: TableStructureDialogState): TableStruc
     }
   }
   return operations;
+}
+
+function validateTableStructureDialog(dialog: TableStructureDialogState, t: ReturnType<typeof useI18n>["t"]) {
+  if (!dialog.draftTableName.trim()) {
+    return t("database.validation_table_name_required");
+  }
+  for (const column of dialog.draftColumns) {
+    const name = column.name.trim();
+    const dataType = column.dataType.trim();
+    const original = column.originalName
+      ? dialog.originalColumns.find((candidate) => candidate.originalName === column.originalName)
+      : null;
+    const changed = !column.originalName || !original || original.name !== name || original.dataType !== dataType;
+    if (!changed) continue;
+    if (!name) return t("database.validation_column_name_required");
+    if (!dataType) return t("database.validation_column_type_required");
+  }
+  for (const index of dialog.draftIndexes) {
+    const name = index.name.trim();
+    const columns = index.columns.map((column) => column.trim()).filter(Boolean);
+    const original = index.originalName
+      ? dialog.originalIndexes.find((candidate) => candidate.originalName === index.originalName)
+      : null;
+    const changed = !index.originalName
+      || !original
+      || original.name !== name
+      || original.columns.join(",") !== columns.join(",")
+      || original.unique !== index.unique;
+    if (!changed) continue;
+    if (!name) return t("database.validation_index_name_required");
+    if (columns.length === 0) return t("database.validation_index_columns_required");
+  }
+  return null;
 }
 
 function hasDangerousTableStructureOperation(operations: TableStructureOperation[]) {
