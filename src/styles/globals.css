@@ -1609,7 +1609,8 @@ p {
   white-space: nowrap;
 }
 
-.database-table-structure-dialog__field input {
+.database-table-structure-dialog__field > input,
+.database-table-structure-dialog__field > label > input {
   width: 100%;
   min-width: 0;
   height: 30px;
@@ -1691,6 +1692,14 @@ p {
   padding: 0 6px;
   border-radius: 3px;
   color: var(--text);
+}
+
+.database-table-structure-dialog__index-column-menu-item input {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  padding: 0;
 }
 
 .database-table-structure-dialog__index-column-menu-item:hover {

@@ -116,6 +116,18 @@ describe("global style defaults", () => {
     expect(globalsCss).toContain(".connection-form input,\n.connection-form select {\n  width: 100%;");
   });
 
+  it("keeps table structure index dropdown checkboxes compact", () => {
+    const globalsCss = readCssSource();
+
+    expect(globalsCss).toContain(
+      ".database-table-structure-dialog__field > input,\n.database-table-structure-dialog__field > label > input {",
+    );
+    expect(globalsCss).not.toContain(".database-table-structure-dialog__field input {\n  width: 100%;");
+    expect(globalsCss).toContain(
+      ".database-table-structure-dialog__index-column-menu-item input {\n  flex: 0 0 auto;\n  width: 14px;",
+    );
+  });
+
   it("renders workspace split resize handles without occupying grid tracks", () => {
     const globalsCss = readCssSource();
 
