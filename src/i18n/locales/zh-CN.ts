@@ -276,6 +276,7 @@ export const zhCN = {
   "database.close": "关闭",
   "database.column_name": "字段名",
   "database.column_type": "字段类型",
+  "database.column_type_suggestions": "字段类型候选",
   "database.column_default": "默认值",
   "database.column_extra": "额外属性",
   "database.column_comment": "注释",

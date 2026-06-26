@@ -278,6 +278,7 @@ export const enUS: Dictionary = {
   "database.close": "Close",
   "database.column_name": "Column name",
   "database.column_type": "Column type",
+  "database.column_type_suggestions": "Column type suggestions",
   "database.column_default": "Default",
   "database.column_extra": "Extra",
   "database.column_comment": "Comment",

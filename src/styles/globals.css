@@ -1611,7 +1611,8 @@ p {
 }
 
 .database-table-structure-dialog__field > input,
-.database-table-structure-dialog__field > label > input {
+.database-table-structure-dialog__field > label > input,
+.database-table-structure-dialog__type-input > input {
   width: 100%;
   min-width: 0;
   height: 30px;
@@ -1621,6 +1622,43 @@ p {
   background: var(--input-bg);
   color: var(--text);
   font: inherit;
+}
+
+.database-table-structure-dialog__type-input {
+  position: relative;
+  min-width: 0;
+}
+
+.database-table-structure-dialog__type-suggestions {
+  position: absolute;
+  z-index: 5;
+  top: calc(100% + 4px);
+  right: 0;
+  left: 0;
+  display: grid;
+  max-height: 180px;
+  overflow: auto;
+  padding: 4px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  background: var(--panel);
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.18);
+}
+
+.database-table-structure-dialog__type-suggestions button {
+  height: 28px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+}
+
+.database-table-structure-dialog__type-suggestions button:hover,
+.database-table-structure-dialog__type-suggestion--active {
+  background: var(--hover);
 }
 
 .database-table-structure-dialog__checkbox-field {

@@ -120,7 +120,7 @@ describe("global style defaults", () => {
     const globalsCss = readCssSource();
 
     expect(globalsCss).toContain(
-      ".database-table-structure-dialog__field > input,\n.database-table-structure-dialog__field > label > input {",
+      ".database-table-structure-dialog__field > input,\n.database-table-structure-dialog__field > label > input,\n.database-table-structure-dialog__type-input > input {",
     );
     expect(globalsCss).not.toContain(".database-table-structure-dialog__field input {\n  width: 100%;");
     expect(globalsCss).toContain(

@@ -2085,8 +2085,9 @@ const TableStructureColumnEditor = memo(function TableStructureColumnEditor({
       </label>
       <label className="database-table-structure-dialog__field">
         <span>{t("database.column_type")}</span>
-        <TableStructureTextInput
+        <TableStructureTypeInput
           ariaLabel={t("database.column_type")}
+          suggestionLabel={t("database.column_type_suggestions")}
           value={column.dataType}
           onCommit={(dataType) => {
             if (dataType !== column.dataType) onUpdateColumn(column.id, { dataType });
@@ -2131,6 +2132,136 @@ const TableStructureColumnEditor = memo(function TableStructureColumnEditor({
   );
 });
 
+const COMMON_TABLE_STRUCTURE_COLUMN_TYPES = [
+  "int(11)",
+  "bigint(20)",
+  "tinyint(1)",
+  "varchar(255)",
+  "varchar(100)",
+  "text",
+  "longtext",
+  "decimal(10,2)",
+  "datetime",
+  "timestamp",
+  "date",
+  "json",
+  "blob",
+];
+
+function TableStructureTypeInput({
+  ariaLabel,
+  suggestionLabel,
+  value,
+  onCommit,
+}: {
+  ariaLabel: string;
+  suggestionLabel: string;
+  value: string;
+  onCommit: (value: string) => void;
+}) {
+  const [draft, setDraft] = useState(value);
+  const [isOpen, setIsOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(0);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    setDraft(value);
+  }, [value]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    function handlePointerDown(event: PointerEvent) {
+      if (containerRef.current?.contains(event.target as Node)) return;
+      setIsOpen(false);
+    }
+    window.addEventListener("pointerdown", handlePointerDown);
+    return () => window.removeEventListener("pointerdown", handlePointerDown);
+  }, [isOpen]);
+
+  const suggestions = columnTypeSuggestions(draft);
+
+  function commit(nextValue = draft) {
+    const trimmedValue = nextValue.trim();
+    if (trimmedValue !== value) {
+      onCommit(trimmedValue);
+    }
+  }
+
+  function selectSuggestion(nextValue: string) {
+    setDraft(nextValue);
+    setIsOpen(false);
+    setActiveIndex(0);
+    commit(nextValue);
+  }
+
+  return (
+    <div ref={containerRef} className="database-table-structure-dialog__type-input">
+      <input
+        aria-label={ariaLabel}
+        value={draft}
+        autoComplete="off"
+        onFocus={() => {
+          setIsOpen(true);
+          setActiveIndex(0);
+        }}
+        onBlur={() => commit()}
+        onChange={(event) => {
+          setDraft(event.target.value);
+          setIsOpen(true);
+          setActiveIndex(0);
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") {
+            setIsOpen(false);
+            return;
+          }
+          if (event.key === "ArrowDown" && suggestions.length > 0) {
+            event.preventDefault();
+            setIsOpen(true);
+            setActiveIndex((current) => (current + 1) % suggestions.length);
+            return;
+          }
+          if (event.key === "ArrowUp" && suggestions.length > 0) {
+            event.preventDefault();
+            setIsOpen(true);
+            setActiveIndex((current) => (current - 1 + suggestions.length) % suggestions.length);
+            return;
+          }
+          if (event.key !== "Enter") return;
+          event.preventDefault();
+          if (isOpen && suggestions[activeIndex]) {
+            selectSuggestion(suggestions[activeIndex]);
+            return;
+          } else {
+            commit();
+            setIsOpen(false);
+          }
+          event.currentTarget.blur();
+        }}
+      />
+      {isOpen && suggestions.length > 0 ? (
+        <div className="database-table-structure-dialog__type-suggestions" role="listbox" aria-label={suggestionLabel}>
+          {suggestions.map((suggestion, index) => (
+            <button
+              key={suggestion}
+              type="button"
+              role="option"
+              aria-selected={index === activeIndex}
+              className={index === activeIndex ? "database-table-structure-dialog__type-suggestion--active" : undefined}
+              onMouseDown={(event) => {
+                event.preventDefault();
+                selectSuggestion(suggestion);
+              }}
+            >
+              {suggestion}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function TableStructureTextInput({
   ariaLabel,
   value,
@@ -2170,6 +2301,12 @@ function TableStructureTextInput({
       }}
     />
   );
+}
+
+function columnTypeSuggestions(value: string) {
+  const normalizedValue = value.trim().toLowerCase();
+  if (!normalizedValue) return COMMON_TABLE_STRUCTURE_COLUMN_TYPES;
+  return COMMON_TABLE_STRUCTURE_COLUMN_TYPES.filter((type) => type.toLowerCase().includes(normalizedValue));
 }
 
 function defaultExportName(database: string, table: string | null, extension: "csv" | "sql") {

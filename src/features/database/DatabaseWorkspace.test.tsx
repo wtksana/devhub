@@ -890,6 +890,116 @@ describe("DatabaseWorkspace", () => {
     expect(within(dialog).queryByText("耗时 0 ms")).not.toBeInTheDocument();
   });
 
+  it("suggests common column types and commits a clicked suggestion", async () => {
+    callBackendMock.mockImplementation((command, payload) => {
+      if (command === "list_database_objects") {
+        const request = (payload as { request: { parent_kind?: string; table?: string } }).request;
+        if (!request.parent_kind) {
+          return Promise.resolve([{ id: "database:app", name: "app", kind: "database", has_children: true }]);
+        }
+        if (request.parent_kind === "table" && request.table === "users") {
+          return Promise.resolve([
+            { id: "column:app.users.name", name: "name", kind: "column", has_children: false, detail: "text YES" },
+          ]);
+        }
+        return Promise.resolve([{ id: "table:app.users", name: "users", kind: "table", has_children: true }]);
+      }
+      if (command === "preview_database_table_structure") {
+        return Promise.resolve({
+          ddl: "ALTER TABLE `users`\n  CHANGE COLUMN `name` `name` varchar(255) NULL;",
+          duration_ms: 0,
+        });
+      }
+      return Promise.resolve([]);
+    });
+
+    renderDatabaseWorkspace("app");
+    const tableRow = (await screen.findByRole("button", { name: "users" })).closest("li");
+    expect(tableRow).not.toBeNull();
+    fireEvent.contextMenu(tableRow!, { clientX: 10, clientY: 20 });
+    await userEvent.click(screen.getByRole("menuitem", { name: "编辑" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "编辑表 users" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "name text" }));
+    await userEvent.clear(within(dialog).getByLabelText("字段类型"));
+    await userEvent.type(within(dialog).getByLabelText("字段类型"), "var");
+
+    const suggestions = within(dialog).getByRole("listbox", { name: "字段类型候选" });
+    await userEvent.click(within(suggestions).getByRole("option", { name: "varchar(255)" }));
+
+    expect(within(dialog).getByLabelText("字段类型")).toHaveValue("varchar(255)");
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("preview_database_table_structure", {
+        request: {
+          connection_id: "mysql-dev",
+          database: "app",
+          table: "users",
+          operations: [
+            {
+              kind: "modify_column",
+              original_name: "name",
+              column: { name: "name", data_type: "varchar(255)", nullable: true },
+            },
+          ],
+        },
+      });
+    });
+  });
+
+  it("commits a column type suggestion with the keyboard", async () => {
+    callBackendMock.mockImplementation((command, payload) => {
+      if (command === "list_database_objects") {
+        const request = (payload as { request: { parent_kind?: string; table?: string } }).request;
+        if (!request.parent_kind) {
+          return Promise.resolve([{ id: "database:app", name: "app", kind: "database", has_children: true }]);
+        }
+        if (request.parent_kind === "table" && request.table === "users") {
+          return Promise.resolve([
+            { id: "column:app.users.amount", name: "amount", kind: "column", has_children: false, detail: "int(11) YES" },
+          ]);
+        }
+        return Promise.resolve([{ id: "table:app.users", name: "users", kind: "table", has_children: true }]);
+      }
+      if (command === "preview_database_table_structure") {
+        return Promise.resolve({
+          ddl: "ALTER TABLE `users`\n  CHANGE COLUMN `amount` `amount` decimal(10,2) NULL;",
+          duration_ms: 0,
+        });
+      }
+      return Promise.resolve([]);
+    });
+
+    renderDatabaseWorkspace("app");
+    const tableRow = (await screen.findByRole("button", { name: "users" })).closest("li");
+    expect(tableRow).not.toBeNull();
+    fireEvent.contextMenu(tableRow!, { clientX: 10, clientY: 20 });
+    await userEvent.click(screen.getByRole("menuitem", { name: "编辑" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "编辑表 users" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "amount int(11)" }));
+    const typeInput = within(dialog).getByLabelText("字段类型");
+    await userEvent.clear(typeInput);
+    await userEvent.type(typeInput, "dec{Enter}");
+
+    expect(typeInput).toHaveValue("decimal(10,2)");
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("preview_database_table_structure", {
+        request: {
+          connection_id: "mysql-dev",
+          database: "app",
+          table: "users",
+          operations: [
+            {
+              kind: "modify_column",
+              original_name: "amount",
+              column: { name: "amount", data_type: "decimal(10,2)", nullable: true },
+            },
+          ],
+        },
+      });
+    });
+  });
+
   it("asks for confirmation before applying dangerous table structure changes", async () => {
     callBackendMock.mockImplementation((command, payload) => {
       if (command === "list_database_objects") {
