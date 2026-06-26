@@ -92,9 +92,10 @@ type TableStructureColumnDraft = {
 
 type TableStructureIndexInfo = {
   id: string;
+  originalName: string | null;
   name: string;
   unique: boolean;
-  columns: string;
+  columns: string[];
   definition: string;
 };
 
@@ -104,7 +105,9 @@ type TableStructureDialogState = {
   originalColumns: TableStructureColumnDraft[];
   draftColumns: TableStructureColumnDraft[];
   deletedColumns: TableStructureColumnDraft[];
-  indexes: TableStructureIndexInfo[];
+  originalIndexes: TableStructureIndexInfo[];
+  draftIndexes: TableStructureIndexInfo[];
+  deletedIndexes: TableStructureIndexInfo[];
   selectedItem: { kind: "table" } | { kind: "column"; id: string } | { kind: "indexes" } | { kind: "index"; id: string };
   error: string | null;
   ddlPreview: string;
@@ -351,6 +354,8 @@ export function DatabaseWorkspace({
     tableStructureDialog?.draftTableName,
     tableStructureDialog?.draftColumns,
     tableStructureDialog?.deletedColumns,
+    tableStructureDialog?.draftIndexes,
+    tableStructureDialog?.deletedIndexes,
     tableStructureDialog?.table.id,
   ]);
 
@@ -484,7 +489,8 @@ export function DatabaseWorkspace({
         ...emptyTableStructureDialog(node),
         originalColumns: draftColumns,
         draftColumns,
-        indexes,
+        originalIndexes: indexes,
+        draftIndexes: indexes,
       });
     } catch (caught) {
       void logFrontendError("frontend.database", "list_database_objects", caught, `${connectionId}:${currentDatabase}:${node.name}`, {
@@ -564,6 +570,62 @@ export function DatabaseWorkspace({
     });
   }, []);
 
+  const addTableStructureIndex = useCallback(() => {
+    setTableStructureDialog((current) => {
+      if (!current) return current;
+      const index = current.draftIndexes.filter((candidate) => candidate.originalName === null).length + 1;
+      const firstColumn = current.draftColumns[0]?.name.trim();
+      const newIndex: TableStructureIndexInfo = {
+        id: `new-index:${Date.now()}:${index}`,
+        originalName: null,
+        name: `idx_${current.draftTableName || current.table.name}_${index}`,
+        unique: false,
+        columns: firstColumn ? [firstColumn] : [],
+        definition: "",
+      };
+      return {
+        ...current,
+        draftIndexes: [...current.draftIndexes, newIndex],
+        selectedItem: { kind: "index", id: newIndex.id },
+        durationMs: null,
+        statusMessage: "",
+        error: null,
+      };
+    });
+  }, []);
+
+  const updateTableStructureIndex = useCallback((id: string, changes: Partial<Pick<TableStructureIndexInfo, "name" | "unique" | "columns">>) => {
+    setTableStructureDialog((current) => current ? {
+      ...current,
+      draftIndexes: current.draftIndexes.map((index) => (
+        index.id === id ? { ...index, ...changes } : index
+      )),
+      durationMs: null,
+      statusMessage: "",
+      error: null,
+    } : current);
+  }, []);
+
+  const deleteTableStructureIndex = useCallback((id: string) => {
+    setTableStructureDialog((current) => {
+      if (!current) return current;
+      const target = current.draftIndexes.find((index) => index.id === id);
+      if (!target) return current;
+      const nextSelectedItem = current.selectedItem.kind === "index" && current.selectedItem.id === id
+        ? { kind: "indexes" as const }
+        : current.selectedItem;
+      return {
+        ...current,
+        draftIndexes: current.draftIndexes.filter((index) => index.id !== id),
+        deletedIndexes: target.originalName ? [...current.deletedIndexes, target] : current.deletedIndexes,
+        selectedItem: nextSelectedItem,
+        durationMs: null,
+        statusMessage: "",
+        error: null,
+      };
+    });
+  }, []);
+
   const updateTableStructureName = useCallback((name: string) => {
     setTableStructureDialog((current) => current ? {
       ...current,
@@ -618,7 +680,8 @@ export function DatabaseWorkspace({
         ...emptyTableStructureDialog(nextTable),
         originalColumns: draftColumns,
         draftColumns,
-        indexes,
+        originalIndexes: indexes,
+        draftIndexes: indexes,
         ddlPreview: result.ddl,
         durationMs: result.duration_ms,
         statusMessage: t("database.table_structure_updated", { duration: result.duration_ms }),
@@ -1314,6 +1377,7 @@ export function DatabaseWorkspace({
                   dialog={tableStructureDialog}
                   onSelect={selectTableStructureItem}
                   onAddColumn={addTableStructureColumn}
+                  onAddIndex={addTableStructureIndex}
                 />
                 <div
                   className="database-table-structure-dialog__resize-handle"
@@ -1334,6 +1398,8 @@ export function DatabaseWorkspace({
                   onUpdateTableName={updateTableStructureName}
                   onUpdateColumn={updateTableStructureColumn}
                   onDeleteColumn={deleteTableStructureColumn}
+                  onUpdateIndex={updateTableStructureIndex}
+                  onDeleteIndex={deleteTableStructureIndex}
                 />
               </div>
               <section className="database-table-structure-dialog__preview" aria-label={t("database.ddl_preview")}>
@@ -1480,10 +1546,12 @@ const TableStructureObjectList = memo(function TableStructureObjectList({
   dialog,
   onSelect,
   onAddColumn,
+  onAddIndex,
 }: {
   dialog: TableStructureDialogState;
   onSelect: (selectedItem: TableStructureDialogState["selectedItem"]) => void;
   onAddColumn: () => void;
+  onAddIndex: () => void;
 }) {
   const { t } = useI18n();
   return (
@@ -1526,27 +1594,37 @@ const TableStructureObjectList = memo(function TableStructureObjectList({
         })}
       </div>
       <div className="database-table-structure-dialog__group">
-        <button
-          type="button"
-          className={`database-table-structure-dialog__node${dialog.selectedItem.kind === "indexes" ? " database-table-structure-dialog__node--active" : ""}`}
-          onClick={() => onSelect({ kind: "indexes" })}
-        >
-          <span>{t("database.indexes_group")}</span>
-          <span className="database-table-structure-dialog__column-type">{dialog.indexes.length}</span>
-        </button>
-        {dialog.indexes.map((index) => (
+        <div className="database-table-structure-dialog__group-title">
+          <button
+            type="button"
+            className={`database-table-structure-dialog__group-button${dialog.selectedItem.kind === "indexes" ? " database-table-structure-dialog__group-button--active" : ""}`}
+            onClick={() => onSelect({ kind: "indexes" })}
+          >
+            {t("database.indexes_group")}
+            <span className="database-table-structure-dialog__column-type">{dialog.draftIndexes.length}</span>
+          </button>
+          <button
+            type="button"
+            className="database-table-structure-dialog__add-column-button"
+            aria-label={t("database.add_index")}
+            onClick={onAddIndex}
+          >
+            {t("database.add_column_short")}
+          </button>
+        </div>
+        {dialog.draftIndexes.map((index) => (
           <button
             key={index.id}
             type="button"
-            aria-label={t("database.index_object", { name: index.name, columns: index.columns || "-" })}
+            aria-label={t("database.index_object", { name: index.name, columns: index.columns.join(", ") || "-" })}
             className={`database-table-structure-dialog__node database-table-structure-dialog__node--child${dialog.selectedItem.kind === "index" && dialog.selectedItem.id === index.id ? " database-table-structure-dialog__node--active" : ""}`}
             onClick={() => onSelect({ kind: "index", id: index.id })}
           >
             <span className="database-table-structure-dialog__column-name">{index.name}</span>
-            <span className="database-table-structure-dialog__column-type">{index.columns || "-"}</span>
+            <span className="database-table-structure-dialog__column-type">{index.columns.join(", ") || "-"}</span>
           </button>
         ))}
-        {dialog.indexes.length === 0 ? <p className="database-table-structure-dialog__empty">{t("database.no_index_metadata")}</p> : null}
+        {dialog.draftIndexes.length === 0 ? <p className="database-table-structure-dialog__empty">{t("database.no_index_metadata")}</p> : null}
       </div>
     </aside>
   );
@@ -1557,11 +1635,15 @@ const TableStructureEditor = memo(function TableStructureEditor({
   onUpdateTableName,
   onUpdateColumn,
   onDeleteColumn,
+  onUpdateIndex,
+  onDeleteIndex,
 }: {
   dialog: TableStructureDialogState;
   onUpdateTableName: (name: string) => void;
   onUpdateColumn: (id: string, changes: Partial<Pick<TableStructureColumnDraft, "name" | "dataType" | "nullable" | "defaultValue" | "comment">>) => void;
   onDeleteColumn: (id: string) => void;
+  onUpdateIndex: (id: string, changes: Partial<Pick<TableStructureIndexInfo, "name" | "unique" | "columns">>) => void;
+  onDeleteIndex: (id: string) => void;
 }) {
   const { t } = useI18n();
   if (dialog.selectedItem.kind === "table") {
@@ -1590,16 +1672,16 @@ const TableStructureEditor = memo(function TableStructureEditor({
         <h3>{t("database.indexes_group")}</h3>
         <label className="database-table-structure-dialog__field">
           <span>{t("database.index_count")}</span>
-          <input value={String(dialog.indexes.length)} readOnly />
+          <input value={String(dialog.draftIndexes.length)} readOnly />
         </label>
-        {dialog.indexes.length === 0 ? <p className="database-table-structure-dialog__empty">{t("database.no_index_metadata")}</p> : null}
+        {dialog.draftIndexes.length === 0 ? <p className="database-table-structure-dialog__empty">{t("database.no_index_metadata")}</p> : null}
       </section>
     );
   }
 
   if (dialog.selectedItem.kind === "index") {
     const selectedIndexId = dialog.selectedItem.id;
-    const index = dialog.indexes.find((candidate) => candidate.id === selectedIndexId);
+    const index = dialog.draftIndexes.find((candidate) => candidate.id === selectedIndexId);
     if (!index) {
       return (
         <section className="database-table-structure-dialog__editor" aria-label={t("database.index_editor")}>
@@ -1609,18 +1691,49 @@ const TableStructureEditor = memo(function TableStructureEditor({
     }
     return (
       <section className="database-table-structure-dialog__editor" aria-label={t("database.index_editor")}>
-        <h3>{t("database.edit_index_title", { name: index.name })}</h3>
+        <header className="database-table-structure-dialog__editor-header">
+          <h3>{t("database.edit_index_title", { name: index.originalName ?? index.name })}</h3>
+          <button
+            type="button"
+            className="database-table-structure-dialog__danger-button"
+            aria-label={t("database.delete_index")}
+            title={t("database.delete_index_title", { name: index.name || "-" })}
+            onClick={() => onDeleteIndex(index.id)}
+          >
+            {t("database.delete_index")}
+          </button>
+        </header>
         <label className="database-table-structure-dialog__field">
           <span>{t("database.index_name")}</span>
-          <input value={index.name} readOnly />
+          <TableStructureTextInput
+            ariaLabel={t("database.index_name")}
+            value={index.name}
+            onCommit={(name) => {
+              if (name !== index.name) onUpdateIndex(index.id, { name });
+            }}
+          />
         </label>
-        <label className="database-table-structure-dialog__field">
-          <span>{t("database.index_type")}</span>
-          <input value={index.unique ? t("database.unique_index") : t("database.normal_index")} readOnly />
+        <label className="database-table-structure-dialog__checkbox-field">
+          <input
+            aria-label={t("database.unique_index")}
+            type="checkbox"
+            checked={index.unique}
+            onChange={(event) => onUpdateIndex(index.id, { unique: event.target.checked })}
+          />
+          <span>{t("database.unique_index")}</span>
         </label>
         <label className="database-table-structure-dialog__field">
           <span>{t("database.index_columns")}</span>
-          <input value={index.columns || "-"} readOnly />
+          <TableStructureTextInput
+            ariaLabel={t("database.index_columns")}
+            value={index.columns.join(", ")}
+            onCommit={(columns) => {
+              const nextColumns = splitIndexColumns(columns);
+              if (nextColumns.join(",") !== index.columns.join(",")) {
+                onUpdateIndex(index.id, { columns: nextColumns });
+              }
+            }}
+          />
         </label>
         <div className="database-table-structure-dialog__definition">
           <span>{t("database.index_definition")}</span>
@@ -1873,7 +1986,9 @@ function emptyTableStructureDialog(table: DatabaseTreeNode): TableStructureDialo
     originalColumns: [],
     draftColumns: [],
     deletedColumns: [],
-    indexes: [],
+    originalIndexes: [],
+    draftIndexes: [],
+    deletedIndexes: [],
     selectedItem: { kind: "table" },
     error: null,
     ddlPreview: "",
@@ -1902,11 +2017,16 @@ function indexNodeToInfo(index: DatabaseTreeNode): TableStructureIndexInfo {
   const detail = parseIndexDetail(index.detail);
   return {
     id: index.id,
+    originalName: index.name,
     name: index.name,
     unique: detail.unique === "YES",
-    columns: detail.columns,
+    columns: splitIndexColumns(detail.columns),
     definition: detail.definition,
   };
+}
+
+function splitIndexColumns(columns: string) {
+  return columns.split(",").map((column) => column.trim()).filter(Boolean);
 }
 
 function parseIndexDetail(detail?: string | null) {
@@ -1924,6 +2044,7 @@ function parseIndexDetail(detail?: string | null) {
 
 function tableStructureOperations(dialog: TableStructureDialogState): TableStructureOperation[] {
   const originalByName = new Map(dialog.originalColumns.map((column) => [column.originalName, column]));
+  const originalIndexByName = new Map(dialog.originalIndexes.map((index) => [index.originalName, index]));
   const operations: TableStructureOperation[] = [];
   const draftTableName = dialog.draftTableName.trim();
   if (draftTableName && draftTableName !== dialog.table.name) {
@@ -1959,6 +2080,36 @@ function tableStructureOperations(dialog: TableStructureDialogState): TableStruc
   for (const column of dialog.deletedColumns) {
     if (column.originalName) {
       operations.push({ kind: "drop_column", name: column.originalName });
+    }
+  }
+  for (const index of dialog.deletedIndexes) {
+    if (index.originalName) {
+      operations.push({ kind: "drop_index", name: index.originalName });
+    }
+  }
+  for (const index of dialog.draftIndexes) {
+    const name = index.name.trim();
+    const columns = index.columns.map((column) => column.trim()).filter(Boolean);
+    if (!name || columns.length === 0) continue;
+    if (!index.originalName) {
+      operations.push({
+        kind: "add_index",
+        index: { name, columns, unique: index.unique },
+      });
+      continue;
+    }
+    const original = originalIndexByName.get(index.originalName);
+    if (!original) continue;
+    if (
+      original.name !== name
+      || original.unique !== index.unique
+      || original.columns.join(",") !== columns.join(",")
+    ) {
+      operations.push({ kind: "drop_index", name: index.originalName });
+      operations.push({
+        kind: "add_index",
+        index: { name, columns, unique: index.unique },
+      });
     }
   }
   return operations;

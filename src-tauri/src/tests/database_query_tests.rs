@@ -15,7 +15,8 @@ use crate::db::query::{
 use crate::models::database::{
     DatabaseCellValue, DatabaseTableDeleteRow, DatabaseTableInsertRow, DatabaseTableUpdateRow,
     DeleteDatabaseTableRowsRequest, InsertDatabaseTableRowsRequest, LoadDatabaseTablePageRequest,
-    TableStructureColumnDefinition, TableStructureOperation, UpdateDatabaseTableRowsRequest,
+    TableStructureColumnDefinition, TableStructureIndexDefinition, TableStructureOperation,
+    UpdateDatabaseTableRowsRequest,
 };
 use crate::models::settings::DatabaseConnectionSettings;
 
@@ -465,6 +466,32 @@ fn builds_mysql_table_structure_ddl_for_rename_table() {
     .unwrap();
 
     assert_eq!(ddl, "RENAME TABLE `users` TO `members`;");
+}
+
+#[test]
+fn builds_mysql_table_structure_ddl_for_add_and_drop_index() {
+    let ddl = build_table_structure_ddl(
+        "mysql",
+        "users",
+        &[
+            TableStructureOperation::DropIndex {
+                name: "idx_users_name".to_string(),
+            },
+            TableStructureOperation::AddIndex {
+                index: TableStructureIndexDefinition {
+                    name: "idx_users_name_email".to_string(),
+                    columns: vec!["name".to_string(), "email".to_string()],
+                    unique: true,
+                },
+            },
+        ],
+    )
+    .unwrap();
+
+    assert_eq!(
+        ddl,
+        "ALTER TABLE `users`\n  DROP INDEX `idx_users_name`,\n  ADD UNIQUE INDEX `idx_users_name_email` (`name`, `email`);"
+    );
 }
 
 #[test]

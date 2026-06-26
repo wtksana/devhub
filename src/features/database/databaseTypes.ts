@@ -90,11 +90,19 @@ export interface TableStructureColumnDefinition {
   comment?: string | null;
 }
 
+export interface TableStructureIndexDefinition {
+  name: string;
+  columns: string[];
+  unique: boolean;
+}
+
 export type TableStructureOperation =
   | { kind: "rename_table"; new_name: string }
   | { kind: "add_column"; column: TableStructureColumnDefinition }
   | { kind: "modify_column"; original_name: string; column: TableStructureColumnDefinition }
-  | { kind: "drop_column"; name: string };
+  | { kind: "drop_column"; name: string }
+  | { kind: "add_index"; index: TableStructureIndexDefinition }
+  | { kind: "drop_index"; name: string };
 
 export interface DatabaseTableStructureUpdateResult {
   ddl: string;

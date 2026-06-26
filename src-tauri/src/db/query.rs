@@ -267,6 +267,7 @@ fn build_mysql_table_structure_ddl(
     let mut current_table = table.trim().to_string();
     let mut statements = Vec::new();
     let mut column_operations = Vec::new();
+    let mut index_operations = Vec::new();
 
     for operation in operations {
         match operation {
@@ -310,9 +311,20 @@ fn build_mysql_table_structure_ddl(
                     quote_identifier("mysql", name)?
                 ));
             }
+            TableStructureOperation::AddIndex { index } => {
+                index_operations.push(mysql_add_index_clause(index)?);
+            }
+            TableStructureOperation::DropIndex { name } => {
+                let name = name.trim();
+                if name.is_empty() {
+                    return Err("index name is required".to_string());
+                }
+                index_operations.push(format!("DROP INDEX {}", quote_identifier("mysql", name)?));
+            }
         }
     }
 
+    column_operations.extend(index_operations);
     if !column_operations.is_empty() {
         statements.push(format!(
             "ALTER TABLE {}\n  {};",
@@ -325,6 +337,29 @@ fn build_mysql_table_structure_ddl(
         return Err("no table structure changes".to_string());
     }
     Ok(statements.join("\n"))
+}
+
+fn mysql_add_index_clause(index: &crate::models::database::TableStructureIndexDefinition) -> Result<String, String> {
+    let name = index.name.trim();
+    if name.is_empty() {
+        return Err("index name is required".to_string());
+    }
+    let columns = index
+        .columns
+        .iter()
+        .map(|column| column.trim())
+        .filter(|column| !column.is_empty())
+        .map(|column| quote_identifier("mysql", column))
+        .collect::<Result<Vec<String>, String>>()?;
+    if columns.is_empty() {
+        return Err("index columns are required".to_string());
+    }
+    Ok(format!(
+        "ADD {}INDEX {} ({})",
+        if index.unique { "UNIQUE " } else { "" },
+        quote_identifier("mysql", name)?,
+        columns.join(", ")
+    ))
 }
 
 fn mysql_column_definition(column: &TableStructureColumnDefinition) -> Result<String, String> {

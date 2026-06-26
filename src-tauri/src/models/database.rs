@@ -113,6 +113,13 @@ pub struct TableStructureColumnDefinition {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TableStructureIndexDefinition {
+    pub name: String,
+    pub columns: Vec<String>,
+    pub unique: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum TableStructureOperation {
     RenameTable {
@@ -126,6 +133,12 @@ pub enum TableStructureOperation {
         column: TableStructureColumnDefinition,
     },
     DropColumn {
+        name: String,
+    },
+    AddIndex {
+        index: TableStructureIndexDefinition,
+    },
+    DropIndex {
         name: String,
     },
 }

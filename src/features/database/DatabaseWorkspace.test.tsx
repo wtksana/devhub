@@ -1084,9 +1084,135 @@ describe("DatabaseWorkspace", () => {
 
     expect(within(dialog).getByText("索引 idx_users_name")).toBeInTheDocument();
     expect(within(dialog).getByDisplayValue("idx_users_name")).toBeInTheDocument();
-    expect(within(dialog).getByDisplayValue("普通索引")).toBeInTheDocument();
+    expect(within(dialog).getByLabelText("唯一索引")).not.toBeChecked();
     expect(within(dialog).getByDisplayValue("name")).toBeInTheDocument();
     expect(within(dialog).getByText("KEY `idx_users_name` (`name`)")).toBeInTheDocument();
+  });
+
+  it("edits table index and previews drop plus add DDL", async () => {
+    callBackendMock.mockImplementation((command, payload) => {
+      if (command === "list_database_objects") {
+        const request = (payload as { request: { parent_kind?: string; table?: string } }).request;
+        if (!request.parent_kind) {
+          return Promise.resolve([{ id: "database:app", name: "app", kind: "database", has_children: true }]);
+        }
+        if (request.parent_kind === "table" && request.table === "users") {
+          return Promise.resolve([
+            { id: "column:app.users.name", name: "name", kind: "column", has_children: false, detail: "varchar(255) YES" },
+            { id: "column:app.users.email", name: "email", kind: "column", has_children: false, detail: "varchar(255) YES" },
+            {
+              id: "index:app.users.idx_users_name",
+              name: "idx_users_name",
+              kind: "index",
+              has_children: false,
+              detail: "unique=NO;columns=name;definition=KEY `idx_users_name` (`name`)",
+            },
+          ]);
+        }
+        return Promise.resolve([{ id: "table:app.users", name: "users", kind: "table", has_children: true }]);
+      }
+      if (command === "preview_database_table_structure") {
+        return Promise.resolve({
+          ddl: "ALTER TABLE `users`\n  DROP INDEX `idx_users_name`,\n  ADD UNIQUE INDEX `idx_users_name_email` (`name`, `email`);",
+          duration_ms: 0,
+        });
+      }
+      return Promise.resolve([]);
+    });
+
+    renderDatabaseWorkspace("app");
+    const tableRow = (await screen.findByRole("button", { name: "users" })).closest("li");
+    expect(tableRow).not.toBeNull();
+    fireEvent.contextMenu(tableRow!, { clientX: 10, clientY: 20 });
+    await userEvent.click(screen.getByRole("menuitem", { name: "编辑" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "编辑表 users" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "idx_users_name name" }));
+    await userEvent.clear(within(dialog).getByLabelText("索引名"));
+    await userEvent.type(within(dialog).getByLabelText("索引名"), "idx_users_name_email");
+    fireEvent.blur(within(dialog).getByLabelText("索引名"));
+    await userEvent.clear(within(dialog).getByLabelText("索引字段"));
+    await userEvent.type(within(dialog).getByLabelText("索引字段"), "name, email");
+    fireEvent.blur(within(dialog).getByLabelText("索引字段"));
+    await userEvent.click(within(dialog).getByLabelText("唯一索引"));
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("preview_database_table_structure", {
+        request: {
+          connection_id: "mysql-dev",
+          database: "app",
+          table: "users",
+          operations: [
+            { kind: "drop_index", name: "idx_users_name" },
+            {
+              kind: "add_index",
+              index: {
+                name: "idx_users_name_email",
+                columns: ["name", "email"],
+                unique: true,
+              },
+            },
+          ],
+        },
+      });
+    });
+    expect(within(dialog).getByText(/ADD UNIQUE INDEX `idx_users_name_email`/)).toBeInTheDocument();
+  });
+
+  it("adds table index from table structure dialog", async () => {
+    callBackendMock.mockImplementation((command, payload) => {
+      if (command === "list_database_objects") {
+        const request = (payload as { request: { parent_kind?: string; table?: string } }).request;
+        if (!request.parent_kind) {
+          return Promise.resolve([{ id: "database:app", name: "app", kind: "database", has_children: true }]);
+        }
+        if (request.parent_kind === "table" && request.table === "users") {
+          return Promise.resolve([
+            { id: "column:app.users.email", name: "email", kind: "column", has_children: false, detail: "varchar(255) YES" },
+          ]);
+        }
+        return Promise.resolve([{ id: "table:app.users", name: "users", kind: "table", has_children: true }]);
+      }
+      if (command === "preview_database_table_structure") {
+        return Promise.resolve({
+          ddl: "ALTER TABLE `users`\n  ADD INDEX `idx_users_email` (`email`);",
+          duration_ms: 0,
+        });
+      }
+      return Promise.resolve([]);
+    });
+
+    renderDatabaseWorkspace("app");
+    const tableRow = (await screen.findByRole("button", { name: "users" })).closest("li");
+    expect(tableRow).not.toBeNull();
+    fireEvent.contextMenu(tableRow!, { clientX: 10, clientY: 20 });
+    await userEvent.click(screen.getByRole("menuitem", { name: "编辑" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "编辑表 users" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "新增索引" }));
+    await userEvent.clear(within(dialog).getByLabelText("索引名"));
+    await userEvent.type(within(dialog).getByLabelText("索引名"), "idx_users_email");
+    fireEvent.blur(within(dialog).getByLabelText("索引名"));
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("preview_database_table_structure", {
+        request: {
+          connection_id: "mysql-dev",
+          database: "app",
+          table: "users",
+          operations: [
+            {
+              kind: "add_index",
+              index: {
+                name: "idx_users_email",
+                columns: ["email"],
+                unique: false,
+              },
+            },
+          ],
+        },
+      });
+    });
   });
 
   it("shows extended column metadata in table structure dialog", async () => {

@@ -1531,6 +1531,26 @@ p {
   font-weight: 600;
 }
 
+.database-table-structure-dialog__group-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  height: 22px;
+  padding: 0 4px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+
+.database-table-structure-dialog__group-button:hover,
+.database-table-structure-dialog__group-button--active {
+  background: color-mix(in srgb, var(--accent) 8%, var(--panel-raised));
+  color: var(--text);
+}
+
 .database-table-structure-dialog__add-column-button {
   display: inline-flex;
   align-items: center;
