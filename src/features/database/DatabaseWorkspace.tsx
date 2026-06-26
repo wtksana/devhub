@@ -1840,7 +1840,7 @@ const TableStructureEditor = memo(function TableStructureEditor({
         </div>
         <div className="database-table-structure-dialog__definition">
           <span>{t("database.index_definition")}</span>
-          <textarea aria-label={t("database.index_definition")} value={index.definition || "-"} readOnly />
+          <textarea aria-label={t("database.index_definition")} value={tableStructureIndexDefinition(index)} readOnly />
         </div>
       </section>
     );
@@ -2192,6 +2192,19 @@ function indexNodeToInfo(index: DatabaseTreeNode): TableStructureIndexInfo {
 
 function splitIndexColumns(columns: string) {
   return columns.split(",").map((column) => column.trim()).filter(Boolean);
+}
+
+function tableStructureIndexDefinition(index: TableStructureIndexInfo) {
+  const name = index.name.trim();
+  const columns = index.columns.map((column) => column.trim()).filter(Boolean);
+  if (!name || columns.length === 0) return index.definition || "-";
+  const indexKind = index.unique ? "UNIQUE KEY" : "KEY";
+  const quotedColumns = columns.map((column) => `\`${escapeMysqlIdentifierDisplay(column)}\``).join(", ");
+  return `${indexKind} \`${escapeMysqlIdentifierDisplay(name)}\` (${quotedColumns})`;
+}
+
+function escapeMysqlIdentifierDisplay(value: string) {
+  return value.replace(/`/g, "``");
 }
 
 function parseIndexDetail(detail?: string | null) {

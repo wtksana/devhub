@@ -1086,7 +1086,7 @@ describe("DatabaseWorkspace", () => {
               name: "idx_users_name",
               kind: "index",
               has_children: false,
-              detail: "unique=NO;columns=name;definition=KEY `idx_users_name` (`name`, `id`)",
+              detail: "unique=NO;columns=name,id;definition=KEY `idx_users_name` (`name`, `id`)",
             },
           ]);
         }
@@ -1364,7 +1364,7 @@ describe("DatabaseWorkspace", () => {
               name: "idx_users_name",
               kind: "index",
               has_children: false,
-              detail: "unique=NO;columns=name;definition=KEY `idx_users_name` (`name`, `id`)",
+              detail: "unique=NO;columns=name,id;definition=KEY `idx_users_name` (`name`, `id`)",
             },
           ]);
         }
@@ -1380,14 +1380,14 @@ describe("DatabaseWorkspace", () => {
     await userEvent.click(screen.getByRole("menuitem", { name: "编辑" }));
 
     const dialog = await screen.findByRole("dialog", { name: "编辑表 users" });
-    expect(within(dialog).getByRole("button", { name: "idx_users_name name" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "idx_users_name name, id" })).toBeInTheDocument();
 
-    await userEvent.click(within(dialog).getByRole("button", { name: "idx_users_name name" }));
+    await userEvent.click(within(dialog).getByRole("button", { name: "idx_users_name name, id" }));
 
     expect(within(dialog).getByText("索引 idx_users_name")).toBeInTheDocument();
     expect(within(dialog).getByDisplayValue("idx_users_name")).toBeInTheDocument();
     expect(within(dialog).getByLabelText("唯一索引")).not.toBeChecked();
-    expect(within(dialog).getByRole("button", { name: "name" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "name, id" })).toBeInTheDocument();
     expect(within(dialog).queryByRole("checkbox", { name: "name" })).not.toBeInTheDocument();
     const definition = within(dialog).getByLabelText("索引定义");
     expect(definition).toHaveValue("KEY `idx_users_name` (`name`, `id`)");
@@ -1462,6 +1462,7 @@ describe("DatabaseWorkspace", () => {
       });
     });
     expect(within(dialog).getByText(/ADD UNIQUE INDEX `idx_users_name_email`/)).toBeInTheDocument();
+    expect(within(dialog).getByLabelText("索引定义")).toHaveValue("UNIQUE KEY `idx_users_name_email` (`name`, `email`)");
   });
 
   it("updates index column references when renaming a table column", async () => {
