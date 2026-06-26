@@ -1000,6 +1000,54 @@ describe("DatabaseWorkspace", () => {
     });
   });
 
+  it("moves the active column type suggestion with arrow keys", async () => {
+    callBackendMock.mockImplementation((command, payload) => {
+      if (command === "list_database_objects") {
+        const request = (payload as { request: { parent_kind?: string; table?: string } }).request;
+        if (!request.parent_kind) {
+          return Promise.resolve([{ id: "database:app", name: "app", kind: "database", has_children: true }]);
+        }
+        if (request.parent_kind === "table" && request.table === "users") {
+          return Promise.resolve([
+            { id: "column:app.users.name", name: "name", kind: "column", has_children: false, detail: "text YES" },
+          ]);
+        }
+        return Promise.resolve([{ id: "table:app.users", name: "users", kind: "table", has_children: true }]);
+      }
+      if (command === "preview_database_table_structure") {
+        return Promise.resolve({
+          ddl: "ALTER TABLE `users`\n  CHANGE COLUMN `name` `name` varchar(100) NULL;",
+          duration_ms: 0,
+        });
+      }
+      return Promise.resolve([]);
+    });
+
+    renderDatabaseWorkspace("app");
+    const tableRow = (await screen.findByRole("button", { name: "users" })).closest("li");
+    expect(tableRow).not.toBeNull();
+    fireEvent.contextMenu(tableRow!, { clientX: 10, clientY: 20 });
+    await userEvent.click(screen.getByRole("menuitem", { name: "编辑" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "编辑表 users" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "name text" }));
+    const typeInput = within(dialog).getByLabelText("字段类型");
+    await userEvent.clear(typeInput);
+    await userEvent.type(typeInput, "var");
+
+    const suggestions = within(dialog).getByRole("listbox", { name: "字段类型候选" });
+    expect(within(suggestions).getByRole("option", { name: "varchar(255)" })).toHaveAttribute("aria-selected", "true");
+
+    await userEvent.keyboard("{ArrowDown}");
+    expect(within(suggestions).getByRole("option", { name: "varchar(100)" })).toHaveAttribute("aria-selected", "true");
+
+    await userEvent.keyboard("{ArrowUp}");
+    expect(within(suggestions).getByRole("option", { name: "varchar(255)" })).toHaveAttribute("aria-selected", "true");
+
+    await userEvent.keyboard("{ArrowDown}{Enter}");
+    expect(typeInput).toHaveValue("varchar(100)");
+  });
+
   it("asks for confirmation before applying dangerous table structure changes", async () => {
     callBackendMock.mockImplementation((command, payload) => {
       if (command === "list_database_objects") {

@@ -139,6 +139,16 @@ describe("global style defaults", () => {
     expect(globalsCss).toContain("line-height: 1.45;");
   });
 
+  it("keeps the active column type suggestion visibly distinct from hover", () => {
+    const globalsCss = readCssSource();
+
+    expect(globalsCss).toContain(
+      ".database-table-structure-dialog__type-suggestion--active,\n.database-table-structure-dialog__type-suggestions button[aria-selected=\"true\"] {",
+    );
+    expect(globalsCss).toContain("background: color-mix(in srgb, var(--accent) 18%, var(--panel));");
+    expect(globalsCss).toContain("box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 42%, transparent);");
+  });
+
   it("renders workspace split resize handles without occupying grid tracks", () => {
     const globalsCss = readCssSource();
 

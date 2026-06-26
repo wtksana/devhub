@@ -2163,6 +2163,7 @@ function TableStructureTypeInput({
   const [isOpen, setIsOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const activeSuggestionRef = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
     setDraft(value);
@@ -2179,6 +2180,11 @@ function TableStructureTypeInput({
   }, [isOpen]);
 
   const suggestions = columnTypeSuggestions(draft);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    activeSuggestionRef.current?.scrollIntoView?.({ block: "nearest" });
+  }, [activeIndex, isOpen]);
 
   function commit(nextValue = draft) {
     const trimmedValue = nextValue.trim();
@@ -2248,6 +2254,7 @@ function TableStructureTypeInput({
               role="option"
               aria-selected={index === activeIndex}
               className={index === activeIndex ? "database-table-structure-dialog__type-suggestion--active" : undefined}
+              ref={index === activeIndex ? activeSuggestionRef : undefined}
               onMouseDown={(event) => {
                 event.preventDefault();
                 selectSuggestion(suggestion);
