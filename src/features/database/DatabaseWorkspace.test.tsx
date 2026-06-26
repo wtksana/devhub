@@ -1481,6 +1481,54 @@ describe("DatabaseWorkspace", () => {
     expect(definition).toHaveAttribute("readonly");
   });
 
+  it("asks for confirmation before deleting a table index draft", async () => {
+    callBackendMock.mockImplementation((command, payload) => {
+      if (command === "list_database_objects") {
+        const request = (payload as { request: { parent_kind?: string; table?: string } }).request;
+        if (!request.parent_kind) {
+          return Promise.resolve([{ id: "database:app", name: "app", kind: "database", has_children: true }]);
+        }
+        if (request.parent_kind === "table" && request.table === "users") {
+          return Promise.resolve([
+            { id: "column:app.users.name", name: "name", kind: "column", has_children: false, detail: "varchar(255) YES" },
+            {
+              id: "index:app.users.idx_users_name",
+              name: "idx_users_name",
+              kind: "index",
+              has_children: false,
+              detail: "unique=NO;columns=name;definition=KEY `idx_users_name` (`name`)",
+            },
+          ]);
+        }
+        return Promise.resolve([{ id: "table:app.users", name: "users", kind: "table", has_children: true }]);
+      }
+      return Promise.resolve([]);
+    });
+
+    renderDatabaseWorkspace("app");
+    const tableRow = (await screen.findByRole("button", { name: "users" })).closest("li");
+    expect(tableRow).not.toBeNull();
+    fireEvent.contextMenu(tableRow!, { clientX: 10, clientY: 20 });
+    await userEvent.click(screen.getByRole("menuitem", { name: "编辑" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "编辑表 users" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "idx_users_name name" }));
+    await userEvent.click(within(dialog).getByRole("button", { name: "删除索引" }));
+
+    const deleteConfirm = await screen.findByRole("dialog", { name: "确认删除索引" });
+    expect(deleteConfirm).toHaveTextContent("确认删除索引 idx_users_name？");
+    expect(within(dialog).getByRole("button", { name: "idx_users_name name" })).toBeInTheDocument();
+
+    await userEvent.click(within(deleteConfirm).getByRole("button", { name: "取消" }));
+    expect(screen.queryByRole("dialog", { name: "确认删除索引" })).not.toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "idx_users_name name" })).toBeInTheDocument();
+
+    await userEvent.click(within(dialog).getByRole("button", { name: "删除索引" }));
+    await userEvent.click(within(await screen.findByRole("dialog", { name: "确认删除索引" })).getByRole("button", { name: "确认" }));
+
+    expect(within(dialog).queryByRole("button", { name: "idx_users_name name" })).not.toBeInTheDocument();
+  });
+
   it("edits table index and previews drop plus add DDL", async () => {
     callBackendMock.mockImplementation((command, payload) => {
       if (command === "list_database_objects") {
@@ -1725,6 +1773,7 @@ describe("DatabaseWorkspace", () => {
     await userEvent.click(within(dialog).getByRole("button", { name: "idx_users_email -" }));
 
     expect(within(dialog).getByRole("alert")).toHaveTextContent("索引字段不能为空");
+    expect(within(dialog).getByLabelText("索引定义")).toHaveValue("-");
   });
 
   it("closes table index column dropdown when clicking outside", async () => {

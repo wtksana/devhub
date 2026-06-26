@@ -2307,7 +2307,8 @@ function splitIndexColumns(columns: string) {
 function tableStructureIndexDefinition(index: TableStructureIndexInfo) {
   const name = index.name.trim();
   const columns = index.columns.map((column) => column.trim()).filter(Boolean);
-  if (!name || columns.length === 0) return index.definition || "-";
+  if (columns.length === 0) return "-";
+  if (!name) return index.definition || "-";
   const indexKind = index.unique ? "UNIQUE KEY" : "KEY";
   const quotedColumns = columns.map((column) => `\`${escapeMysqlIdentifierDisplay(column)}\``).join(", ");
   return `${indexKind} \`${escapeMysqlIdentifierDisplay(name)}\` (${quotedColumns})`;
