@@ -1748,6 +1748,37 @@ p {
   color: var(--text);
 }
 
+.database-table-structure-confirm-dialog {
+  width: min(720px, calc(100vw - 48px));
+}
+
+.database-table-structure-confirm-dialog__body {
+  display: grid;
+  gap: 10px;
+  min-height: 0;
+  padding: 12px;
+}
+
+.database-table-structure-confirm-dialog__body p {
+  margin: 0;
+  color: var(--danger);
+}
+
+.database-table-structure-confirm-dialog__body pre {
+  max-height: min(42vh, 360px);
+  margin: 0;
+  overflow: auto;
+  padding: 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: var(--workspace);
+  color: var(--text);
+  font-family: var(--ui-font-family);
+  font-size: var(--ui-font-size-small, 15px);
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
 .database-dialog__actions {
   display: flex;
   gap: 8px;

@@ -299,6 +299,8 @@ export const enUS: Dictionary = {
   "database.generate_ddl_preview": "Generate DDL preview",
   "database.generating": "Generating...",
   "database.apply_table_structure_changes": "Apply changes",
+  "database.confirm_table_structure_changes": "Confirm table structure changes",
+  "database.table_structure_danger_message": "These table structure changes include delete or rename operations. They will run only after confirmation.",
   "database.table_structure_no_changes": "No table structure changes",
   "database.table_structure_updated": "Table structure updated, {duration} ms",
   "database.table_structure_objects": "Table structure objects",

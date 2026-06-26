@@ -117,6 +117,11 @@ type TableStructureDialogState = {
   confirmClose: boolean;
 };
 
+type PendingTableStructureConfirmation = {
+  operations: TableStructureOperation[];
+  ddl: string;
+};
+
 function listDatabaseSqlFilesOnce(connectionId: string, database: string) {
   const key = `${connectionId}:${database}`;
   const pendingRequest = pendingSqlFileRequests.get(key);
@@ -148,6 +153,7 @@ export function DatabaseWorkspace({
   const [error, setError] = useState<string | null>(null);
   const [isExecuting, setIsExecuting] = useState(false);
   const [dangerousSqlToConfirm, setDangerousSqlToConfirm] = useState<string | null>(null);
+  const [pendingTableStructureConfirmation, setPendingTableStructureConfirmation] = useState<PendingTableStructureConfirmation | null>(null);
   const [queryExecutionState, setQueryExecutionState] = useState<QueryExecutionState>({ status: "idle", message: "" });
   const [currentDatabase, setCurrentDatabase] = useState(initialDatabase?.trim() ?? "");
   const [tableBrowserTarget, setTableBrowserTarget] = useState<DatabaseTableBrowserTarget | null>(null);
@@ -282,6 +288,10 @@ export function DatabaseWorkspace({
 
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
+        if (pendingTableStructureConfirmation) {
+          setPendingTableStructureConfirmation(null);
+          return;
+        }
         if (tableStructureDialog) requestCloseTableStructureDialog();
         if (tableDdlDialog) setTableDdlDialog(null);
         if (sqlFilePreview) closeSqlFilePreview();
@@ -294,7 +304,7 @@ export function DatabaseWorkspace({
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [pendingExport, pendingInsertExport, sqlFilePreview, tableDdlDialog, tableStructureDialog]);
+  }, [pendingExport, pendingInsertExport, pendingTableStructureConfirmation, sqlFilePreview, tableDdlDialog, tableStructureDialog]);
 
   useEffect(() => {
     if (!tableStructureDialog || !currentDatabase) {
@@ -640,13 +650,25 @@ export function DatabaseWorkspace({
     setTableStructureDialog((current) => current ? { ...current, selectedItem } : current);
   }, []);
 
-  async function applyTableStructureChanges() {
+  function requestApplyTableStructureChanges() {
     if (!tableStructureDialog || !currentDatabase) return;
     const operations = tableStructureOperations(tableStructureDialog);
     if (operations.length === 0) {
       setTableStructureDialog({ ...tableStructureDialog, error: t("database.table_structure_no_changes") });
       return;
     }
+    if (hasDangerousTableStructureOperation(operations)) {
+      setPendingTableStructureConfirmation({
+        operations,
+        ddl: tableStructureDialog.ddlPreview,
+      });
+      return;
+    }
+    void applyTableStructureChanges(operations);
+  }
+
+  async function applyTableStructureChanges(operations: TableStructureOperation[]) {
+    if (!tableStructureDialog || !currentDatabase) return;
     const nextTableName = tableStructureDialog.draftTableName.trim() || tableStructureDialog.table.name;
     setIsTableStructurePreviewing(false);
     setTableStructureDialog({ ...tableStructureDialog, isSaving: true, error: null, statusMessage: "" });
@@ -1446,9 +1468,43 @@ export function DatabaseWorkspace({
               <button
                 type="button"
                 disabled={isTableStructurePreviewing || tableStructureDialog.isSaving}
-                onClick={() => void applyTableStructureChanges()}
+                onClick={requestApplyTableStructureChanges}
               >
                 {tableStructureDialog.isSaving ? t("database.executing") : t("database.apply_table_structure_changes")}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {pendingTableStructureConfirmation ? (
+        <div className="connection-dialog__backdrop">
+          <div
+            className="connection-dialog database-dialog database-table-structure-confirm-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-label={t("database.confirm_table_structure_changes")}
+          >
+            <header className="database-dialog__header">
+              <h2>{t("database.confirm_table_structure_changes")}</h2>
+            </header>
+            <div className="database-table-structure-confirm-dialog__body">
+              <p>{t("database.table_structure_danger_message")}</p>
+              <pre>{pendingTableStructureConfirmation.ddl || t("database.ddl_preview_empty")}</pre>
+            </div>
+            <div className="database-dialog__actions">
+              <button type="button" onClick={() => setPendingTableStructureConfirmation(null)}>
+                {t("database.cancel")}
+              </button>
+              <button
+                type="button"
+                className="sftp-dialog__danger-button"
+                onClick={() => {
+                  const confirmation = pendingTableStructureConfirmation;
+                  setPendingTableStructureConfirmation(null);
+                  void applyTableStructureChanges(confirmation.operations);
+                }}
+              >
+                {t("database.confirm_execute")}
               </button>
             </div>
           </div>
@@ -2113,6 +2169,14 @@ function tableStructureOperations(dialog: TableStructureDialogState): TableStruc
     }
   }
   return operations;
+}
+
+function hasDangerousTableStructureOperation(operations: TableStructureOperation[]) {
+  return operations.some((operation) => (
+    operation.kind === "rename_table"
+    || operation.kind === "drop_column"
+    || operation.kind === "drop_index"
+  ));
 }
 
 function tableStructureColumnDefinition(column: TableStructureColumnDraft, name: string, dataType: string) {

@@ -297,6 +297,8 @@ export const zhCN = {
   "database.generate_ddl_preview": "生成 DDL 预览",
   "database.generating": "生成中...",
   "database.apply_table_structure_changes": "执行更改",
+  "database.confirm_table_structure_changes": "确认执行表结构变更",
+  "database.table_structure_danger_message": "以下表结构变更包含删除或重命名操作，确认后才会执行。",
   "database.table_structure_no_changes": "没有表结构更改",
   "database.table_structure_updated": "表结构已更新，耗时 {duration} ms",
   "database.table_structure_objects": "表结构对象",
