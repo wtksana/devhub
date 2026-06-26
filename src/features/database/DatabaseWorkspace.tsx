@@ -115,6 +115,7 @@ type TableStructureDialogState = {
   statusMessage: string;
   isSaving: boolean;
   confirmClose: boolean;
+  pendingDelete: { kind: "column" | "index"; id: string; name: string } | null;
 };
 
 type PendingTableStructureConfirmation = {
@@ -580,6 +581,20 @@ export function DatabaseWorkspace({
       if (!current) return current;
       const target = current.draftColumns.find((column) => column.id === id);
       if (!target) return current;
+      const displayName = target.originalName ?? target.name.trim();
+      return {
+        ...current,
+        pendingDelete: { kind: "column", id, name: displayName },
+        error: null,
+      };
+    });
+  }, []);
+
+  const confirmDeleteTableStructureColumn = useCallback((id: string) => {
+    setTableStructureDialog((current) => {
+      if (!current) return current;
+      const target = current.draftColumns.find((column) => column.id === id);
+      if (!target) return current;
       const deletedColumnName = target.name.trim();
       const nextSelectedItem = current.selectedItem.kind === "column" && current.selectedItem.id === id
         ? { kind: "table" as const }
@@ -595,6 +610,7 @@ export function DatabaseWorkspace({
           : current.draftIndexes,
         deletedColumns: target.originalName ? [...current.deletedColumns, target] : current.deletedColumns,
         selectedItem: nextSelectedItem,
+        pendingDelete: null,
         durationMs: null,
         statusMessage: "",
         error: null,
@@ -643,6 +659,20 @@ export function DatabaseWorkspace({
       if (!current) return current;
       const target = current.draftIndexes.find((index) => index.id === id);
       if (!target) return current;
+      const displayName = target.originalName ?? target.name.trim();
+      return {
+        ...current,
+        pendingDelete: { kind: "index", id, name: displayName },
+        error: null,
+      };
+    });
+  }, []);
+
+  const confirmDeleteTableStructureIndex = useCallback((id: string) => {
+    setTableStructureDialog((current) => {
+      if (!current) return current;
+      const target = current.draftIndexes.find((index) => index.id === id);
+      if (!target) return current;
       const nextSelectedItem = current.selectedItem.kind === "index" && current.selectedItem.id === id
         ? { kind: "indexes" as const }
         : current.selectedItem;
@@ -651,6 +681,7 @@ export function DatabaseWorkspace({
         draftIndexes: current.draftIndexes.filter((index) => index.id !== id),
         deletedIndexes: target.originalName ? [...current.deletedIndexes, target] : current.deletedIndexes,
         selectedItem: nextSelectedItem,
+        pendingDelete: null,
         durationMs: null,
         statusMessage: "",
         error: null,
@@ -1520,6 +1551,34 @@ export function DatabaseWorkspace({
                     {t("database.cancel")}
                   </button>
                 </div>
+              ) : tableStructureDialog.pendingDelete ? (
+                <div className="database-table-structure-dialog__confirm" role="alert">
+                  <span>
+                    {tableStructureDialog.pendingDelete.kind === "column"
+                      ? t("database.confirm_delete_column_message", { name: tableStructureDialog.pendingDelete.name })
+                      : t("database.confirm_delete_index_message", { name: tableStructureDialog.pendingDelete.name })}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const pendingDelete = tableStructureDialog.pendingDelete;
+                      if (!pendingDelete) return;
+                      if (pendingDelete.kind === "column") {
+                        confirmDeleteTableStructureColumn(pendingDelete.id);
+                      } else {
+                        confirmDeleteTableStructureIndex(pendingDelete.id);
+                      }
+                    }}
+                  >
+                    {t("database.confirm")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTableStructureDialog({ ...tableStructureDialog, pendingDelete: null })}
+                  >
+                    {t("database.cancel")}
+                  </button>
+                </div>
               ) : null}
               <button type="button" onClick={requestCloseTableStructureDialog}>
                 {t("database.cancel")}
@@ -1845,6 +1904,11 @@ const TableStructureEditor = memo(function TableStructureEditor({
             onChange={(columns) => onUpdateIndex(index.id, { columns })}
           />
         </div>
+        {index.columns.map((column) => column.trim()).filter(Boolean).length === 0 ? (
+          <p className="database-table-structure-dialog__field-message" role="alert">
+            {t("database.validation_index_columns_required")}
+          </p>
+        ) : null}
         <div className="database-table-structure-dialog__definition">
           <span>{t("database.index_definition")}</span>
           <textarea aria-label={t("database.index_definition")} value={tableStructureIndexDefinition(index)} readOnly />
@@ -2168,6 +2232,7 @@ function emptyTableStructureDialog(table: DatabaseTreeNode): TableStructureDialo
     statusMessage: "",
     isSaving: false,
     confirmClose: false,
+    pendingDelete: null,
   };
 }
 

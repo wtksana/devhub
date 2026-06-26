@@ -1729,6 +1729,12 @@ p {
   white-space: nowrap;
 }
 
+.database-table-structure-dialog__field-message {
+  margin: -2px 0 8px 86px;
+  color: var(--danger);
+  font-size: var(--ui-font-size-small, 13px);
+}
+
 .database-table-structure-dialog__definition textarea {
   min-width: 0;
   min-height: 64px;
