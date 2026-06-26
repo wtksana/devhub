@@ -1629,28 +1629,76 @@ p {
   margin: 0 0 8px 86px;
 }
 
-.database-table-structure-dialog__index-columns {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+.database-table-structure-dialog__index-column-select {
+  position: relative;
   min-width: 0;
 }
 
-.database-table-structure-dialog__index-column-option {
-  display: inline-flex;
+.database-table-structure-dialog__index-column-trigger {
+  display: flex;
   align-items: center;
-  gap: 5px;
+  justify-content: space-between;
+  width: 100%;
   min-width: 0;
-  height: 28px;
+  height: 30px;
   padding: 0 8px;
   border: 1px solid var(--border-subtle);
-  border-radius: 4px;
+  border-radius: 3px;
   background: var(--input-bg);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+}
+
+.database-table-structure-dialog__index-column-trigger::after {
+  content: "";
+  width: 0;
+  height: 0;
+  margin-left: 8px;
+  border-right: 4px solid transparent;
+  border-left: 4px solid transparent;
+  border-top: 5px solid var(--muted);
+}
+
+.database-table-structure-dialog__index-column-trigger span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: inherit;
+}
+
+.database-table-structure-dialog__index-column-menu {
+  position: absolute;
+  z-index: 5;
+  top: calc(100% + 4px);
+  right: 0;
+  left: 0;
+  max-height: 180px;
+  overflow: auto;
+  padding: 4px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  background: var(--panel);
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.18);
+}
+
+.database-table-structure-dialog__index-column-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  height: 28px;
+  padding: 0 6px;
+  border-radius: 3px;
   color: var(--text);
 }
 
-.database-table-structure-dialog__index-column-option span {
-  max-width: 160px;
+.database-table-structure-dialog__index-column-menu-item:hover {
+  background: var(--hover);
+}
+
+.database-table-structure-dialog__index-column-menu-item span {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   color: inherit;

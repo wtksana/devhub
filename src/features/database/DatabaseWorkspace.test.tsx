@@ -1322,7 +1322,8 @@ describe("DatabaseWorkspace", () => {
     expect(within(dialog).getByText("索引 idx_users_name")).toBeInTheDocument();
     expect(within(dialog).getByDisplayValue("idx_users_name")).toBeInTheDocument();
     expect(within(dialog).getByLabelText("唯一索引")).not.toBeChecked();
-    expect(within(dialog).getByRole("checkbox", { name: "name" })).toBeChecked();
+    expect(within(dialog).getByRole("button", { name: "name" })).toBeInTheDocument();
+    expect(within(dialog).queryByRole("checkbox", { name: "name" })).not.toBeInTheDocument();
     expect(within(dialog).getByText("KEY `idx_users_name` (`name`)")).toBeInTheDocument();
   });
 
@@ -1368,6 +1369,7 @@ describe("DatabaseWorkspace", () => {
     await userEvent.clear(within(dialog).getByLabelText("索引名"));
     await userEvent.type(within(dialog).getByLabelText("索引名"), "idx_users_name_email");
     fireEvent.blur(within(dialog).getByLabelText("索引名"));
+    await userEvent.click(within(dialog).getByRole("button", { name: "name" }));
     expect(within(dialog).getByRole("checkbox", { name: "name" })).toBeChecked();
     await userEvent.click(within(dialog).getByRole("checkbox", { name: "email" }));
     await userEvent.click(within(dialog).getByLabelText("唯一索引"));

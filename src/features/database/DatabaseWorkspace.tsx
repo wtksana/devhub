@@ -1817,28 +1817,11 @@ const TableStructureEditor = memo(function TableStructureEditor({
         </label>
         <div className="database-table-structure-dialog__field">
           <span>{t("database.index_columns")}</span>
-          <div className="database-table-structure-dialog__index-columns">
-            {dialog.draftColumns.map((column) => {
-              const columnName = column.name.trim();
-              if (!columnName) return null;
-              const checked = index.columns.includes(columnName);
-              return (
-                <label key={column.id} className="database-table-structure-dialog__index-column-option">
-                  <input
-                    type="checkbox"
-                    checked={checked}
-                    onChange={(event) => {
-                      const nextColumns = event.target.checked
-                        ? [...index.columns, columnName]
-                        : index.columns.filter((candidate) => candidate !== columnName);
-                      onUpdateIndex(index.id, { columns: nextColumns });
-                    }}
-                  />
-                  <span>{columnName}</span>
-                </label>
-              );
-            })}
-          </div>
+          <TableStructureIndexColumnSelect
+            columns={dialog.draftColumns}
+            selectedColumns={index.columns}
+            onChange={(columns) => onUpdateIndex(index.id, { columns })}
+          />
         </div>
         <div className="database-table-structure-dialog__definition">
           <span>{t("database.index_definition")}</span>
@@ -1874,6 +1857,54 @@ const TableStructureEditor = memo(function TableStructureEditor({
     />
   );
 });
+
+function TableStructureIndexColumnSelect({
+  columns,
+  selectedColumns,
+  onChange,
+}: {
+  columns: TableStructureColumnDraft[];
+  selectedColumns: string[];
+  onChange: (columns: string[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const columnNames = columns.map((column) => column.name.trim()).filter(Boolean);
+  const selectedText = selectedColumns.length > 0 ? selectedColumns.join(", ") : "-";
+
+  function toggleColumn(columnName: string, checked: boolean) {
+    const nextColumns = checked
+      ? [...selectedColumns, columnName]
+      : selectedColumns.filter((candidate) => candidate !== columnName);
+    onChange(nextColumns);
+  }
+
+  return (
+    <div className="database-table-structure-dialog__index-column-select">
+      <button
+        type="button"
+        className="database-table-structure-dialog__index-column-trigger"
+        aria-expanded={open}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <span>{selectedText}</span>
+      </button>
+      {open ? (
+        <div className="database-table-structure-dialog__index-column-menu">
+          {columnNames.map((columnName) => (
+            <label key={columnName} className="database-table-structure-dialog__index-column-menu-item">
+              <input
+                type="checkbox"
+                checked={selectedColumns.includes(columnName)}
+                onChange={(event) => toggleColumn(columnName, event.target.checked)}
+              />
+              <span>{columnName}</span>
+            </label>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 const TableStructureColumnEditor = memo(function TableStructureColumnEditor({
   column,
