@@ -1534,6 +1534,72 @@ describe("DatabaseWorkspace", () => {
     });
   });
 
+  it("removes deleted table columns from index column references", async () => {
+    callBackendMock.mockImplementation((command, payload) => {
+      if (command === "list_database_objects") {
+        const request = (payload as { request: { parent_kind?: string; table?: string } }).request;
+        if (!request.parent_kind) {
+          return Promise.resolve([{ id: "database:app", name: "app", kind: "database", has_children: true }]);
+        }
+        if (request.parent_kind === "table" && request.table === "users") {
+          return Promise.resolve([
+            { id: "column:app.users.name", name: "name", kind: "column", has_children: false, detail: "varchar(255) YES" },
+            { id: "column:app.users.email", name: "email", kind: "column", has_children: false, detail: "varchar(255) YES" },
+            {
+              id: "index:app.users.idx_users_name_email",
+              name: "idx_users_name_email",
+              kind: "index",
+              has_children: false,
+              detail: "unique=NO;columns=name,email;definition=KEY `idx_users_name_email` (`name`, `email`)",
+            },
+          ]);
+        }
+        return Promise.resolve([{ id: "table:app.users", name: "users", kind: "table", has_children: true }]);
+      }
+      if (command === "preview_database_table_structure") {
+        return Promise.resolve({
+          ddl: "ALTER TABLE `users`\n  DROP COLUMN `email`,\n  DROP INDEX `idx_users_name_email`,\n  ADD INDEX `idx_users_name_email` (`name`);",
+          duration_ms: 0,
+        });
+      }
+      return Promise.resolve([]);
+    });
+
+    renderDatabaseWorkspace("app");
+    const tableRow = (await screen.findByRole("button", { name: "users" })).closest("li");
+    expect(tableRow).not.toBeNull();
+    fireEvent.contextMenu(tableRow!, { clientX: 10, clientY: 20 });
+    await userEvent.click(screen.getByRole("menuitem", { name: "编辑" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "编辑表 users" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "email varchar(255)" }));
+    await userEvent.click(within(dialog).getByRole("button", { name: "删除字段" }));
+    await userEvent.click(within(dialog).getByRole("button", { name: "idx_users_name_email name" }));
+
+    expect(within(dialog).getByLabelText("索引定义")).toHaveValue("KEY `idx_users_name_email` (`name`)");
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("preview_database_table_structure", {
+        request: {
+          connection_id: "mysql-dev",
+          database: "app",
+          table: "users",
+          operations: [
+            { kind: "drop_column", name: "email" },
+            { kind: "drop_index", name: "idx_users_name_email" },
+            {
+              kind: "add_index",
+              index: {
+                name: "idx_users_name_email",
+                columns: ["name"],
+                unique: false,
+              },
+            },
+          ],
+        },
+      });
+    });
+  });
+
   it("closes table index column dropdown when clicking outside", async () => {
     callBackendMock.mockImplementation((command, payload) => {
       if (command === "list_database_objects") {

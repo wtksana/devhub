@@ -580,12 +580,19 @@ export function DatabaseWorkspace({
       if (!current) return current;
       const target = current.draftColumns.find((column) => column.id === id);
       if (!target) return current;
+      const deletedColumnName = target.name.trim();
       const nextSelectedItem = current.selectedItem.kind === "column" && current.selectedItem.id === id
         ? { kind: "table" as const }
         : current.selectedItem;
       return {
         ...current,
         draftColumns: current.draftColumns.filter((column) => column.id !== id),
+        draftIndexes: deletedColumnName
+          ? current.draftIndexes.map((index) => ({
+            ...index,
+            columns: index.columns.filter((columnName) => columnName !== deletedColumnName),
+          }))
+          : current.draftIndexes,
         deletedColumns: target.originalName ? [...current.deletedColumns, target] : current.deletedColumns,
         selectedItem: nextSelectedItem,
         durationMs: null,
