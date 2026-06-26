@@ -1492,53 +1492,24 @@ p {
 }
 
 .database-table-structure-dialog__node--child {
-  grid-template-columns: minmax(0, 1fr) auto;
-  padding: 0 4px 0 24px;
+  padding-left: 24px;
 }
 
-.database-table-structure-dialog__node-main {
-  display: grid;
-  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
-  gap: 5px;
-  align-items: center;
-  min-width: 0;
-  height: 26px;
-  padding: 0 0 0 3px;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  text-align: left;
-}
-
-.database-table-structure-dialog__node-main:hover {
-  background: transparent;
-}
-
-.database-table-structure-dialog__column-order-actions {
+.database-table-structure-dialog__group-actions {
   display: inline-flex;
-  gap: 1px;
-  opacity: 0.72;
+  align-items: center;
+  gap: 2px;
 }
 
-.database-table-structure-dialog__column-order-actions button {
+.database-table-structure-dialog__group-actions .database-table-structure-dialog__add-column-button {
   display: grid;
   place-items: center;
-  width: 20px;
   height: 22px;
-  padding: 0;
-  border: 0;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--muted);
 }
 
-.database-table-structure-dialog__column-order-actions button:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--accent) 10%, var(--panel-raised));
-  color: var(--text);
-}
-
-.database-table-structure-dialog__column-order-actions button:disabled {
-  opacity: 0.28;
+.database-table-structure-dialog__group-actions .app-icon {
+  width: 15px;
+  height: 15px;
 }
 
 .database-table-structure-dialog__node span,

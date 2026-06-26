@@ -90,6 +90,7 @@ type TableStructureColumnDraft = {
   defaultValue: string;
   extra: string;
   comment: string;
+  moved: boolean;
 };
 
 type TableStructureIndexInfo = {
@@ -566,6 +567,7 @@ export function DatabaseWorkspace({
         defaultValue: "",
         extra: "",
         comment: "",
+        moved: false,
       };
       return {
         ...current,
@@ -586,7 +588,7 @@ export function DatabaseWorkspace({
       if (currentIndex < 0 || nextIndex < 0 || nextIndex >= current.draftColumns.length) return current;
       const draftColumns = [...current.draftColumns];
       const [target] = draftColumns.splice(currentIndex, 1);
-      draftColumns.splice(nextIndex, 0, target);
+      draftColumns.splice(nextIndex, 0, { ...target, moved: true });
       return {
         ...current,
         draftColumns,
@@ -1511,7 +1513,10 @@ export function DatabaseWorkspace({
                   dialog={tableStructureDialog}
                   onSelect={selectTableStructureItem}
                   onAddColumn={addTableStructureColumn}
-                  onMoveColumn={moveTableStructureColumn}
+                  onMoveSelectedColumn={(direction) => {
+                    const selectedColumnId = tableStructureDialog.selectedItem.kind === "column" ? tableStructureDialog.selectedItem.id : null;
+                    if (selectedColumnId) moveTableStructureColumn(selectedColumnId, direction);
+                  }}
                   onAddIndex={addTableStructureIndex}
                 />
                 <div
@@ -1781,16 +1786,20 @@ const TableStructureObjectList = memo(function TableStructureObjectList({
   dialog,
   onSelect,
   onAddColumn,
-  onMoveColumn,
+  onMoveSelectedColumn,
   onAddIndex,
 }: {
   dialog: TableStructureDialogState;
   onSelect: (selectedItem: TableStructureDialogState["selectedItem"]) => void;
   onAddColumn: () => void;
-  onMoveColumn: (id: string, direction: -1 | 1) => void;
+  onMoveSelectedColumn: (direction: -1 | 1) => void;
   onAddIndex: () => void;
 }) {
   const { t } = useI18n();
+  const selectedColumnId = dialog.selectedItem.kind === "column" ? dialog.selectedItem.id : null;
+  const selectedColumnIndex = selectedColumnId
+    ? dialog.draftColumns.findIndex((column) => column.id === selectedColumnId)
+    : -1;
   return (
     <aside className="database-table-structure-dialog__objects" aria-label={t("database.table_structure_objects")}>
       <button
@@ -1803,54 +1812,52 @@ const TableStructureObjectList = memo(function TableStructureObjectList({
       <div className="database-table-structure-dialog__group">
         <div className="database-table-structure-dialog__group-title">
           <span>{t("database.columns_group", { count: dialog.draftColumns.length })}</span>
-          <button
-            type="button"
-            className="database-table-structure-dialog__add-column-button"
-            aria-label={t("database.add_column")}
-            onClick={onAddColumn}
-          >
-            {t("database.add_column_short")}
-          </button>
+          <div className="database-table-structure-dialog__group-actions">
+            <button
+              type="button"
+              className="database-table-structure-dialog__add-column-button"
+              aria-label={t("database.move_column_up")}
+              title={t("database.move_column_up")}
+              disabled={selectedColumnIndex <= 0}
+              onClick={() => onMoveSelectedColumn(-1)}
+            >
+              <AppIcon icon={MoveUpIcon} decorative />
+            </button>
+            <button
+              type="button"
+              className="database-table-structure-dialog__add-column-button"
+              aria-label={t("database.move_column_down")}
+              title={t("database.move_column_down")}
+              disabled={selectedColumnIndex < 0 || selectedColumnIndex >= dialog.draftColumns.length - 1}
+              onClick={() => onMoveSelectedColumn(1)}
+            >
+              <AppIcon icon={MoveDownIcon} decorative />
+            </button>
+            <button
+              type="button"
+              className="database-table-structure-dialog__add-column-button"
+              aria-label={t("database.add_column")}
+              onClick={onAddColumn}
+            >
+              {t("database.add_column_short")}
+            </button>
+          </div>
         </div>
         {dialog.draftColumns.map((column, index) => {
           const name = column.name.trim() || t("database.new_column_label", {
             index: dialog.draftColumns.slice(0, index + 1).filter((candidate) => !candidate.originalName).length,
           });
           return (
-            <div
+            <button
               key={column.id}
+              type="button"
+              aria-label={t("database.column_object", { name, type: column.dataType || "-" })}
               className={`database-table-structure-dialog__node database-table-structure-dialog__node--child${dialog.selectedItem.kind === "column" && dialog.selectedItem.id === column.id ? " database-table-structure-dialog__node--active" : ""}`}
+              onClick={() => onSelect({ kind: "column", id: column.id })}
             >
-              <button
-                type="button"
-                aria-label={t("database.column_object", { name, type: column.dataType || "-" })}
-                className="database-table-structure-dialog__node-main"
-                onClick={() => onSelect({ kind: "column", id: column.id })}
-              >
-                <span className="database-table-structure-dialog__column-name">{name}</span>
-                <span className="database-table-structure-dialog__column-type">{column.dataType || "-"}</span>
-              </button>
-              <div className="database-table-structure-dialog__column-order-actions">
-                <button
-                  type="button"
-                  aria-label={t("database.move_column_up", { name })}
-                  title={t("database.move_column_up", { name })}
-                  disabled={index === 0}
-                  onClick={() => onMoveColumn(column.id, -1)}
-                >
-                  <AppIcon icon={MoveUpIcon} decorative />
-                </button>
-                <button
-                  type="button"
-                  aria-label={t("database.move_column_down", { name })}
-                  title={t("database.move_column_down", { name })}
-                  disabled={index === dialog.draftColumns.length - 1}
-                  onClick={() => onMoveColumn(column.id, 1)}
-                >
-                  <AppIcon icon={MoveDownIcon} decorative />
-                </button>
-              </div>
-            </div>
+              <span className="database-table-structure-dialog__column-name">{name}</span>
+              <span className="database-table-structure-dialog__column-type">{column.dataType || "-"}</span>
+            </button>
           );
         })}
       </div>
@@ -2478,6 +2485,7 @@ function columnNodeToDraft(column: DatabaseTreeNode): TableStructureColumnDraft 
     defaultValue: detail.defaultValue,
     extra: detail.extra,
     comment: detail.comment,
+    moved: false,
   };
 }
 
@@ -2548,7 +2556,7 @@ function tableStructureOperations(dialog: TableStructureDialogState): TableStruc
     }
     const original = originalByName.get(column.originalName);
     if (!original) continue;
-    const positionChanged = originalPreviousKeysByName.get(column.originalName) !== draftPreviousKeysById.get(column.id);
+    const positionChanged = column.moved && originalPreviousKeysByName.get(column.originalName) !== draftPreviousKeysById.get(column.id);
     if (
       original.name !== name
       || original.dataType !== dataType

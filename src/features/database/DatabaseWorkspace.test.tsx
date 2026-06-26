@@ -1494,7 +1494,7 @@ describe("DatabaseWorkspace", () => {
     expect(within(dialog).getByText(/AUTO_INCREMENT COMMENT '主键'/)).toBeInTheDocument();
   });
 
-  it("moves a table structure column up from the object list and previews the new position", async () => {
+  it("moves the selected table structure column from the object list toolbar", async () => {
     callBackendMock.mockImplementation((command, payload) => {
       if (command === "list_database_objects") {
         const request = (payload as { request: { parent_kind?: string; table?: string } }).request;
@@ -1525,7 +1525,13 @@ describe("DatabaseWorkspace", () => {
     await userEvent.click(screen.getByRole("menuitem", { name: "编辑" }));
 
     const dialog = await screen.findByRole("dialog", { name: "编辑表 users" });
-    await userEvent.click(within(dialog).getByRole("button", { name: "上移字段 name" }));
+    expect(within(dialog).queryByRole("button", { name: "上移字段 name" })).not.toBeInTheDocument();
+    const moveUpButton = within(dialog).getByRole("button", { name: "上移字段" });
+    expect(moveUpButton).toBeDisabled();
+
+    await userEvent.click(within(dialog).getByRole("button", { name: "name varchar(100)" }));
+    expect(moveUpButton).not.toBeDisabled();
+    await userEvent.click(moveUpButton);
 
     await waitFor(() => {
       expect(callBackendMock).toHaveBeenCalledWith("preview_database_table_structure", {
@@ -1542,16 +1548,6 @@ describe("DatabaseWorkspace", () => {
                 data_type: "varchar(100)",
                 nullable: true,
                 position: { kind: "first" },
-              },
-            },
-            {
-              kind: "modify_column",
-              original_name: "id",
-              column: {
-                name: "id",
-                data_type: "int(11)",
-                nullable: false,
-                position: { kind: "after", column: "name" },
               },
             },
           ],
