@@ -524,15 +524,30 @@ export function DatabaseWorkspace({
   }
 
   const updateTableStructureColumn = useCallback((id: string, changes: Partial<Pick<TableStructureColumnDraft, "name" | "dataType" | "nullable" | "defaultValue" | "comment">>) => {
-    setTableStructureDialog((current) => current ? {
-      ...current,
-      draftColumns: current.draftColumns.map((column) => (
-        column.id === id ? { ...column, ...changes } : column
-      )),
-      durationMs: null,
-      statusMessage: "",
-      error: null,
-    } : current);
+    setTableStructureDialog((current) => {
+      if (!current) return current;
+      const target = current.draftColumns.find((column) => column.id === id);
+      const previousName = target?.name.trim();
+      const nextName = typeof changes.name === "string" ? changes.name.trim() : null;
+      const renamedColumn = previousName && nextName && previousName !== nextName
+        ? { previousName, nextName }
+        : null;
+      return {
+        ...current,
+        draftColumns: current.draftColumns.map((column) => (
+          column.id === id ? { ...column, ...changes } : column
+        )),
+        draftIndexes: renamedColumn
+          ? current.draftIndexes.map((index) => ({
+            ...index,
+            columns: index.columns.map((columnName) => (columnName === renamedColumn.previousName ? renamedColumn.nextName : columnName)),
+          }))
+          : current.draftIndexes,
+        durationMs: null,
+        statusMessage: "",
+        error: null,
+      };
+    });
   }, []);
 
   const addTableStructureColumn = useCallback(() => {
