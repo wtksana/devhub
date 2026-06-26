@@ -159,6 +159,20 @@ describe("global style defaults", () => {
     expect(globalsCss).toContain(".database-table-structure-dialog__group-actions .database-table-structure-dialog__add-column-button:disabled:hover {\n  background: transparent;");
   });
 
+  it("lets the SQL editor wrapper fill its pane without overriding Monaco scroll layout", () => {
+    const globalsCss = readCssSource();
+
+    expect(globalsCss).toContain(
+      ".database-query-panel__editor {\n  display: grid;\n  width: 100%;\n  max-width: 100%;",
+    );
+    expect(globalsCss).toContain("  contain: size layout;");
+    expect(globalsCss).toContain(
+      ".database-query-panel__editor > section,\n.database-query-panel__editor > div {\n  width: 100%;\n  height: 100%;\n  max-width: 100%;",
+    );
+    expect(globalsCss).not.toContain(".database-query-panel__editor .overflow-guard");
+    expect(globalsCss).not.toContain(".database-query-panel__editor .monaco-editor-background");
+  });
+
   it("renders workspace split resize handles without occupying grid tracks", () => {
     const globalsCss = readCssSource();
 

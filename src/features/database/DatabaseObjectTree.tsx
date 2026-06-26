@@ -13,6 +13,7 @@ interface DatabaseObjectTreeProps {
   onDatabaseChange: (database: string) => void;
   onOpenTable?: (node: DatabaseTreeNode) => void;
   onTableContextMenu?: (event: ReactMouseEvent, node: DatabaseTreeNode) => void;
+  onTablesChange?: (nodes: DatabaseTreeNode[]) => void;
 }
 
 type DatabaseObjectRequest = ReturnType<typeof childRequest>;
@@ -73,7 +74,15 @@ function listDatabaseObjectsOnce(request: DatabaseObjectRequest) {
   return requestPromise;
 }
 
-export function DatabaseObjectTree({ connectionId, selectedDatabase, refreshKey = 0, onDatabaseChange, onOpenTable, onTableContextMenu }: DatabaseObjectTreeProps) {
+export function DatabaseObjectTree({
+  connectionId,
+  selectedDatabase,
+  refreshKey = 0,
+  onDatabaseChange,
+  onOpenTable,
+  onTableContextMenu,
+  onTablesChange,
+}: DatabaseObjectTreeProps) {
   const { t } = useI18n();
   const [databases, setDatabases] = useState<DatabaseTreeNode[]>([]);
   const [tables, setTables] = useState<DatabaseTreeNode[]>([]);
@@ -105,12 +114,15 @@ export function DatabaseObjectTree({ connectionId, selectedDatabase, refreshKey 
       canceled = true;
     };
     void loadNodes({ id: `database:${selectedDatabase}`, name: selectedDatabase, kind: "database", has_children: true }).then((nodes) => {
-      if (!canceled) setTables(nodes);
+      if (!canceled) {
+        setTables(nodes);
+        onTablesChange?.(nodes);
+      }
     });
     return () => {
       canceled = true;
     };
-  }, [connectionId, selectedDatabase, refreshKey]);
+  }, [connectionId, onTablesChange, selectedDatabase, refreshKey]);
 
   async function loadNodes(parent?: DatabaseTreeNode) {
     try {

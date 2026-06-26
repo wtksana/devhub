@@ -57,6 +57,25 @@ const DANGEROUS_SQL_KEYWORDS = new Set([
   "grant",
   "revoke",
 ]);
+const SQL_KEYWORD_COMPLETIONS = [
+  "SELECT",
+  "FROM",
+  "WHERE",
+  "JOIN",
+  "LEFT JOIN",
+  "RIGHT JOIN",
+  "INNER JOIN",
+  "GROUP BY",
+  "ORDER BY",
+  "LIMIT",
+  "INSERT",
+  "UPDATE",
+  "DELETE",
+  "CREATE",
+  "ALTER",
+  "DROP",
+];
+const SQL_FUNCTION_COMPLETIONS = ["COUNT", "SUM", "AVG", "MIN", "MAX", "NOW", "DATE_FORMAT", "COALESCE"];
 
 const pendingSqlFileRequests = new Map<string, Promise<DatabaseSqlFile[]>>();
 
@@ -126,6 +145,16 @@ type PendingTableStructureConfirmation = {
   ddl: string;
 };
 
+type SqlCompletionModel = {
+  getWordUntilPosition: (position: { lineNumber: number; column: number }) => { startColumn: number; endColumn: number };
+  getValueInRange: (range: { startLineNumber: number; startColumn: number; endLineNumber: number; endColumn: number }) => string;
+};
+
+type SqlCompletionPosition = {
+  lineNumber: number;
+  column: number;
+};
+
 function listDatabaseSqlFilesOnce(connectionId: string, database: string) {
   const key = `${connectionId}:${database}`;
   const pendingRequest = pendingSqlFileRequests.get(key);
@@ -189,8 +218,36 @@ export function DatabaseWorkspace({
   const tableStructureObjectsResizeRef = useRef({ startX: 0, startWidth: DEFAULT_TABLE_STRUCTURE_OBJECTS_WIDTH });
   const latestSqlFileKeyRef = useRef("");
   const dirtySqlFileKeysRef = useRef(new Set<string>());
+  const sqlEditorContainerRef = useRef<HTMLDivElement | null>(null);
   const monacoEditorRef = useRef<Parameters<OnMount>[0] | null>(null);
+  const sqlCompletionProviderRef = useRef<{ dispose: () => void } | null>(null);
+  const currentDatabaseRef = useRef(currentDatabase);
+  const databaseTablesRef = useRef<DatabaseTreeNode[]>([]);
+  const tableColumnsCacheRef = useRef(new Map<string, DatabaseTreeNode[]>());
   const queryExecutionIdRef = useRef(0);
+
+  useEffect(() => {
+    currentDatabaseRef.current = currentDatabase;
+  }, [currentDatabase]);
+
+  useEffect(() => () => {
+    sqlCompletionProviderRef.current?.dispose();
+    sqlCompletionProviderRef.current = null;
+  }, []);
+
+  useEffect(() => {
+    const container = sqlEditorContainerRef.current;
+    if (!container || !isEditorOpen || typeof ResizeObserver === "undefined") return;
+    const resizeObserver = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      const width = Math.floor(entry?.contentRect.width ?? 0);
+      const height = Math.floor(entry?.contentRect.height ?? 0);
+      if (width <= 0 || height <= 0) return;
+      monacoEditorRef.current?.layout({ width, height });
+    });
+    resizeObserver.observe(container);
+    return () => resizeObserver.disconnect();
+  }, [isEditorOpen]);
 
   useEffect(() => {
     setCurrentDatabase(initialDatabase?.trim() ?? "");
@@ -452,6 +509,11 @@ export function DatabaseWorkspace({
     setError(t("database.query_canceled"));
     setQueryExecutionState({ status: "canceled", message: t("database.query_canceled") });
   }
+
+  const handleDatabaseTablesChange = useCallback((nodes: DatabaseTreeNode[]) => {
+    databaseTablesRef.current = nodes.filter((node) => node.kind === "table" || node.kind === "view");
+    tableColumnsCacheRef.current.clear();
+  }, []);
 
   function openTable(node: DatabaseTreeNode) {
     if (!currentDatabase) return;
@@ -919,7 +981,87 @@ export function DatabaseWorkspace({
 
   function handleEditorMount(editor: Parameters<OnMount>[0], monaco: Parameters<OnMount>[1]) {
     monacoEditorRef.current = editor;
-    void monaco;
+    sqlCompletionProviderRef.current?.dispose();
+    sqlCompletionProviderRef.current = monaco.languages.registerCompletionItemProvider("sql", {
+      triggerCharacters: [".", " "],
+      provideCompletionItems: async (model: SqlCompletionModel, position: SqlCompletionPosition) => {
+        const word = model.getWordUntilPosition(position);
+        const range = {
+          startLineNumber: position.lineNumber,
+          endLineNumber: position.lineNumber,
+          startColumn: word.startColumn,
+          endColumn: word.endColumn,
+        };
+        const textUntilPosition = model.getValueInRange({
+          startLineNumber: 1,
+          startColumn: 1,
+          endLineNumber: position.lineNumber,
+          endColumn: position.column,
+        });
+        const tableName = tableNameBeforeDot(textUntilPosition);
+        const tableColumnSuggestions = tableName ? await loadSqlCompletionColumns(tableName) : [];
+        const suggestions = [
+          ...SQL_KEYWORD_COMPLETIONS.map((keyword) => ({
+            label: keyword,
+            kind: monaco.languages.CompletionItemKind.Keyword,
+            insertText: keyword,
+            range,
+          })),
+          ...SQL_FUNCTION_COMPLETIONS.map((name) => ({
+            label: name,
+            kind: monaco.languages.CompletionItemKind.Function,
+            insertText: `${name}($1)`,
+            insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+            range,
+          })),
+          ...databaseTablesRef.current.map((table) => ({
+            label: table.name,
+            kind: monaco.languages.CompletionItemKind.Class,
+            insertText: table.name,
+            detail: table.kind,
+            range,
+          })),
+          ...tableColumnSuggestions.map((column) => ({
+            label: column.name,
+            kind: monaco.languages.CompletionItemKind.Field,
+            insertText: column.name,
+            detail: parseColumnDetail(column.detail).dataType,
+            range,
+          })),
+        ];
+        return { suggestions };
+      },
+    });
+  }
+
+  async function loadSqlCompletionColumns(tableName: string) {
+    const database = currentDatabaseRef.current;
+    if (!database) return [];
+    const table = databaseTablesRef.current.find((node) => node.name === tableName);
+    if (!table) return [];
+    const cacheKey = `${database}\n${table.name}`;
+    const cached = tableColumnsCacheRef.current.get(cacheKey);
+    if (cached) return cached;
+    try {
+      const nodes = await callBackend<DatabaseTreeNode[]>("list_database_objects", {
+        request: {
+          connection_id: connectionId,
+          parent_kind: table.kind,
+          database,
+          schema: database,
+          table: table.name,
+        },
+      });
+      const columns = Array.isArray(nodes) ? nodes.filter((node) => node.kind === "column") : [];
+      tableColumnsCacheRef.current.set(cacheKey, columns);
+      return columns;
+    } catch (caught) {
+      void logFrontendError("frontend.database", "list_database_objects", caught, `${connectionId}:${database}:${table.name}`, {
+        database,
+        table: table.name,
+      });
+      return [];
+    }
   }
 
   function openEditorContextMenu(event: React.MouseEvent) {
@@ -1163,6 +1305,7 @@ export function DatabaseWorkspace({
         onDatabaseChange={setCurrentDatabase}
         onOpenTable={openTable}
         onTableContextMenu={openTableContextMenu}
+        onTablesChange={handleDatabaseTablesChange}
       />
       <div
         role="separator"
@@ -1230,7 +1373,7 @@ export function DatabaseWorkspace({
             <span className="database-query-panel__monaco">{t("database.monaco_support")}</span>
           </div>
           {isEditorOpen ? (
-            <div className="database-query-panel__editor" onContextMenu={openEditorContextMenu}>
+            <div className="database-query-panel__editor" ref={sqlEditorContainerRef} onContextMenu={openEditorContextMenu}>
               <Editor
                 height="100%"
                 defaultLanguage="sql"
@@ -1242,13 +1385,18 @@ export function DatabaseWorkspace({
                 options={{
                   automaticLayout: true,
                   contextmenu: false,
+                  fixedOverflowWidgets: true,
                   fontFamily,
                   fontSize,
                   lineNumbers: "on",
                   minimap: { enabled: false },
                   scrollBeyondLastLine: false,
                   tabSize: 2,
+                  wordBreak: "normal",
                   wordWrap: "on",
+                  wordWrapOverride1: "on",
+                  wordWrapOverride2: "on",
+                  wrappingStrategy: "advanced",
                 }}
               />
             </div>
@@ -2451,6 +2599,11 @@ function sortSqlFiles(files: DatabaseSqlFile[]) {
     .filter((file) => file.name !== "default")
     .sort((left, right) => left.name.localeCompare(right.name));
   return [defaultFile, ...otherFiles];
+}
+
+function tableNameBeforeDot(text: string) {
+  const match = text.match(/([A-Za-z_][\w$-]*)\.\s*$/);
+  return match?.[1] ?? null;
 }
 
 function emptyTableStructureDialog(table: DatabaseTreeNode): TableStructureDialogState {

@@ -9,12 +9,27 @@ import { pickDatabaseExportPath, pickSqlFile } from "../../lib/fileDialog";
 import { callBackend } from "../../lib/tauri";
 import { DatabaseWorkspace } from "./DatabaseWorkspace";
 
-const { executeEditsMock, focusMock, monacoEditorMock, pushUndoStopMock, triggerMock, setSelectedSqlText } = vi.hoisted(() => {
+const {
+  completionProviderDisposeMock,
+  executeEditsMock,
+  focusMock,
+  layoutMock,
+  monacoEditorMock,
+  pushUndoStopMock,
+  registerCompletionItemProviderMock,
+  triggerMock,
+  setSelectedSqlText,
+} = vi.hoisted(() => {
   let selectedSqlText = "";
+  const completionProviderDisposeMock = vi.fn();
+  const registerCompletionItemProviderMock = vi.fn(() => ({ dispose: completionProviderDisposeMock }));
   return {
+    completionProviderDisposeMock,
     executeEditsMock: vi.fn(),
     focusMock: vi.fn(),
+    layoutMock: vi.fn(),
     pushUndoStopMock: vi.fn(),
+    registerCompletionItemProviderMock,
     triggerMock: vi.fn(),
     setSelectedSqlText: (value: string) => {
       selectedSqlText = value;
@@ -27,9 +42,15 @@ const { executeEditsMock, focusMock, monacoEditorMock, pushUndoStopMock, trigger
       options?: {
         automaticLayout?: boolean;
         contextmenu?: boolean;
+        fixedOverflowWidgets?: boolean;
         fontFamily?: string;
         fontSize?: number;
         minimap?: { enabled?: boolean };
+        wordBreak?: string;
+        wordWrap?: string;
+        wordWrapOverride1?: string;
+        wordWrapOverride2?: string;
+        wrappingStrategy?: string;
       };
       wrapperProps?: { "aria-label"?: string };
       onChange?: (value?: string) => void;
@@ -38,8 +59,15 @@ const { executeEditsMock, focusMock, monacoEditorMock, pushUndoStopMock, trigger
         focus: () => void;
         getSelection: () => { startLineNumber: number; startColumn: number; endLineNumber: number; endColumn: number; isEmpty: () => boolean } | null;
         getModel: () => { getValueInRange: () => string };
+        layout: (dimension?: { width: number; height: number }) => void;
         pushUndoStop: () => void;
         trigger: (source: string, handlerId: string, payload: unknown) => void;
+      }, monaco: {
+        languages: {
+          CompletionItemKind: Record<string, number>;
+          CompletionItemInsertTextRule: Record<string, number>;
+          registerCompletionItemProvider: typeof registerCompletionItemProviderMock;
+        };
       }) => void;
     }) => (
       <textarea
@@ -50,9 +78,15 @@ const { executeEditsMock, focusMock, monacoEditorMock, pushUndoStopMock, trigger
         data-theme={props.theme}
         data-automatic-layout={String(props.options?.automaticLayout)}
         data-contextmenu={String(props.options?.contextmenu)}
+        data-fixed-overflow-widgets={String(props.options?.fixedOverflowWidgets)}
         data-font-family={props.options?.fontFamily}
         data-font-size={props.options?.fontSize}
         data-minimap={String(props.options?.minimap?.enabled)}
+        data-word-break={props.options?.wordBreak}
+        data-word-wrap={props.options?.wordWrap}
+        data-word-wrap-override-1={props.options?.wordWrapOverride1}
+        data-word-wrap-override-2={props.options?.wordWrapOverride2}
+        data-wrapping-strategy={props.options?.wrappingStrategy}
         value={props.value ?? ""}
         onChange={(event) => props.onChange?.(event.target.value)}
         ref={(element) => {
@@ -73,9 +107,23 @@ const { executeEditsMock, focusMock, monacoEditorMock, pushUndoStopMock, trigger
             getModel: () => ({
               getValueInRange: () => selectedSqlText,
             }),
-            pushUndoStop: pushUndoStopMock,
-            trigger: triggerMock,
-          });
+        layout: layoutMock,
+        pushUndoStop: pushUndoStopMock,
+        trigger: triggerMock,
+      }, {
+        languages: {
+          CompletionItemKind: {
+            Keyword: 1,
+            Function: 2,
+            Class: 3,
+            Field: 4,
+          },
+          CompletionItemInsertTextRule: {
+            InsertAsSnippet: 1,
+          },
+          registerCompletionItemProvider: registerCompletionItemProviderMock,
+        },
+      });
         }}
       />
     )),
@@ -106,11 +154,33 @@ const writeClipboardTextMock = vi.mocked(writeClipboardText);
 const pickSqlFileMock = vi.mocked(pickSqlFile);
 const pickDatabaseExportPathMock = vi.mocked(pickDatabaseExportPath);
 
+class MockResizeObserver {
+  static instances: MockResizeObserver[] = [];
+
+  constructor(private readonly callback: ResizeObserverCallback) {
+    MockResizeObserver.instances.push(this);
+  }
+
+  observe() {}
+
+  disconnect() {}
+
+  emit(width: number, height: number) {
+    this.callback([
+      {
+        contentRect: { width, height },
+      } as ResizeObserverEntry,
+    ], this as unknown as ResizeObserver);
+  }
+}
+
 describe("DatabaseWorkspace", () => {
   afterEach(() => {
     cleanup();
     vi.clearAllMocks();
     vi.useRealTimers();
+    vi.unstubAllGlobals();
+    MockResizeObserver.instances = [];
     setSelectedSqlText("");
   });
 
@@ -261,6 +331,8 @@ describe("DatabaseWorkspace", () => {
   });
 
   it("uses Monaco as the SQL editor", () => {
+    callBackendMock.mockResolvedValue([]);
+
     renderDatabaseWorkspace("app");
 
     const editor = screen.getByTestId("database-monaco-editor");
@@ -270,7 +342,102 @@ describe("DatabaseWorkspace", () => {
     expect(editor).toHaveAttribute("data-font-size", "14");
     expect(editor).toHaveAttribute("data-automatic-layout", "true");
     expect(editor).toHaveAttribute("data-contextmenu", "false");
+    expect(editor).toHaveAttribute("data-fixed-overflow-widgets", "true");
     expect(editor).toHaveAttribute("data-minimap", "false");
+    expect(editor).toHaveAttribute("data-word-break", "normal");
+    expect(editor).toHaveAttribute("data-word-wrap", "on");
+    expect(editor).toHaveAttribute("data-word-wrap-override-1", "on");
+    expect(editor).toHaveAttribute("data-word-wrap-override-2", "on");
+    expect(editor).toHaveAttribute("data-wrapping-strategy", "advanced");
+  });
+
+  it("lays out the SQL editor to the visible editor pane width", () => {
+    callBackendMock.mockResolvedValue([]);
+    vi.stubGlobal("ResizeObserver", MockResizeObserver);
+
+    renderDatabaseWorkspace("app");
+
+    expect(MockResizeObserver.instances).toHaveLength(1);
+    MockResizeObserver.instances[0].emit(420, 160);
+
+    expect(layoutMock).toHaveBeenCalledWith({ width: 420, height: 160 });
+  });
+
+  it("registers SQL editor completion suggestions and disposes them on unmount", () => {
+    callBackendMock.mockResolvedValue([]);
+
+    const { unmount } = renderDatabaseWorkspace("app");
+
+    expect(registerCompletionItemProviderMock).toHaveBeenCalledWith("sql", expect.objectContaining({
+      triggerCharacters: [".", " "],
+      provideCompletionItems: expect.any(Function),
+    }));
+
+    unmount();
+
+    expect(completionProviderDisposeMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("suggests SQL keywords, current database tables and lazy loaded table columns", async () => {
+    callBackendMock.mockImplementation((command, payload) => {
+      if (command !== "list_database_objects") return Promise.resolve([]);
+      const request = (payload as { request: { parent_kind?: string; database?: string; table?: string } }).request;
+      if (!request.parent_kind) {
+        return Promise.resolve([{ id: "database:app", name: "app", kind: "database", has_children: true }]);
+      }
+      if (request.parent_kind === "database") {
+        return Promise.resolve([
+          { id: "table:app.users", name: "users", kind: "table", has_children: true, detail: "BASE TABLE" },
+          { id: "table:app.orders", name: "orders", kind: "table", has_children: true, detail: "BASE TABLE" },
+        ]);
+      }
+      if (request.parent_kind === "table" && request.table === "users") {
+        return Promise.resolve([
+          { id: "column:app.users.id", name: "id", kind: "column", has_children: false, detail: "type=int(11);nullable=NO" },
+          { id: "column:app.users.name", name: "name", kind: "column", has_children: false, detail: "type=varchar(100);nullable=YES" },
+        ]);
+      }
+      return Promise.resolve([]);
+    });
+    renderDatabaseWorkspace("app");
+
+    expect(await screen.findByText("users")).toBeInTheDocument();
+    const providerCalls = registerCompletionItemProviderMock.mock.calls as unknown as Array<[string, {
+      provideCompletionItems: (
+        model: { getWordUntilPosition: () => { startColumn: number; endColumn: number }; getValueInRange: () => string },
+        position: { lineNumber: number; column: number },
+      ) => Promise<{ suggestions: Array<{ label: string }> }>;
+    }]>;
+    const provider = providerCalls[providerCalls.length - 1]?.[1];
+
+    const tableResult = await provider.provideCompletionItems(
+      {
+        getWordUntilPosition: () => ({ startColumn: 15, endColumn: 15 }),
+        getValueInRange: () => "select * from ",
+      },
+      { lineNumber: 1, column: 15 },
+    );
+
+    expect(tableResult.suggestions.map((suggestion) => suggestion.label)).toEqual(expect.arrayContaining(["SELECT", "COUNT", "users", "orders"]));
+
+    const columnResult = await provider.provideCompletionItems(
+      {
+        getWordUntilPosition: () => ({ startColumn: 14, endColumn: 14 }),
+        getValueInRange: () => "select users.",
+      },
+      { lineNumber: 1, column: 14 },
+    );
+
+    expect(columnResult.suggestions.map((suggestion) => suggestion.label)).toEqual(expect.arrayContaining(["id", "name"]));
+    expect(callBackendMock).toHaveBeenCalledWith("list_database_objects", {
+      request: {
+        connection_id: "mysql-dev",
+        parent_kind: "table",
+        database: "app",
+        schema: "app",
+        table: "users",
+      },
+    });
   });
 
   it("shows node loading errors below the database object tree", async () => {
