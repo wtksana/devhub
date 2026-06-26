@@ -382,6 +382,7 @@ fn builds_mysql_table_structure_ddl_for_add_modify_and_drop() {
                     nullable: false,
                     default_value: None,
                     comment: None,
+                    extra: None,
                 },
             },
             TableStructureOperation::AddColumn {
@@ -391,6 +392,7 @@ fn builds_mysql_table_structure_ddl_for_add_modify_and_drop() {
                     nullable: true,
                     default_value: None,
                     comment: None,
+                    extra: None,
                 },
             },
             TableStructureOperation::DropColumn {
@@ -419,6 +421,7 @@ fn builds_mysql_table_structure_ddl_with_default_and_comment() {
                 nullable: false,
                 default_value: Some("anonymous".to_string()),
                 comment: Some("用户'昵称".to_string()),
+                extra: None,
             },
         }],
     )
@@ -427,6 +430,31 @@ fn builds_mysql_table_structure_ddl_with_default_and_comment() {
     assert_eq!(
         ddl,
         "ALTER TABLE `users`\n  CHANGE COLUMN `name` `name` varchar(100) NOT NULL DEFAULT 'anonymous' COMMENT '用户''昵称';"
+    );
+}
+
+#[test]
+fn preserves_mysql_column_extra_when_building_table_structure_ddl() {
+    let ddl = build_table_structure_ddl(
+        "mysql",
+        "users",
+        &[TableStructureOperation::ModifyColumn {
+            original_name: "id".to_string(),
+            column: TableStructureColumnDefinition {
+                name: "id".to_string(),
+                data_type: "int(11)".to_string(),
+                nullable: false,
+                default_value: None,
+                comment: Some("主键".to_string()),
+                extra: Some("auto_increment".to_string()),
+            },
+        }],
+    )
+    .unwrap();
+
+    assert_eq!(
+        ddl,
+        "ALTER TABLE `users`\n  CHANGE COLUMN `id` `id` int(11) NOT NULL AUTO_INCREMENT COMMENT '主键';"
     );
 }
 
@@ -443,6 +471,7 @@ fn keeps_mysql_empty_string_default_literal() {
                 nullable: true,
                 default_value: Some("''".to_string()),
                 comment: Some("测试".to_string()),
+                extra: None,
             },
         }],
     )

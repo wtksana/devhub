@@ -1184,6 +1184,71 @@ describe("DatabaseWorkspace", () => {
     expect(within(dialog).getByText(/DEFAULT 'anonymous' COMMENT '用户名'/)).toBeInTheDocument();
   });
 
+  it("preserves column extra metadata when editing table structure fields", async () => {
+    callBackendMock.mockImplementation((command, payload) => {
+      if (command === "list_database_objects") {
+        const request = (payload as { request: { parent_kind?: string; table?: string } }).request;
+        if (!request.parent_kind) {
+          return Promise.resolve([{ id: "database:app", name: "app", kind: "database", has_children: true }]);
+        }
+        if (request.parent_kind === "table" && request.table === "users") {
+          return Promise.resolve([
+            {
+              id: "column:app.users.id",
+              name: "id",
+              kind: "column",
+              has_children: false,
+              detail: "type=int(11);nullable=NO;default=;default_null=YES;extra=auto_increment;comment=",
+            },
+          ]);
+        }
+        return Promise.resolve([{ id: "table:app.users", name: "users", kind: "table", has_children: true }]);
+      }
+      if (command === "preview_database_table_structure") {
+        return Promise.resolve({
+          ddl: "ALTER TABLE `users`\n  CHANGE COLUMN `id` `id` int(11) NOT NULL AUTO_INCREMENT COMMENT '主键';",
+          duration_ms: 0,
+        });
+      }
+      return Promise.resolve([]);
+    });
+
+    renderDatabaseWorkspace("app");
+    const tableRow = (await screen.findByRole("button", { name: "users" })).closest("li");
+    expect(tableRow).not.toBeNull();
+    fireEvent.contextMenu(tableRow!, { clientX: 10, clientY: 20 });
+    await userEvent.click(screen.getByRole("menuitem", { name: "编辑" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "编辑表 users" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "id int(11)" }));
+    await userEvent.type(within(dialog).getByLabelText("注释"), "主键");
+    fireEvent.blur(within(dialog).getByLabelText("注释"));
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("preview_database_table_structure", {
+        request: {
+          connection_id: "mysql-dev",
+          database: "app",
+          table: "users",
+          operations: [
+            {
+              kind: "modify_column",
+              original_name: "id",
+              column: {
+                name: "id",
+                data_type: "int(11)",
+                nullable: false,
+                comment: "主键",
+                extra: "auto_increment",
+              },
+            },
+          ],
+        },
+      });
+    });
+    expect(within(dialog).getByText(/AUTO_INCREMENT COMMENT '主键'/)).toBeInTheDocument();
+  });
+
   it("renames table from table structure dialog", async () => {
     callBackendMock.mockImplementation((command, payload) => {
       if (command === "list_database_objects") {

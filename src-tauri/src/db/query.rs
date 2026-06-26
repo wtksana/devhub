@@ -380,6 +380,10 @@ fn mysql_column_definition(column: &TableStructureColumnDefinition) -> Result<St
     if let Some(default_value) = mysql_column_default_clause(column) {
         definition.push_str(&default_value);
     }
+    if let Some(extra) = column.extra.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+        definition.push(' ');
+        definition.push_str(&extra.to_ascii_uppercase());
+    }
     if let Some(comment) = column.comment.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
         definition.push_str(" COMMENT ");
         definition.push_str(&mysql_string_literal(comment));

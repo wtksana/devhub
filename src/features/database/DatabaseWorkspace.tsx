@@ -2329,6 +2329,7 @@ function tableStructureColumnDefinition(column: TableStructureColumnDraft, name:
     nullable: column.nullable,
     ...(column.defaultValue.trim() ? { default_value: column.defaultValue.trim() } : {}),
     ...(column.comment.trim() ? { comment: column.comment.trim() } : {}),
+    ...(column.extra.trim() ? { extra: column.extra.trim() } : {}),
   };
 }
 

@@ -88,6 +88,7 @@ export interface TableStructureColumnDefinition {
   nullable: boolean;
   default_value?: string | null;
   comment?: string | null;
+  extra?: string | null;
 }
 
 export interface TableStructureIndexDefinition {

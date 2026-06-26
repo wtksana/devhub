@@ -110,6 +110,7 @@ pub struct TableStructureColumnDefinition {
     pub nullable: bool,
     pub default_value: Option<String>,
     pub comment: Option<String>,
+    pub extra: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
