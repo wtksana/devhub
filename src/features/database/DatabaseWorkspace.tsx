@@ -650,7 +650,7 @@ export function DatabaseWorkspace({
     setTableStructureDialog((current) => current ? { ...current, selectedItem } : current);
   }, []);
 
-  function requestApplyTableStructureChanges() {
+  async function requestApplyTableStructureChanges() {
     if (!tableStructureDialog || !currentDatabase) return;
     const validationError = validateTableStructureDialog(tableStructureDialog, t);
     if (validationError) {
@@ -663,13 +663,45 @@ export function DatabaseWorkspace({
       return;
     }
     if (hasDangerousTableStructureOperation(operations)) {
-      setPendingTableStructureConfirmation({
-        operations,
-        ddl: tableStructureDialog.ddlPreview,
-      });
+      const ddl = tableStructureDialog.ddlPreview.trim()
+        ? tableStructureDialog.ddlPreview
+        : await previewTableStructureChanges(tableStructureDialog, operations);
+      if (!ddl) return;
+      setPendingTableStructureConfirmation({ operations, ddl });
       return;
     }
     void applyTableStructureChanges(operations);
+  }
+
+  async function previewTableStructureChanges(dialog: TableStructureDialogState, operations: TableStructureOperation[]) {
+    setIsTableStructurePreviewing(true);
+    setTableStructureDialog({ ...dialog, error: null, statusMessage: "" });
+    try {
+      const result = await callBackend<DatabaseTableStructureUpdateResult>("preview_database_table_structure", {
+        request: {
+          connection_id: connectionId,
+          database: currentDatabase,
+          table: dialog.table.name,
+          operations,
+        },
+      });
+      setTableStructureDialog((current) => current ? {
+        ...current,
+        ddlPreview: result.ddl,
+        durationMs: null,
+        statusMessage: "",
+        error: null,
+      } : current);
+      return result.ddl;
+    } catch (caught) {
+      setTableStructureDialog((current) => current ? {
+        ...current,
+        error: caught instanceof Error ? caught.message : String(caught),
+      } : current);
+      return null;
+    } finally {
+      setIsTableStructurePreviewing(false);
+    }
   }
 
   async function applyTableStructureChanges(operations: TableStructureOperation[]) {
@@ -1473,7 +1505,7 @@ export function DatabaseWorkspace({
               <button
                 type="button"
                 disabled={isTableStructurePreviewing || tableStructureDialog.isSaving}
-                onClick={requestApplyTableStructureChanges}
+                onClick={() => void requestApplyTableStructureChanges()}
               >
                 {tableStructureDialog.isSaving ? t("database.executing") : t("database.apply_table_structure_changes")}
               </button>
