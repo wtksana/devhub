@@ -1629,6 +1629,33 @@ p {
   margin: 0 0 8px 86px;
 }
 
+.database-table-structure-dialog__index-columns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.database-table-structure-dialog__index-column-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  background: var(--input-bg);
+  color: var(--text);
+}
+
+.database-table-structure-dialog__index-column-option span {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: inherit;
+}
+
 .database-table-structure-dialog__definition {
   display: grid;
   grid-template-columns: 78px minmax(0, 1fr);

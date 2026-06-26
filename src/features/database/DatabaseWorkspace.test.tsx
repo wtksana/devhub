@@ -1293,6 +1293,7 @@ describe("DatabaseWorkspace", () => {
         if (request.parent_kind === "table" && request.table === "users") {
           return Promise.resolve([
             { id: "column:app.users.id", name: "id", kind: "column", has_children: false, detail: "int(11) NO" },
+            { id: "column:app.users.name", name: "name", kind: "column", has_children: false, detail: "varchar(255) YES" },
             {
               id: "index:app.users.idx_users_name",
               name: "idx_users_name",
@@ -1321,7 +1322,7 @@ describe("DatabaseWorkspace", () => {
     expect(within(dialog).getByText("索引 idx_users_name")).toBeInTheDocument();
     expect(within(dialog).getByDisplayValue("idx_users_name")).toBeInTheDocument();
     expect(within(dialog).getByLabelText("唯一索引")).not.toBeChecked();
-    expect(within(dialog).getByDisplayValue("name")).toBeInTheDocument();
+    expect(within(dialog).getByRole("checkbox", { name: "name" })).toBeChecked();
     expect(within(dialog).getByText("KEY `idx_users_name` (`name`)")).toBeInTheDocument();
   });
 
@@ -1367,9 +1368,8 @@ describe("DatabaseWorkspace", () => {
     await userEvent.clear(within(dialog).getByLabelText("索引名"));
     await userEvent.type(within(dialog).getByLabelText("索引名"), "idx_users_name_email");
     fireEvent.blur(within(dialog).getByLabelText("索引名"));
-    await userEvent.clear(within(dialog).getByLabelText("索引字段"));
-    await userEvent.type(within(dialog).getByLabelText("索引字段"), "name, email");
-    fireEvent.blur(within(dialog).getByLabelText("索引字段"));
+    expect(within(dialog).getByRole("checkbox", { name: "name" })).toBeChecked();
+    await userEvent.click(within(dialog).getByRole("checkbox", { name: "email" }));
     await userEvent.click(within(dialog).getByLabelText("唯一索引"));
 
     await waitFor(() => {

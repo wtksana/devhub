@@ -1815,19 +1815,31 @@ const TableStructureEditor = memo(function TableStructureEditor({
           />
           <span>{t("database.unique_index")}</span>
         </label>
-        <label className="database-table-structure-dialog__field">
+        <div className="database-table-structure-dialog__field">
           <span>{t("database.index_columns")}</span>
-          <TableStructureTextInput
-            ariaLabel={t("database.index_columns")}
-            value={index.columns.join(", ")}
-            onCommit={(columns) => {
-              const nextColumns = splitIndexColumns(columns);
-              if (nextColumns.join(",") !== index.columns.join(",")) {
-                onUpdateIndex(index.id, { columns: nextColumns });
-              }
-            }}
-          />
-        </label>
+          <div className="database-table-structure-dialog__index-columns">
+            {dialog.draftColumns.map((column) => {
+              const columnName = column.name.trim();
+              if (!columnName) return null;
+              const checked = index.columns.includes(columnName);
+              return (
+                <label key={column.id} className="database-table-structure-dialog__index-column-option">
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={(event) => {
+                      const nextColumns = event.target.checked
+                        ? [...index.columns, columnName]
+                        : index.columns.filter((candidate) => candidate !== columnName);
+                      onUpdateIndex(index.id, { columns: nextColumns });
+                    }}
+                  />
+                  <span>{columnName}</span>
+                </label>
+              );
+            })}
+          </div>
+        </div>
         <div className="database-table-structure-dialog__definition">
           <span>{t("database.index_definition")}</span>
           <pre>{index.definition || "-"}</pre>
