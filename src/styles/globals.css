@@ -1717,7 +1717,7 @@ p {
 .database-table-structure-dialog__definition {
   display: grid;
   grid-template-columns: 78px minmax(0, 1fr);
-  align-items: start;
+  align-items: center;
   gap: 8px;
   min-width: 0;
   margin-top: 8px;
@@ -1731,15 +1731,16 @@ p {
 
 .database-table-structure-dialog__definition pre {
   min-width: 0;
+  height: 30px;
   margin: 0;
-  padding: 7px 8px;
+  padding: 0 8px;
   border: 1px solid var(--border-subtle);
   border-radius: 3px;
   background: var(--input-bg);
   color: var(--text);
   font-family: var(--ui-font-family);
   font-size: var(--ui-font-size-small, 15px);
-  line-height: 1.45;
+  line-height: 28px;
   overflow: auto;
   white-space: pre-wrap;
 }

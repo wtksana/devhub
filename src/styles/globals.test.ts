@@ -128,9 +128,13 @@ describe("global style defaults", () => {
     );
     expect(globalsCss).toContain(".database-table-structure-dialog__field span {\n  line-height: 30px;");
     expect(globalsCss).toContain(
-      ".database-table-structure-dialog__definition {\n  display: grid;\n  grid-template-columns: 78px minmax(0, 1fr);\n  align-items: start;",
+      ".database-table-structure-dialog__definition {\n  display: grid;\n  grid-template-columns: 78px minmax(0, 1fr);\n  align-items: center;",
     );
     expect(globalsCss).toContain(".database-table-structure-dialog__definition > span {\n  color: var(--muted);\n  line-height: 30px;");
+    expect(globalsCss).toContain(
+      ".database-table-structure-dialog__definition pre {\n  min-width: 0;\n  height: 30px;\n  margin: 0;\n  padding: 0 8px;",
+    );
+    expect(globalsCss).toContain("line-height: 28px;");
   });
 
   it("renders workspace split resize handles without occupying grid tracks", () => {
