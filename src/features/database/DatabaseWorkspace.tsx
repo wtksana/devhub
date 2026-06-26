@@ -2212,9 +2212,17 @@ function validateTableStructureDialog(dialog: TableStructureDialogState, t: Retu
   if (!dialog.draftTableName.trim()) {
     return t("database.validation_table_name_required");
   }
+  const columnNames = new Set<string>();
   for (const column of dialog.draftColumns) {
     const name = column.name.trim();
     const dataType = column.dataType.trim();
+    if (name) {
+      const normalizedName = name.toLowerCase();
+      if (columnNames.has(normalizedName)) {
+        return t("database.validation_column_name_duplicate");
+      }
+      columnNames.add(normalizedName);
+    }
     const original = column.originalName
       ? dialog.originalColumns.find((candidate) => candidate.originalName === column.originalName)
       : null;
@@ -2223,9 +2231,17 @@ function validateTableStructureDialog(dialog: TableStructureDialogState, t: Retu
     if (!name) return t("database.validation_column_name_required");
     if (!dataType) return t("database.validation_column_type_required");
   }
+  const indexNames = new Set<string>();
   for (const index of dialog.draftIndexes) {
     const name = index.name.trim();
     const columns = index.columns.map((column) => column.trim()).filter(Boolean);
+    if (name) {
+      const normalizedName = name.toLowerCase();
+      if (indexNames.has(normalizedName)) {
+        return t("database.validation_index_name_duplicate");
+      }
+      indexNames.add(normalizedName);
+    }
     const original = index.originalName
       ? dialog.originalIndexes.find((candidate) => candidate.originalName === index.originalName)
       : null;

@@ -1034,6 +1034,87 @@ describe("DatabaseWorkspace", () => {
     expect(callBackendMock.mock.calls.filter(([command]) => command === "update_database_table_structure")).toHaveLength(0);
   });
 
+  it("rejects duplicate table structure names before applying changes", async () => {
+    callBackendMock.mockImplementation((command, payload) => {
+      if (command === "list_database_objects") {
+        const request = (payload as { request: { parent_kind?: string; table?: string } }).request;
+        if (!request.parent_kind) {
+          return Promise.resolve([{ id: "database:app", name: "app", kind: "database", has_children: true }]);
+        }
+        if (request.parent_kind === "table" && request.table === "users") {
+          return Promise.resolve([
+            { id: "column:app.users.id", name: "id", kind: "column", has_children: false, detail: "int(11) NO" },
+            { id: "column:app.users.name", name: "name", kind: "column", has_children: false, detail: "varchar(255) YES" },
+          ]);
+        }
+        return Promise.resolve([{ id: "table:app.users", name: "users", kind: "table", has_children: true }]);
+      }
+      if (command === "update_database_table_structure") {
+        return Promise.resolve({ ddl: "", duration_ms: 1 });
+      }
+      return Promise.resolve([]);
+    });
+
+    renderDatabaseWorkspace("app");
+    const tableRow = (await screen.findByRole("button", { name: "users" })).closest("li");
+    expect(tableRow).not.toBeNull();
+    fireEvent.contextMenu(tableRow!, { clientX: 10, clientY: 20 });
+    await userEvent.click(screen.getByRole("menuitem", { name: "编辑" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "编辑表 users" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "新增字段" }));
+    await userEvent.type(within(dialog).getByLabelText("字段名"), "name");
+    fireEvent.blur(within(dialog).getByLabelText("字段名"));
+    await userEvent.click(within(dialog).getByRole("button", { name: "执行更改" }));
+
+    expect(within(dialog).getByRole("alert")).toHaveTextContent("字段名不能重复");
+    expect(callBackendMock.mock.calls.filter(([command]) => command === "update_database_table_structure")).toHaveLength(0);
+  });
+
+  it("rejects duplicate table index names before applying changes", async () => {
+    callBackendMock.mockImplementation((command, payload) => {
+      if (command === "list_database_objects") {
+        const request = (payload as { request: { parent_kind?: string; table?: string } }).request;
+        if (!request.parent_kind) {
+          return Promise.resolve([{ id: "database:app", name: "app", kind: "database", has_children: true }]);
+        }
+        if (request.parent_kind === "table" && request.table === "users") {
+          return Promise.resolve([
+            { id: "column:app.users.name", name: "name", kind: "column", has_children: false, detail: "varchar(255) YES" },
+            {
+              id: "index:app.users.idx_users_name",
+              name: "idx_users_name",
+              kind: "index",
+              has_children: false,
+              detail: "unique=NO;columns=name;definition=KEY `idx_users_name` (`name`)",
+            },
+          ]);
+        }
+        return Promise.resolve([{ id: "table:app.users", name: "users", kind: "table", has_children: true }]);
+      }
+      if (command === "update_database_table_structure") {
+        return Promise.resolve({ ddl: "", duration_ms: 1 });
+      }
+      return Promise.resolve([]);
+    });
+
+    renderDatabaseWorkspace("app");
+    const tableRow = (await screen.findByRole("button", { name: "users" })).closest("li");
+    expect(tableRow).not.toBeNull();
+    fireEvent.contextMenu(tableRow!, { clientX: 10, clientY: 20 });
+    await userEvent.click(screen.getByRole("menuitem", { name: "编辑" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "编辑表 users" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "新增索引" }));
+    await userEvent.clear(within(dialog).getByLabelText("索引名"));
+    await userEvent.type(within(dialog).getByLabelText("索引名"), "idx_users_name");
+    fireEvent.blur(within(dialog).getByLabelText("索引名"));
+    await userEvent.click(within(dialog).getByRole("button", { name: "执行更改" }));
+
+    expect(within(dialog).getByRole("alert")).toHaveTextContent("索引名不能重复");
+    expect(callBackendMock.mock.calls.filter(([command]) => command === "update_database_table_structure")).toHaveLength(0);
+  });
+
   it("edits column default value and comment in table structure dialog", async () => {
     callBackendMock.mockImplementation((command, payload) => {
       if (command === "list_database_objects") {
