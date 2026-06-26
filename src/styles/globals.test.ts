@@ -155,6 +155,8 @@ describe("global style defaults", () => {
     expect(globalsCss).toContain(".database-table-structure-dialog__group-actions {\n  display: inline-flex;");
     expect(globalsCss).toContain(".database-table-structure-dialog__group-actions .database-table-structure-dialog__add-column-button {\n  display: grid;");
     expect(globalsCss).toContain(".database-table-structure-dialog__group-actions .app-icon {\n  width: 15px;");
+    expect(globalsCss).toContain(".database-table-structure-dialog__group-actions .database-table-structure-dialog__add-column-button:disabled {\n  background: transparent;");
+    expect(globalsCss).toContain(".database-table-structure-dialog__group-actions .database-table-structure-dialog__add-column-button:disabled:hover {\n  background: transparent;");
   });
 
   it("renders workspace split resize handles without occupying grid tracks", () => {
