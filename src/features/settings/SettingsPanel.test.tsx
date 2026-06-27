@@ -188,13 +188,31 @@ describe("SettingsPanel", () => {
 
     renderSettingsPanel();
 
-    await userEvent.click(screen.getByRole("button", { name: "Edit in settings.json" }));
+    await userEvent.click(screen.getByRole("button", { name: "在 settings.json 中编辑" }));
 
     expect(scrollIntoView).toHaveBeenCalledWith({ behavior: "smooth", block: "start" });
     expect(within(screen.getByLabelText("设置分类")).getByRole("button", { name: "settings.json" })).toHaveAttribute(
       "aria-pressed",
       "true",
     );
+  });
+
+  it("filters settings rows and categories from the search box", async () => {
+    renderSettingsPanel();
+
+    await userEvent.type(screen.getByLabelText("搜索设置"), "日志目录");
+
+    expect(screen.getByRole("heading", { name: "日志" })).toBeInTheDocument();
+    expect(screen.getByText("启用日志")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "外观" })).not.toBeInTheDocument();
+    expect(screen.queryByText("主题")).not.toBeInTheDocument();
+    expect(within(screen.getByLabelText("设置分类")).getByRole("button", { name: "日志" })).toBeInTheDocument();
+    expect(within(screen.getByLabelText("设置分类")).queryByRole("button", { name: "外观" })).not.toBeInTheDocument();
+
+    await userEvent.clear(screen.getByLabelText("搜索设置"));
+
+    expect(screen.getByRole("heading", { name: "外观" })).toBeInTheDocument();
+    expect(within(screen.getByLabelText("设置分类")).getByRole("button", { name: "外观" })).toBeInTheDocument();
   });
 
   it("saves layout panel widths after blur", async () => {

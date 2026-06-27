@@ -170,6 +170,57 @@ describe("SftpWorkspace", () => {
     expect(screen.getByText("2026-06-18 10:20:30")).toBeInTheDocument();
   });
 
+  it("shows a retry action when opening the SFTP session fails", async () => {
+    callBackendMock.mockRejectedValueOnce(new Error("auth failed"));
+
+    renderSftpWorkspace({ connectionId: "prod-web-01" });
+
+    expect(await screen.findByText("SFTP 连接失败")).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("auth failed");
+
+    callBackendMock.mockResolvedValueOnce({ session_id: "sftp-session-1" });
+    callBackendMock.mockResolvedValueOnce([]);
+    await userEvent.click(screen.getByRole("button", { name: "重试连接" }));
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("open_sftp_session", {
+        request: { connection_id: "prod-web-01" },
+      });
+    });
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("list_sftp_directory", {
+        request: { session_id: "sftp-session-1", path: "/" },
+      });
+    });
+  });
+
+  it("retries directory loading after a list failure", async () => {
+    callBackendMock.mockResolvedValueOnce({ session_id: "sftp-session-1" });
+    callBackendMock.mockRejectedValueOnce(new Error("permission denied"));
+
+    renderSftpWorkspace({ connectionId: "prod-web-01" });
+
+    expect(await screen.findByText("SFTP 加载失败")).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("permission denied");
+
+    callBackendMock.mockResolvedValueOnce([
+      {
+        name: "app.log",
+        path: "/app.log",
+        kind: "file",
+        size: 128,
+      },
+    ]);
+    await userEvent.click(screen.getByRole("button", { name: "重试" }));
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("list_sftp_directory", {
+        request: { session_id: "sftp-session-1", path: "/" },
+      });
+    });
+    expect(await screen.findByText("app.log")).toBeInTheDocument();
+  });
+
   it("opens a directory by double clicking it", async () => {
     mockOpenSession([
       {

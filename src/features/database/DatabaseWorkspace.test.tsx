@@ -450,6 +450,32 @@ describe("DatabaseWorkspace", () => {
     });
   });
 
+  it("retries database object loading from the error panel", async () => {
+    callBackendMock.mockRejectedValueOnce(new Error("metadata failed"));
+
+    renderDatabaseWorkspace("app");
+
+    expect(await screen.findByText("数据库对象加载失败")).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("metadata failed");
+
+    callBackendMock.mockResolvedValueOnce([
+      { id: "database:app", name: "app", kind: "database", has_children: true },
+    ]);
+    callBackendMock.mockResolvedValueOnce([
+      { id: "table:app.users", name: "users", kind: "table", has_children: true },
+    ]);
+    await userEvent.click(screen.getByRole("button", { name: "重试" }));
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("list_database_objects", {
+        request: {
+          connection_id: "mysql-dev",
+        },
+      });
+    });
+    expect(await screen.findByText("users")).toBeInTheDocument();
+  });
+
   it("executes selected SQL from the editor context menu and renders query result rows", async () => {
     callBackendMock.mockImplementation((command) => {
       if (command === "execute_database_query") {

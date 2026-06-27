@@ -70,6 +70,7 @@ pub fn write_app_log(
     logger.write(&settings.logging, log_entry)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn log_operation(
     settings_store: &SettingsStore,
     logger: &AppLogger,

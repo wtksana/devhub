@@ -2638,6 +2638,38 @@ th.database-table-browser__row-number {
   color: var(--danger);
 }
 
+.workspace-error-panel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--danger) 30%, var(--border));
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--danger) 8%, var(--panel));
+}
+
+.workspace-error-panel--compact {
+  margin: 8px;
+}
+
+.workspace-error-panel strong {
+  display: block;
+  margin-bottom: 2px;
+  color: var(--text);
+  font-weight: 650;
+}
+
+.workspace-error-panel p {
+  margin: 0;
+}
+
+.workspace-error-panel button {
+  flex: 0 0 auto;
+  height: 28px;
+  padding: 0 12px;
+}
+
 .settings-json,
 .settings-section,
 .keymap-editor {

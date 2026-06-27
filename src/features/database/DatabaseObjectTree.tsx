@@ -88,6 +88,7 @@ export function DatabaseObjectTree({
   const [tables, setTables] = useState<DatabaseTreeNode[]>([]);
   const [tableFilter, setTableFilter] = useState("");
   const [error, setError] = useState("");
+  const [retryKey, setRetryKey] = useState(0);
 
   useEffect(() => {
     let canceled = false;
@@ -105,7 +106,7 @@ export function DatabaseObjectTree({
     return () => {
       canceled = true;
     };
-  }, [connectionId]);
+  }, [connectionId, retryKey]);
 
   useEffect(() => {
     let canceled = false;
@@ -122,7 +123,7 @@ export function DatabaseObjectTree({
     return () => {
       canceled = true;
     };
-  }, [connectionId, onTablesChange, selectedDatabase, refreshKey]);
+  }, [connectionId, onTablesChange, selectedDatabase, refreshKey, retryKey]);
 
   async function loadNodes(parent?: DatabaseTreeNode) {
     try {
@@ -174,7 +175,23 @@ export function DatabaseObjectTree({
           />
         </label>
       </header>
-      {error ? <p role="alert">{error}</p> : null}
+      {error ? (
+        <section className="workspace-error-panel workspace-error-panel--compact">
+          <div>
+            <strong>{t("database.object_load_failed")}</strong>
+            <p role="alert">{error}</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setError("");
+              setRetryKey((key) => key + 1);
+            }}
+          >
+            {t("database.retry")}
+          </button>
+        </section>
+      ) : null}
       <ul aria-label={t("database.table_list")}>
         {visibleTables.map((node) => (
           <li

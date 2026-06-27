@@ -24,11 +24,10 @@ fn creates_default_settings_when_missing() {
     assert_eq!(value["terminal"]["log_highlight"]["auto_detect_tail"], true);
     assert_eq!(value["terminal"]["log_highlight"]["case_sensitive"], false);
     assert!(
-        value["terminal"]["log_highlight"]["rules"]
+        !value["terminal"]["log_highlight"]["rules"]
             .as_array()
             .unwrap()
-            .len()
-            > 0
+            .is_empty()
     );
     assert!(value.get("ai").is_none());
     assert!(store.settings_path().exists());
@@ -78,8 +77,8 @@ fn saves_terminal_log_highlight_settings() {
     store.save(&settings).unwrap();
     let loaded = store.load_or_create().unwrap();
 
-    assert_eq!(loaded.terminal.log_highlight.auto_detect_tail, false);
-    assert_eq!(loaded.terminal.log_highlight.case_sensitive, true);
+    assert!(!loaded.terminal.log_highlight.auto_detect_tail);
+    assert!(loaded.terminal.log_highlight.case_sensitive);
     assert_eq!(
         loaded.terminal.log_highlight.rules,
         vec![TerminalLogHighlightRule {

@@ -53,7 +53,7 @@ pub struct TerminalLogHighlightSettings {
     pub rules: Vec<TerminalLogHighlightRule>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TerminalSettings {
     #[serde(default)]
     pub log_highlight: TerminalLogHighlightSettings,
@@ -463,14 +463,6 @@ impl Default for TerminalLogHighlightSettings {
             auto_detect_tail: true,
             case_sensitive: false,
             rules: default_log_highlight_rules(),
-        }
-    }
-}
-
-impl Default for TerminalSettings {
-    fn default() -> Self {
-        Self {
-            log_highlight: TerminalLogHighlightSettings::default(),
         }
     }
 }

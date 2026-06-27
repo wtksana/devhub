@@ -312,6 +312,7 @@ export function SftpWorkspace({
   const [entries, setEntries] = useState<SftpEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const [sessionRetryKey, setSessionRetryKey] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
   const [backStack, setBackStack] = useState<string[]>([]);
   const [forwardStack, setForwardStack] = useState<string[]>([]);
@@ -438,7 +439,7 @@ export function SftpWorkspace({
         });
       }
     };
-  }, [connectionId]);
+  }, [connectionId, sessionRetryKey]);
 
   useEffect(() => {
     const unlisten = listenSftpTransferProgress((payload) => {
@@ -1395,7 +1396,26 @@ export function SftpWorkspace({
           <AppIcon icon={RefreshIcon} decorative />
         </button>
       </header>
-      {error ? <p role="alert">{error}</p> : null}
+      {error ? (
+        <section className="workspace-error-panel">
+          <div>
+            <strong>{sessionId ? t("sftp.load_failed") : t("sftp.connection_failed")}</strong>
+            <p role="alert">{error}</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              if (sessionId) {
+                void refresh();
+                return;
+              }
+              setSessionRetryKey((key) => key + 1);
+            }}
+          >
+            {sessionId ? t("sftp.retry") : t("sftp.retry_connection")}
+          </button>
+        </section>
+      ) : null}
       {isLoading ? <p role="status">{t("sftp.loading")}</p> : null}
       <div
         ref={fileListRef}

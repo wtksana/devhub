@@ -93,6 +93,7 @@ function SettingsPanelView({ settingsState, onOpenLogs }: { settingsState: Setti
   const { t } = useI18n();
   const [draftSettings, setDraftSettings] = useState(settings);
   const [activeCategory, setActiveCategory] = useState<SettingsCategory>("外观");
+  const [searchQuery, setSearchQuery] = useState("");
   const [systemFonts, setSystemFonts] = useState<string[]>(fallbackFonts);
   const sectionRefs = useRef<Record<SettingsCategory, HTMLElement | null>>({
     通用: null,
@@ -256,6 +257,51 @@ function SettingsPanelView({ settingsState, onOpenLogs }: { settingsState: Setti
     return labels[category];
   }
 
+  function categorySearchText(category: SettingsCategory) {
+    const keywords: Record<SettingsCategory, string[]> = {
+      通用: [
+        t("settings.general"),
+        t("settings.config_file"),
+        t("settings.config_file_desc"),
+        t("settings.edit_in_json"),
+        "settings.json",
+      ],
+      外观: [
+        t("settings.appearance"),
+        t("settings.theme"),
+        t("settings.language"),
+        t("settings.ui_font"),
+        t("settings.ui_font_size"),
+        t("settings.terminal_font"),
+        t("settings.terminal_font_size"),
+        t("settings.terminal_log_highlight_auto"),
+        t("settings.terminal_log_highlight_case"),
+        t("settings.terminal_log_highlight_rules"),
+      ],
+      布局: [t("settings.layout"), t("settings.connection_panel_width")],
+      连接: [t("settings.connections"), t("settings.connection_config"), t("settings.connection_config_desc")],
+      SFTP: ["SFTP", t("settings.sftp_size_unit"), t("settings.sftp_size_unit_desc")],
+      日志: [
+        t("settings.logging"),
+        t("settings.logging_enabled"),
+        t("settings.logging_level"),
+        t("settings.logging_retention_days"),
+        t("settings.logging_include_sql"),
+        t("settings.logging_directory"),
+      ],
+      快捷键: [t("settings.shortcuts"), t("settings.keymap_desc")],
+      "settings.json": ["settings.json", t("settings.save")],
+    };
+    return keywords[category].join(" ").toLowerCase();
+  }
+
+  function isCategoryVisible(category: SettingsCategory) {
+    const query = searchQuery.trim().toLowerCase();
+    return !query || categorySearchText(category).includes(query);
+  }
+
+  const visibleNavItems = navItems.filter(isCategoryVisible);
+
   async function openLogDirectory() {
     await callBackend<void>("open_log_directory");
   }
@@ -263,9 +309,16 @@ function SettingsPanelView({ settingsState, onOpenLogs }: { settingsState: Setti
   return (
     <section className="settings-panel" aria-label={t("settings.title")}>
       <aside className="settings-sidebar" aria-label={t("settings.categories")}>
-        <input className="settings-search" type="search" placeholder={t("settings.search_placeholder")} aria-label={t("settings.search")} />
+        <input
+          className="settings-search"
+          type="search"
+          placeholder={t("settings.search_placeholder")}
+          aria-label={t("settings.search")}
+          value={searchQuery}
+          onChange={(event) => setSearchQuery(event.target.value)}
+        />
         <nav className="settings-nav">
-          {navItems.map((item) => (
+          {visibleNavItems.map((item) => (
             <button key={item} type="button" aria-pressed={item === activeCategory} onClick={() => selectCategory(item)}>
               {categoryLabel(item)}
             </button>
@@ -282,6 +335,7 @@ function SettingsPanelView({ settingsState, onOpenLogs }: { settingsState: Setti
           {error ? <p className="settings-panel__error">{error}</p> : null}
         </header>
 
+        {isCategoryVisible("通用") ? (
         <section
           className="settings-section"
           aria-labelledby="settings-general-heading"
@@ -298,7 +352,9 @@ function SettingsPanelView({ settingsState, onOpenLogs }: { settingsState: Setti
             </button>
           </SettingsRow>
         </section>
+        ) : null}
 
+        {isCategoryVisible("外观") ? (
         <section
           className="settings-section"
           aria-labelledby="settings-appearance-heading"
@@ -435,7 +491,9 @@ function SettingsPanelView({ settingsState, onOpenLogs }: { settingsState: Setti
             </div>
           </SettingsRow>
         </section>
+        ) : null}
 
+        {isCategoryVisible("布局") ? (
         <section
           className="settings-section"
           aria-labelledby="settings-layout-heading"
@@ -464,7 +522,9 @@ function SettingsPanelView({ settingsState, onOpenLogs }: { settingsState: Setti
             />
           </SettingsRow>
         </section>
+        ) : null}
 
+        {isCategoryVisible("连接") ? (
         <section
           className="settings-section"
           aria-labelledby="settings-connections-heading"
@@ -479,7 +539,9 @@ function SettingsPanelView({ settingsState, onOpenLogs }: { settingsState: Setti
             <span className="settings-value">{connectionSummary}</span>
           </SettingsRow>
         </section>
+        ) : null}
 
+        {isCategoryVisible("SFTP") ? (
         <section
           className="settings-section"
           aria-labelledby="settings-sftp-heading"
@@ -501,7 +563,9 @@ function SettingsPanelView({ settingsState, onOpenLogs }: { settingsState: Setti
             </select>
           </SettingsRow>
         </section>
+        ) : null}
 
+        {isCategoryVisible("日志") ? (
         <section
           className="settings-section"
           aria-labelledby="settings-logging-heading"
@@ -570,7 +634,9 @@ function SettingsPanelView({ settingsState, onOpenLogs }: { settingsState: Setti
             </div>
           </SettingsRow>
         </section>
+        ) : null}
 
+        {isCategoryVisible("快捷键") ? (
         <div
           ref={(element) => {
             sectionRefs.current["快捷键"] = element;
@@ -578,6 +644,8 @@ function SettingsPanelView({ settingsState, onOpenLogs }: { settingsState: Setti
         >
           <KeymapEditor />
         </div>
+        ) : null}
+        {isCategoryVisible("settings.json") ? (
         <div
           ref={(element) => {
             sectionRefs.current["settings.json"] = element;
@@ -585,6 +653,7 @@ function SettingsPanelView({ settingsState, onOpenLogs }: { settingsState: Setti
         >
           <SettingsJsonEditor {...settingsState} />
         </div>
+        ) : null}
       </div>
     </section>
   );

@@ -1294,4 +1294,33 @@ describe("RedisWorkspace", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent("NOAUTH Authentication required");
   });
+
+  it("shows a retry action when loading Redis keys fails", async () => {
+    callBackendMock.mockRejectedValueOnce(new Error("connection refused"));
+
+    renderRedisWorkspace({ connectionId: "redis-local", initialDatabase: 0 });
+
+    expect(await screen.findByText("Redis 加载失败")).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("connection refused");
+
+    callBackendMock.mockResolvedValueOnce({
+      total_count: 1,
+      entries: [{ key: "user:1", key_type: "string", ttl: -1 }],
+    });
+    await userEvent.click(screen.getByRole("button", { name: "重试" }));
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("list_redis_keys", {
+        request: {
+          connection_id: "redis-local",
+          database: 0,
+          pattern: "*",
+          count: 5000,
+          cursor: 0,
+        },
+      });
+    });
+    await userEvent.click(await screen.findByRole("button", { name: "展开 user" }));
+    expect(await screen.findByText("user:1")).toBeInTheDocument();
+  });
 });

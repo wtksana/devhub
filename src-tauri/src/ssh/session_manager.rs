@@ -374,6 +374,7 @@ fn run_local_worker(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn spawn_ssh_worker(
     app: AppHandle,
     session_id: String,
@@ -405,6 +406,7 @@ fn spawn_ssh_worker(
     });
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_ssh_worker(
     app: &AppHandle,
     session_id: &str,

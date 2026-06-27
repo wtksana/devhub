@@ -1071,10 +1071,10 @@ async fn load_mysql_table_page(
         .map_err(|error| error.to_string())?;
     let total_rows = mysql_count_value(&count_row, "total")?;
     let primary_key_columns =
-        load_mysql_primary_key_columns(&mut *connection, &request.database, &request.table).await?;
+        load_mysql_primary_key_columns(&mut connection, &request.database, &request.table).await?;
     let editable = !primary_key_columns.is_empty();
     let column_metadata =
-        load_mysql_table_column_metadata(&mut *connection, &request.database, &request.table).await?;
+        load_mysql_table_column_metadata(&mut connection, &request.database, &request.table).await?;
     let rows = sqlx::query(&queries.page_sql)
         .fetch_all(&mut *connection)
         .await
@@ -1106,7 +1106,7 @@ async fn load_postgresql_table_page(
         .map_err(|error| error.to_string())?;
     let total_rows = postgresql_count_value(&count_row, "total")?;
     let primary_key_columns =
-        load_postgresql_primary_key_columns(&mut *connection, &request.database, &request.table)
+        load_postgresql_primary_key_columns(&mut connection, &request.database, &request.table)
             .await?;
     let editable = !primary_key_columns.is_empty();
     let rows = sqlx::query(&queries.page_sql)
@@ -1216,7 +1216,7 @@ async fn update_mysql_table_rows(
 ) -> Result<DatabaseTableUpdateResult, String> {
     let mut connection = pool.acquire().await.map_err(|error| error.to_string())?;
     let primary_key_columns =
-        load_mysql_primary_key_columns(&mut *connection, &request.database, &request.table).await?;
+        load_mysql_primary_key_columns(&mut connection, &request.database, &request.table).await?;
     let normalized = normalize_table_update_request(request.clone(), &primary_key_columns)?;
     let queries = build_table_update_queries("mysql", &normalized)?;
     let started_at = Instant::now();
@@ -1292,7 +1292,7 @@ async fn delete_mysql_table_rows(
 ) -> Result<DatabaseTableUpdateResult, String> {
     let mut connection = pool.acquire().await.map_err(|error| error.to_string())?;
     let primary_key_columns =
-        load_mysql_primary_key_columns(&mut *connection, &request.database, &request.table).await?;
+        load_mysql_primary_key_columns(&mut connection, &request.database, &request.table).await?;
     let normalized = normalize_table_delete_request(request.clone(), &primary_key_columns)?;
     let queries = build_table_delete_queries("mysql", &normalized)?;
     let started_at = Instant::now();
@@ -1329,7 +1329,7 @@ async fn update_postgresql_table_rows(
 ) -> Result<DatabaseTableUpdateResult, String> {
     let mut connection = pool.acquire().await.map_err(|error| error.to_string())?;
     let primary_key_columns =
-        load_postgresql_primary_key_columns(&mut *connection, &request.database, &request.table)
+        load_postgresql_primary_key_columns(&mut connection, &request.database, &request.table)
             .await?;
     let normalized = normalize_table_update_request(request.clone(), &primary_key_columns)?;
     let queries = build_table_update_queries("postgresql", &normalized)?;
@@ -1767,16 +1767,12 @@ fn first_sql_keyword(sql: &str) -> Option<&str> {
     let mut remaining = sql.trim_start();
     loop {
         if remaining.starts_with("--") {
-            let Some(newline_index) = remaining.find('\n') else {
-                return None;
-            };
+            let newline_index = remaining.find('\n')?;
             remaining = remaining[newline_index + 1..].trim_start();
             continue;
         }
         if remaining.starts_with("/*") {
-            let Some(end_index) = remaining.find("*/") else {
-                return None;
-            };
+            let end_index = remaining.find("*/")?;
             remaining = remaining[end_index + 2..].trim_start();
             continue;
         }

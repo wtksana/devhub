@@ -1088,7 +1088,17 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
           <AppIcon icon={RefreshIcon} decorative />
         </button>
       </header>
-      {error ? <p role="alert">{error}</p> : null}
+      {error ? (
+        <section className="workspace-error-panel">
+          <div>
+            <strong>{t("redis.load_failed")}</strong>
+            <p role="alert">{error}</p>
+          </div>
+          <button type="button" onClick={() => void loadKeys()} disabled={isLoading}>
+            {t("redis.retry")}
+          </button>
+        </section>
+      ) : null}
       {isLoading ? <p role="status">{t("redis.loading")}</p> : null}
       <div
         className="redis-table-scroll"

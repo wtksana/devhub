@@ -161,8 +161,8 @@ async fn list_mysql_objects(
                 .table
                 .as_deref()
                 .ok_or_else(|| "table is required".to_string())?;
-            let mut nodes = list_mysql_columns(&mut *connection, schema, table).await?;
-            nodes.extend(list_mysql_indexes(&mut *connection, schema, table).await?);
+            let mut nodes = list_mysql_columns(&mut connection, schema, table).await?;
+            nodes.extend(list_mysql_indexes(&mut connection, schema, table).await?);
             nodes
         }
         Some(kind) => return Err(format!("unsupported database object kind: {kind}")),
@@ -231,8 +231,8 @@ async fn list_postgresql_objects(
                 .table
                 .as_deref()
                 .ok_or_else(|| "table is required".to_string())?;
-            let mut nodes = list_postgresql_columns(&mut *connection, schema, table).await?;
-            nodes.extend(list_postgresql_indexes(&mut *connection, schema, table).await?);
+            let mut nodes = list_postgresql_columns(&mut connection, schema, table).await?;
+            nodes.extend(list_postgresql_indexes(&mut connection, schema, table).await?);
             nodes
         }
         Some(kind) => return Err(format!("unsupported database object kind: {kind}")),
