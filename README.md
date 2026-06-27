@@ -282,7 +282,7 @@ pnpm tauri build
 
 项目包含 GitHub Actions 发布工作流：`.github/workflows/release.yml`。
 
-推送 `v*` tag 后，GitHub 会在 Windows、Linux 和 macOS runner 上分别构建 Tauri 安装包，macOS 使用 universal target，并上传到同一个 Draft Release。
+推送 `v*` tag 后，GitHub 会先在 Windows runner 上执行验证，再在 Windows、Linux 和 macOS runner 上分别构建 Tauri 安装包，macOS 使用 universal target，并上传到同一个 Draft Release。
 
 常规发布步骤：
 
@@ -298,9 +298,10 @@ git push origin v0.1.0
 ```powershell
 pnpm build
 pnpm test:rust
+pnpm lint:rust
 ```
 
-然后通过 `tauri-apps/tauri-action` 执行 Tauri 打包并创建 Draft Release。Draft Release 需要在 GitHub Release 页面确认后手动发布。
+然后通过 `tauri-apps/tauri-action` 执行跨平台 Tauri 打包并创建 Draft Release。Draft Release 需要在 GitHub Release 页面确认后手动发布。
 
 手动验收清单见：
 
