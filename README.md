@@ -282,7 +282,7 @@ pnpm tauri build
 
 项目包含 GitHub Actions 发布工作流：`.github/workflows/release.yml`。
 
-推送 `v*` tag 后，GitHub 会先在 Windows runner 上执行验证，再在 Windows、Linux 和 macOS runner 上分别构建 Tauri 安装包，macOS 使用 universal target，并上传到同一个 Draft Release。
+推送 `v*` tag 后，GitHub 会先在 Windows runner 上执行验证，再在 Windows、Linux、macOS Apple Silicon 和 macOS Intel runner 上分别构建 Tauri 安装包，并上传到同一个 Draft Release。
 
 常规发布步骤：
 

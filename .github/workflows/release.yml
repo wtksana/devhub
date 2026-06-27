@@ -69,10 +69,14 @@ jobs:
             platform: ubuntu-22.04
             args: ""
             rustTargets: ""
-          - name: macOS Universal
-            platform: macos-latest
-            args: "--target universal-apple-darwin"
-            rustTargets: "aarch64-apple-darwin x86_64-apple-darwin"
+          - name: macOS Apple Silicon
+            platform: macos-15
+            args: ""
+            rustTargets: ""
+          - name: macOS Intel
+            platform: macos-15-intel
+            args: ""
+            rustTargets: ""
 
     steps:
       - name: Checkout
@@ -93,6 +97,13 @@ jobs:
             librsvg2-dev \
             patchelf \
             libssl-dev
+
+      - name: Install macOS dependencies
+        if: startsWith(matrix.platform, 'macos-')
+        run: |
+          brew install pkg-config openssl@3
+          echo "OPENSSL_DIR=$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_PATH=$(brew --prefix openssl@3)/lib/pkgconfig" >> "$GITHUB_ENV"
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
