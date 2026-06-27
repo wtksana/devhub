@@ -284,6 +284,8 @@ pnpm tauri build
 
 推送 `v*` tag 后，GitHub 会先在 Windows runner 上执行验证，再在 Windows、Linux、macOS Apple Silicon 和 macOS Intel runner 上分别构建 Tauri 安装包，并上传到同一个 Draft Release。
 
+发布工作流固定使用 `windows-2025`、`ubuntu-24.04`、`macos-26` 和 `macos-26-intel`，避免 `*-latest` 动态迁移导致发布环境突然变化。
+
 常规发布步骤：
 
 ```powershell
