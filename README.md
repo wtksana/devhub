@@ -278,6 +278,30 @@ pnpm tauri build
 - `src-tauri\target\release\bundle\msi\devhub_0.1.0_x64_en-US.msi`
 - `src-tauri\target\release\bundle\nsis\devhub_0.1.0_x64-setup.exe`
 
+## GitHub 自动发布
+
+项目包含 GitHub Actions 发布工作流：`.github/workflows/release.yml`。
+
+推送 `v*` tag 后，GitHub 会在 Windows、Linux 和 macOS runner 上分别构建 Tauri 安装包，macOS 使用 universal target，并上传到同一个 Draft Release。
+
+常规发布步骤：
+
+```powershell
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+也可以在 GitHub Actions 页面手动运行 `Release` workflow，并填写要发布的 tag，例如 `v0.1.0`。
+
+发布工作流会先运行：
+
+```powershell
+pnpm build
+pnpm test:rust
+```
+
+然后通过 `tauri-apps/tauri-action` 执行 Tauri 打包并创建 Draft Release。Draft Release 需要在 GitHub Release 页面确认后手动发布。
+
 手动验收清单见：
 
 - `docs/testing/manual-mvp-checklist.md`
