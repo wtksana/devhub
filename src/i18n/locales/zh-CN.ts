@@ -292,6 +292,7 @@ export const zhCN = {
   "database.table_list": "表列表",
   "database.no_database": "暂无数据库",
   "database.no_tables": "当前数据库暂无表",
+  "database.no_tables_hint": "如果该库应有表，请检查当前用户是否有该库的表权限。",
   "database.copy_table_name": "复制表名",
   "database.edit_table": "编辑",
   "database.ddl": "DDL",

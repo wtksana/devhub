@@ -294,6 +294,7 @@ export const enUS: Dictionary = {
   "database.table_list": "Table list",
   "database.no_database": "No database",
   "database.no_tables": "No tables in the current database",
+  "database.no_tables_hint": "If this database should contain tables, check whether the current user has table privileges for it.",
   "database.copy_table_name": "Copy table name",
   "database.edit_table": "Edit",
   "database.ddl": "DDL",

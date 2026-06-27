@@ -218,7 +218,10 @@ export function DatabaseObjectTree({
           </li>
         ))}
         {selectedDatabase && visibleTables.length === 0 && !error ? (
-          <li className="database-object-tree__empty">{t("database.no_tables")}</li>
+          <li className="database-object-tree__empty">
+            <strong>{t("database.no_tables")}</strong>
+            <span>{t("database.no_tables_hint")}</span>
+          </li>
         ) : null}
       </ul>
     </aside>

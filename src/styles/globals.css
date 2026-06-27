@@ -1145,12 +1145,22 @@ p {
 }
 
 .database-object-tree__empty {
-  display: block;
+  display: grid;
+  gap: 4px;
   grid-column: 1 / -1;
   padding: 8px;
   color: var(--muted);
   white-space: normal;
   word-break: keep-all;
+}
+
+.database-object-tree__empty strong {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.database-object-tree__empty span {
+  line-height: 1.5;
 }
 
 .database-workspace__main {

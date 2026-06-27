@@ -709,12 +709,12 @@ fn append_database_object_summary(
         .filter(|node| node.kind == kind)
         .map(|node| node.name.clone())
         .collect::<Vec<_>>();
+    let count_key = format!("returned_{kind}_count");
+    log_metadata.insert(count_key, metadata_number(names.len() as i64));
     if names.is_empty() {
         return;
     }
 
-    let count_key = format!("returned_{kind}_count");
-    log_metadata.insert(count_key, metadata_number(names.len() as i64));
     let truncated = names.len() > DATABASE_OBJECT_LOG_NAME_LIMIT;
     let values = names
         .into_iter()
@@ -884,6 +884,28 @@ mod tests {
         assert_eq!(metadata["returned_tables"].as_array().unwrap().len(), 50);
         assert_eq!(metadata["returned_tables_truncated"], true);
         assert_eq!(metadata["returned_views"], json!(["v_users"]));
+    }
+
+    #[test]
+    fn summarizes_empty_database_object_lists_with_zero_counts() {
+        let request = ListDatabaseObjectsRequest {
+            connection_id: "mysql-local".to_string(),
+            parent_kind: Some("database".to_string()),
+            database: Some("game".to_string()),
+            schema: None,
+            table: None,
+        };
+
+        let metadata = database_object_list_metadata(&request, &[]);
+
+        assert_eq!(metadata["database"], "game");
+        assert_eq!(metadata["parent_kind"], "database");
+        assert_eq!(metadata["returned_database_count"], 0);
+        assert_eq!(metadata["returned_schema_count"], 0);
+        assert_eq!(metadata["returned_table_count"], 0);
+        assert_eq!(metadata["returned_view_count"], 0);
+        assert_eq!(metadata["returned_column_count"], 0);
+        assert!(metadata.get("returned_tables").is_none());
     }
 
     #[test]

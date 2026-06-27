@@ -476,6 +476,31 @@ describe("DatabaseWorkspace", () => {
     expect(await screen.findByText("users")).toBeInTheDocument();
   });
 
+  it("shows a permission hint when the selected database has no visible tables", async () => {
+    callBackendMock.mockImplementation((command, payload) => {
+      if (command !== "list_database_objects") return Promise.resolve([]);
+      const request = (payload as { request: { parent_kind?: string; database?: string } }).request;
+      if (!request.parent_kind) {
+        return Promise.resolve([
+          { id: "database:game", name: "game", kind: "database", has_children: true },
+        ]);
+      }
+      return Promise.resolve([]);
+    });
+
+    renderDatabaseWorkspace("game");
+
+    expect(await screen.findByText("当前数据库暂无表")).toBeInTheDocument();
+    expect(screen.getByText("如果该库应有表，请检查当前用户是否有该库的表权限。")).toBeInTheDocument();
+    expect(callBackendMock).toHaveBeenCalledWith("list_database_objects", {
+      request: {
+        connection_id: "mysql-dev",
+        parent_kind: "database",
+        database: "game",
+      },
+    });
+  });
+
   it("executes selected SQL from the editor context menu and renders query result rows", async () => {
     callBackendMock.mockImplementation((command) => {
       if (command === "execute_database_query") {
