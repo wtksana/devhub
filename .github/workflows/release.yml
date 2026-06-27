@@ -70,11 +70,11 @@ jobs:
             args: ""
             rustTargets: ""
           - name: macOS Apple Silicon
-            platform: macos-15
+            platform: macos-26
             args: ""
             rustTargets: ""
           - name: macOS Intel
-            platform: macos-15-intel
+            platform: macos-26-intel
             args: ""
             rustTargets: ""
 
