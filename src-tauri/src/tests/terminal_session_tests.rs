@@ -1,6 +1,6 @@
 use crate::ssh::session_manager::{
-    drain_terminal_input, is_ignorable_terminal_read_error, local_shell_command, InputDrain,
-    SessionManager, SshConnectLimiter, TerminalWorkerMessage,
+    drain_terminal_input, decode_terminal_output, is_ignorable_terminal_read_error,
+    local_shell_command, InputDrain, SessionManager, SshConnectLimiter, TerminalWorkerMessage,
 };
 use std::io::{Error, ErrorKind, Result as IoResult, Write};
 use std::sync::{
@@ -36,6 +36,17 @@ fn resolves_a_local_shell_command_for_the_current_platform() {
     let command = local_shell_command();
 
     assert!(!command.program.is_empty());
+}
+
+#[test]
+fn decodes_terminal_output_across_utf8_chunk_boundaries() {
+    let mut pending = Vec::new();
+    let first = decode_terminal_output(&mut pending, &[0xe6, 0x9c]).unwrap();
+    let second = decode_terminal_output(&mut pending, &[0xac, b'a']).unwrap();
+
+    assert_eq!(first, "");
+    assert_eq!(second, "本a");
+    assert!(pending.is_empty());
 }
 
 #[tokio::test]

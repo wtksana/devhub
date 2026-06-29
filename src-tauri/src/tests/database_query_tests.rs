@@ -3,7 +3,8 @@ use std::future::pending;
 
 use crate::db::connection::{database_connection_url, database_pool_key};
 use crate::db::metadata::{
-    metadata_query_for_columns, metadata_query_for_indexes, metadata_query_for_tables,
+    metadata_query_for_columns, metadata_query_for_indexes, metadata_query_for_schemas,
+    metadata_query_for_tables,
 };
 use crate::db::query::{
     append_postgresql_indexes_to_ddl, apply_select_limit, build_table_delete_queries,
@@ -98,9 +99,22 @@ fn builds_mysql_table_metadata_query() {
 }
 
 #[test]
+fn builds_mysql_schema_metadata_query_with_text_casts() {
+    let query = metadata_query_for_schemas("mysql").unwrap();
+
+    assert!(query.sql.contains("information_schema.schemata"));
+    assert!(query
+        .sql
+        .contains("cast(schema_name as char) as schema_name"));
+    assert!(query.binds.is_empty());
+}
+
+#[test]
 fn builds_mysql_table_metadata_query_with_table_type_filter() {
     let query = metadata_query_for_tables("mysql", "app", Some("BASE TABLE")).unwrap();
 
+    assert!(query.sql.contains("cast(table_name as char) as table_name"));
+    assert!(query.sql.contains("cast(table_type as char) as table_type"));
     assert!(query.sql.contains("table_schema = 'app'"));
     assert!(query.sql.contains("table_type = 'BASE TABLE'"));
     assert!(query.binds.is_empty());
@@ -110,6 +124,11 @@ fn builds_mysql_table_metadata_query_with_table_type_filter() {
 fn builds_mysql_table_column_metadata_query_with_default_and_generated_flags() {
     let query = mysql_table_column_metadata_query("app", "users").unwrap();
 
+    assert!(query
+        .sql
+        .contains("cast(column_name as char) as column_name"));
+    assert!(query.sql.contains("cast(data_type as char) as data_type"));
+    assert!(query.sql.contains("cast(column_default as char)"));
     assert!(query.sql.contains("column_default"));
     assert!(query.sql.contains("is_nullable"));
     assert!(query.sql.contains("extra"));
@@ -121,7 +140,8 @@ fn builds_mysql_index_metadata_query() {
     let query = metadata_query_for_indexes("mysql", "app", "users").unwrap();
 
     assert!(query.sql.contains("information_schema.statistics"));
-    assert!(query.sql.contains("group_concat(column_name"));
+    assert!(query.sql.contains("cast(index_name as char) as index_name"));
+    assert!(query.sql.contains("group_concat(cast(column_name as char)"));
     assert_eq!(query.binds, vec!["app".to_string(), "users".to_string()]);
 }
 
@@ -138,7 +158,11 @@ fn builds_postgresql_index_metadata_query() {
 fn builds_mysql_object_column_query_with_full_column_type() {
     let query = metadata_query_for_columns("mysql", "app", "users").unwrap();
 
-    assert!(query.sql.contains("column_type as data_type"));
+    assert!(query
+        .sql
+        .contains("cast(column_name as char) as column_name"));
+    assert!(query.sql.contains("cast(column_type as char) as data_type"));
+    assert!(query.sql.contains("cast(column_default as char)"));
     assert!(query.sql.contains("column_default"));
     assert!(query.sql.contains("column_default_is_null"));
     assert!(query.sql.contains("column_comment"));
@@ -417,6 +441,9 @@ fn quotes_postgresql_identifier() {
 fn builds_mysql_primary_key_query() {
     let query = primary_key_query_for_table("mysql", "app", "users").unwrap();
 
+    assert!(query
+        .sql
+        .contains("cast(column_name as char) as column_name"));
     assert!(query.sql.contains("information_schema.key_column_usage"));
     assert!(query.sql.contains("constraint_name = 'PRIMARY'"));
     assert_eq!(query.binds, vec!["app".to_string(), "users".to_string()]);

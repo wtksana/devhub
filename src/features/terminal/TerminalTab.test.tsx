@@ -111,6 +111,30 @@ describe("TerminalTab", () => {
     };
   }
 
+  async function renderTerminalWithXtermTextarea(initialValue: string) {
+    callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
+    listenBackendMock.mockResolvedValueOnce(vi.fn());
+
+    renderTerminalTab({ connectionId: "prod-web-01", fontFamily: "Maple Mono", fontSize: 16, theme: "dark", isActive: true });
+
+    const terminalContainer = screen.getByLabelText("SSH 终端");
+    const textarea = document.createElement("textarea");
+    textarea.value = initialValue;
+    terminalContainer.append(textarea);
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+        request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
+      });
+    });
+    callBackendMock.mockClear();
+
+    const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
+    const onData = terminal.onData.mock.calls[0]?.[0] as ((data: string) => void) | undefined;
+
+    return { textarea, onData };
+  }
+
   it("opens backend session, streams matching output, sends input, and closes session", async () => {
     let outputHandler: ((payload: { session_id: string; data: string }) => void) | null = null;
     const unlisten = vi.fn();
@@ -1168,25 +1192,7 @@ describe("TerminalTab", () => {
   });
 
   it("clears the xterm textarea after ime text is sent", async () => {
-    callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
-    listenBackendMock.mockResolvedValueOnce(vi.fn());
-
-    renderTerminalTab({ connectionId: "prod-web-01", fontFamily: "Maple Mono", fontSize: 16, theme: "dark", isActive: true });
-
-    const terminalContainer = screen.getByLabelText("SSH 终端");
-    const textarea = document.createElement("textarea");
-    textarea.value = "帮我";
-    terminalContainer.append(textarea);
-
-    await waitFor(() => {
-      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
-        request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
-      });
-    });
-    callBackendMock.mockClear();
-
-    const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
-    const onData = terminal.onData.mock.calls[0]?.[0] as ((data: string) => void) | undefined;
+    const { textarea, onData } = await renderTerminalWithXtermTextarea("帮我");
     onData?.("帮我");
 
     await waitFor(() => {
@@ -1198,6 +1204,28 @@ describe("TerminalTab", () => {
     await waitFor(() => {
       expect(textarea.value).toBe("");
     });
+  });
+
+  it("keeps only new mixed ime input when the xterm textarea changes before cleanup", async () => {
+    const { textarea, onData } = await renderTerminalWithXtermTextarea("帮我");
+    vi.useFakeTimers();
+    onData?.("帮我");
+    textarea.value = "帮我 a";
+
+    await vi.runOnlyPendingTimersAsync();
+
+    expect(textarea.value).toBe(" a");
+  });
+
+  it("removes previous ascii ime text when the next composition duplicates it", async () => {
+    const { textarea, onData } = await renderTerminalWithXtermTextarea("dev");
+    vi.useFakeTimers();
+    onData?.("dev");
+    textarea.value = "devev";
+
+    await vi.runOnlyPendingTimersAsync();
+
+    expect(textarea.value).toBe("ev");
   });
 
   it("clears the terminal display from the context menu", async () => {

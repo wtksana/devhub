@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::process::Command;
+use std::str;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -323,6 +324,7 @@ fn run_local_worker(
     let master = Arc::new(Mutex::new(pair.master));
     let resize_master = Arc::clone(&master);
     let mut buffer = [0_u8; OUTPUT_BUFFER_SIZE];
+    let mut pending_output = Vec::new();
     let _input_writer = std::thread::spawn(move || {
         while let Some(message) = input_rx.blocking_recv() {
             match message {
@@ -355,11 +357,12 @@ fn run_local_worker(
     loop {
         match reader.read(&mut buffer) {
             Ok(0) => break,
-            Ok(size) => emit_output(
-                app,
-                session_id,
-                String::from_utf8_lossy(&buffer[..size]).to_string(),
-            ),
+            Ok(size) => {
+                let output = decode_terminal_output(&mut pending_output, &buffer[..size])?;
+                if !output.is_empty() {
+                    emit_output(app, session_id, output);
+                }
+            }
             Err(error) if is_ignorable_terminal_read_error(&error) => {}
             Err(error) => return Err(TerminalSessionError::Io(error.to_string())),
         }
@@ -445,6 +448,7 @@ fn run_ssh_worker(
     emit_status(app, session_id, "connected");
 
     let mut buffer = [0_u8; OUTPUT_BUFFER_SIZE];
+    let mut pending_output = Vec::new();
     loop {
         let worker_drain = drain_ssh_worker_messages(input_rx, &mut channel)?;
         if worker_drain == InputDrain::Disconnected {
@@ -461,11 +465,10 @@ fn run_ssh_worker(
             }
             Ok(size) => {
                 read_output = true;
-                emit_output(
-                    app,
-                    session_id,
-                    String::from_utf8_lossy(&buffer[..size]).to_string(),
-                );
+                let output = decode_terminal_output(&mut pending_output, &buffer[..size])?;
+                if !output.is_empty() {
+                    emit_output(app, session_id, output);
+                }
             }
             Err(error) if is_ignorable_terminal_read_error(&error) => {}
             Err(error) => return Err(TerminalSessionError::Io(error.to_string())),
@@ -550,6 +553,30 @@ fn flush_terminal_input<W: Write>(writer: &mut W, wrote: bool) -> Result<InputDr
         Ok(InputDrain::Wrote)
     } else {
         Ok(InputDrain::Idle)
+    }
+}
+
+pub fn decode_terminal_output(pending: &mut Vec<u8>, chunk: &[u8]) -> Result<String> {
+    pending.extend_from_slice(chunk);
+    match str::from_utf8(pending) {
+        Ok(text) => {
+            let output = text.to_string();
+            pending.clear();
+            Ok(output)
+        }
+        Err(error) => {
+            let valid_up_to = error.valid_up_to();
+            if let Some(incomplete_length) = error.error_len() {
+                let output = String::from_utf8_lossy(&pending[..valid_up_to + incomplete_length])
+                    .to_string();
+                pending.drain(..valid_up_to + incomplete_length);
+                return Ok(output);
+            }
+            let output = String::from_utf8_lossy(&pending[..valid_up_to]).to_string();
+            let incomplete = pending[valid_up_to..].to_vec();
+            *pending = incomplete;
+            Ok(output)
+        }
     }
 }
 

@@ -109,4 +109,42 @@ describe("LogViewer", () => {
       "{\"level\":\"error\",\"module\":\"database\",\"action\":\"execute_query\",\"error\":\"table missing\"}",
     );
   });
+
+  it("clears logs after confirmation and reloads the empty list", async () => {
+    callBackendMock
+      .mockResolvedValueOnce([
+        {
+          file_name: "devhub-2026-06-27.log",
+          line_number: 3,
+          raw: "{\"level\":\"error\",\"module\":\"database\",\"action\":\"execute_query\"}",
+          ts: "2026-06-27T10:03:00+08:00",
+          level: "error",
+          module: "database",
+          action: "execute_query",
+          target: "mysql-dev/app",
+          result: "failed",
+          duration_ms: 18,
+          message: null,
+          error: "table missing",
+          metadata: null,
+        },
+      ])
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce([]);
+
+    renderViewer();
+    await screen.findByRole("button", { name: /database execute_query/ });
+
+    await userEvent.click(screen.getByRole("button", { name: "清除日志" }));
+    const dialog = screen.getByRole("dialog", { name: "确认清除日志" });
+    expect(dialog.querySelector(".connection-form")).toBeInTheDocument();
+    expect(dialog).toHaveTextContent("确认清除所有本地日志？该操作不可逆。");
+    expect(screen.getByRole("button", { name: "关闭" })).toHaveTextContent("×");
+
+    await userEvent.click(screen.getByRole("button", { name: "确认" }));
+
+    expect(callBackendMock).toHaveBeenCalledWith("clear_app_logs");
+    await screen.findByText("没有匹配的日志");
+    expect(screen.getByLabelText("日志详情")).toHaveTextContent("请选择一条日志");
+  });
 });

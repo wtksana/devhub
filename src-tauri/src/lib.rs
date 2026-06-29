@@ -79,6 +79,7 @@ pub fn run() {
             commands::logging::get_log_directory,
             commands::logging::open_log_directory,
             commands::logging::list_app_logs,
+            commands::logging::clear_app_logs,
             commands::logging::write_app_log,
             commands::database::test_database_connection,
             commands::database::test_database_connection_config,

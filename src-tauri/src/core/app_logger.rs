@@ -212,6 +212,26 @@ impl AppLogger {
         Ok(records)
     }
 
+    pub fn clear_logs(&self) -> Result<usize, String> {
+        let _guard = self.lock.lock().map_err(|error| error.to_string())?;
+        let log_dir = self.log_dir();
+        if !log_dir.exists() {
+            return Ok(0);
+        }
+
+        let mut removed = 0;
+        for entry in fs::read_dir(log_dir).map_err(|error| error.to_string())? {
+            let entry = entry.map_err(|error| error.to_string())?;
+            let path = entry.path();
+            if is_log_file(&path) {
+                fs::remove_file(path).map_err(|error| error.to_string())?;
+                removed += 1;
+            }
+        }
+
+        Ok(removed)
+    }
+
     fn log_file_path(&self, now: DateTime<Local>) -> PathBuf {
         self.log_dir().join(format!(
             "devhub-{:04}-{:02}-{:02}.log",
@@ -479,6 +499,24 @@ mod tests {
         );
         assert_eq!(records[1].line_number, 1);
         assert_eq!(records[1].duration_ms, Some(12));
+    }
+
+    #[test]
+    fn clears_only_devhub_log_files() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let logger = AppLogger::new_for_dir(temp_dir.path().to_path_buf());
+        let log_dir = logger.log_dir();
+        fs::create_dir_all(&log_dir).unwrap();
+        fs::write(log_dir.join("devhub-2026-06-26.log"), "{}\n").unwrap();
+        fs::write(log_dir.join("devhub-2026-06-27.log"), "{}\n").unwrap();
+        fs::write(log_dir.join("other.log"), "{}\n").unwrap();
+
+        let removed = logger.clear_logs().unwrap();
+
+        assert_eq!(removed, 2);
+        assert!(!log_dir.join("devhub-2026-06-26.log").exists());
+        assert!(!log_dir.join("devhub-2026-06-27.log").exists());
+        assert!(log_dir.join("other.log").exists());
     }
 
     #[test]

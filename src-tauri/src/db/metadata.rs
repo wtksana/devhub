@@ -1,10 +1,9 @@
-use sqlx::{MySqlConnection, PgConnection, Row};
+use sqlx::mysql::MySqlRow;
+use sqlx::{MySqlConnection, PgConnection, Row, ValueRef};
 
 use crate::db::connection::{DatabaseConnectionManager, DatabasePool};
 use crate::db::query;
-use crate::models::database::{
-    DatabaseCellValue, DatabaseTreeNode, ListDatabaseObjectsRequest,
-};
+use crate::models::database::{DatabaseCellValue, DatabaseTreeNode, ListDatabaseObjectsRequest};
 use crate::models::settings::DatabaseConnectionSettings;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -43,7 +42,7 @@ pub fn metadata_query_for_tables(
     match kind {
         "mysql" => {
             let mut sql = format!(
-                "select table_name, table_type from information_schema.tables where table_schema = {}",
+                "select cast(table_name as char) as table_name, cast(table_type as char) as table_type from information_schema.tables where table_schema = {}",
                 mysql_string_literal(database_or_schema)
             );
             let binds = Vec::new();
@@ -68,6 +67,20 @@ pub fn metadata_query_for_tables(
     }
 }
 
+pub fn metadata_query_for_schemas(kind: &str) -> Result<MetadataQuery, String> {
+    match kind {
+        "mysql" => Ok(MetadataQuery {
+            sql: "select cast(schema_name as char) as schema_name from information_schema.schemata order by schema_name".to_string(),
+            binds: Vec::new(),
+        }),
+        "postgresql" => Ok(MetadataQuery {
+            sql: "select schema_name from information_schema.schemata where schema_name not in ('information_schema', 'pg_catalog') order by schema_name".to_string(),
+            binds: Vec::new(),
+        }),
+        kind => Err(format!("unsupported database connection kind: {kind}")),
+    }
+}
+
 pub fn metadata_query_for_columns(
     kind: &str,
     schema: &str,
@@ -75,7 +88,7 @@ pub fn metadata_query_for_columns(
 ) -> Result<MetadataQuery, String> {
     match kind {
         "mysql" => Ok(MetadataQuery {
-            sql: "select column_name, column_type as data_type, is_nullable, coalesce(column_default, '') as column_default, case when column_default is null then 'YES' else 'NO' end as column_default_is_null, coalesce(extra, '') as extra, coalesce(column_comment, '') as column_comment from information_schema.columns where table_schema = ? and table_name = ? order by ordinal_position".to_string(),
+            sql: "select cast(column_name as char) as column_name, cast(column_type as char) as data_type, cast(is_nullable as char) as is_nullable, coalesce(cast(column_default as char), '') as column_default, case when column_default is null then 'YES' else 'NO' end as column_default_is_null, coalesce(cast(extra as char), '') as extra, coalesce(cast(column_comment as char), '') as column_comment from information_schema.columns where table_schema = ? and table_name = ? order by ordinal_position".to_string(),
             binds: vec![schema.to_string(), table.to_string()],
         }),
         "postgresql" => Ok(MetadataQuery {
@@ -93,7 +106,7 @@ pub fn metadata_query_for_indexes(
 ) -> Result<MetadataQuery, String> {
     match kind {
         "mysql" => Ok(MetadataQuery {
-            sql: "select index_name, case when non_unique = 0 then 'YES' else 'NO' end as is_unique, group_concat(column_name order by seq_in_index separator ', ') as columns, concat(case when non_unique = 0 then 'UNIQUE KEY' else 'KEY' end, ' `', index_name, '` (', group_concat(concat('`', column_name, '`') order by seq_in_index separator ', '), ')') as definition from information_schema.statistics where table_schema = ? and table_name = ? group by index_name, non_unique order by index_name".to_string(),
+            sql: "select cast(index_name as char) as index_name, case when non_unique = 0 then 'YES' else 'NO' end as is_unique, group_concat(cast(column_name as char) order by seq_in_index separator ', ') as columns, concat(case when non_unique = 0 then 'UNIQUE KEY' else 'KEY' end, ' `', cast(index_name as char), '` (', group_concat(concat('`', cast(column_name as char), '`') order by seq_in_index separator ', '), ')') as definition from information_schema.statistics where table_schema = ? and table_name = ? group by index_name, non_unique order by index_name".to_string(),
             binds: vec![schema.to_string(), table.to_string()],
         }),
         "postgresql" => Ok(MetadataQuery {
@@ -111,24 +124,23 @@ async fn list_mysql_objects(
     let nodes = match request.parent_kind.as_deref() {
         None => {
             let mut connection = pool.acquire().await.map_err(|error| error.to_string())?;
-            let rows = sqlx::query(
-                "select schema_name from information_schema.schemata order by schema_name",
-            )
-            .fetch_all(&mut *connection)
-            .await
-            .map_err(|error| error.to_string())?;
+            let query = metadata_query_for_schemas("mysql")?;
+            let rows = sqlx::query(&query.sql)
+                .fetch_all(&mut *connection)
+                .await
+                .map_err(|error| error.to_string())?;
             rows.into_iter()
                 .map(|row| {
-                    let name: String = row.get("schema_name");
-                    DatabaseTreeNode {
+                    let name = mysql_string_by_index(&row, 0)?;
+                    Ok(DatabaseTreeNode {
                         id: format!("database:{name}"),
                         name,
                         kind: "database".to_string(),
                         has_children: true,
                         detail: None,
-                    }
+                    })
                 })
-                .collect()
+                .collect::<Result<Vec<_>, String>>()?
         }
         Some("database") | Some("schema") => {
             let schema = request
@@ -208,7 +220,8 @@ async fn list_postgresql_objects(
     let mut connection = pool.acquire().await.map_err(|error| error.to_string())?;
     let nodes = match request.parent_kind.as_deref() {
         None => {
-            let rows = sqlx::query("select schema_name from information_schema.schemata where schema_name not in ('information_schema', 'pg_catalog') order by schema_name")
+            let query = metadata_query_for_schemas("postgresql")?;
+            let rows = sqlx::query(&query.sql)
                 .fetch_all(&mut *connection)
                 .await
                 .map_err(|error| error.to_string())?;
@@ -284,7 +297,7 @@ async fn list_mysql_columns(
         .await
         .map_err(|error| error.to_string())?;
 
-    Ok(column_nodes(rows, schema, table))
+    mysql_column_nodes(rows, schema, table)
 }
 
 async fn list_postgresql_columns(
@@ -316,7 +329,7 @@ async fn list_mysql_indexes(
         .await
         .map_err(|error| error.to_string())?;
 
-    Ok(index_nodes(rows, schema, table))
+    mysql_index_nodes(rows, schema, table)
 }
 
 async fn list_postgresql_indexes(
@@ -388,6 +401,57 @@ where
         .collect()
 }
 
+fn mysql_column_nodes(
+    rows: Vec<MySqlRow>,
+    schema: &str,
+    table: &str,
+) -> Result<Vec<DatabaseTreeNode>, String> {
+    rows.into_iter()
+        .map(|row| {
+            let name = mysql_string_by_name(&row, "column_name")?;
+            let data_type = mysql_string_by_name(&row, "data_type")?;
+            let is_nullable = mysql_string_by_name(&row, "is_nullable")?;
+            let default_value = mysql_string_by_name(&row, "column_default")?;
+            let default_is_null = mysql_string_by_name(&row, "column_default_is_null")?;
+            let extra = mysql_string_by_name(&row, "extra")?;
+            let comment = mysql_string_by_name(&row, "column_comment")?;
+            Ok(DatabaseTreeNode {
+                id: format!("column:{schema}.{table}.{name}"),
+                name,
+                kind: "column".to_string(),
+                has_children: false,
+                detail: Some(format!(
+                    "type={data_type};nullable={is_nullable};default={default_value};default_null={default_is_null};extra={extra};comment={comment}"
+                )),
+            })
+        })
+        .collect()
+}
+
+fn mysql_index_nodes(
+    rows: Vec<MySqlRow>,
+    schema: &str,
+    table: &str,
+) -> Result<Vec<DatabaseTreeNode>, String> {
+    rows.into_iter()
+        .map(|row| {
+            let name = mysql_string_by_name(&row, "index_name")?;
+            let is_unique = mysql_string_by_name(&row, "is_unique")?;
+            let columns = mysql_string_by_name(&row, "columns")?;
+            let definition = mysql_string_by_name(&row, "definition")?;
+            Ok(DatabaseTreeNode {
+                id: format!("index:{schema}.{table}.{name}"),
+                name,
+                kind: "index".to_string(),
+                has_children: false,
+                detail: Some(format!(
+                    "unique={is_unique};columns={columns};definition={definition}"
+                )),
+            })
+        })
+        .collect()
+}
+
 fn table_kind(table_type: &str) -> String {
     if table_type.to_ascii_lowercase().contains("view") {
         "view".to_string()
@@ -398,4 +462,39 @@ fn table_kind(table_type: &str) -> String {
 
 fn mysql_string_literal(value: &str) -> String {
     format!("'{}'", value.replace('\\', "\\\\").replace('\'', "''"))
+}
+
+fn mysql_string_by_index(row: &MySqlRow, index: usize) -> Result<String, String> {
+    if let Ok(value) = row.try_get::<String, _>(index) {
+        return Ok(value);
+    }
+    if let Ok(value) = row.try_get_unchecked::<String, _>(index) {
+        return Ok(value);
+    }
+    if let Ok(bytes) = row.try_get_unchecked::<Vec<u8>, _>(index) {
+        return Ok(String::from_utf8_lossy(&bytes).into_owned());
+    }
+    Err(format!(
+        "failed to decode mysql metadata column at index {index}"
+    ))
+}
+
+fn mysql_string_by_name(row: &MySqlRow, column_name: &str) -> Result<String, String> {
+    if let Ok(value_ref) = row.try_get_raw(column_name) {
+        if value_ref.is_null() {
+            return Ok(String::new());
+        }
+    }
+    if let Ok(value) = row.try_get::<String, _>(column_name) {
+        return Ok(value);
+    }
+    if let Ok(value) = row.try_get_unchecked::<String, _>(column_name) {
+        return Ok(value);
+    }
+    if let Ok(bytes) = row.try_get_unchecked::<Vec<u8>, _>(column_name) {
+        return Ok(String::from_utf8_lossy(&bytes).into_owned());
+    }
+    Err(format!(
+        "failed to decode mysql metadata column: {column_name}"
+    ))
 }

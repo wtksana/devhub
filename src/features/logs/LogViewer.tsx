@@ -30,6 +30,8 @@ export function LogViewer() {
   const [keyword, setKeyword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [isClearing, setIsClearing] = useState(false);
+  const [confirmClear, setConfirmClear] = useState(false);
 
   async function loadLogs() {
     setIsLoading(true);
@@ -42,6 +44,22 @@ export function LogViewer() {
       setError(loadError instanceof Error ? loadError.message : String(loadError));
     } finally {
       setIsLoading(false);
+    }
+  }
+
+  async function clearLogs() {
+    setIsClearing(true);
+    setError(null);
+    try {
+      await callBackend<number>("clear_app_logs");
+      setLogs([]);
+      setSelectedIndex(0);
+      setConfirmClear(false);
+      await loadLogs();
+    } catch (clearError) {
+      setError(clearError instanceof Error ? clearError.message : String(clearError));
+    } finally {
+      setIsClearing(false);
     }
   }
 
@@ -107,6 +125,9 @@ export function LogViewer() {
         />
         <button type="button" onClick={() => void loadLogs()} disabled={isLoading}>
           {isLoading ? t("logs.refreshing") : t("logs.refresh")}
+        </button>
+        <button type="button" onClick={() => setConfirmClear(true)} disabled={isLoading || isClearing}>
+          {isClearing ? t("logs.clearing") : t("logs.clear")}
         </button>
       </header>
       {error ? <p role="alert" className="log-viewer__error">{error}</p> : null}
@@ -185,6 +206,29 @@ export function LogViewer() {
           )}
         </aside>
       </div>
+      {confirmClear ? (
+        <div className="connection-dialog__backdrop">
+          <div className="connection-dialog sftp-dialog" role="dialog" aria-modal="true" aria-label={t("logs.confirm_clear")}>
+            <div className="connection-form">
+              <header className="connection-dialog__header">
+                <h2>{t("logs.confirm_clear")}</h2>
+                <button type="button" onClick={() => setConfirmClear(false)} disabled={isClearing} aria-label={t("app.close")}>
+                  ×
+                </button>
+              </header>
+              <p>{t("logs.confirm_clear_message")}</p>
+              <div className="sftp-dialog__actions">
+                <button type="button" onClick={() => setConfirmClear(false)} disabled={isClearing}>
+                  {t("database.cancel")}
+                </button>
+                <button type="button" className="sftp-dialog__danger-button" onClick={() => void clearLogs()} disabled={isClearing}>
+                  {t("database.confirm")}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useI18n } from "../i18n/useI18n";
 
 export type ContextMenuItem =
@@ -37,9 +37,47 @@ interface ContextMenuProps {
   onClose: () => void;
 }
 
+interface ViewportPosition {
+  left: number;
+  top: number;
+}
+
+function clampToViewport(left: number, top: number, width: number, height: number): ViewportPosition {
+  const margin = 8;
+  const maxLeft = Math.max(margin, window.innerWidth - width - margin);
+  const maxTop = Math.max(margin, window.innerHeight - height - margin);
+  return {
+    left: Math.max(margin, Math.min(left, maxLeft)),
+    top: Math.max(margin, Math.min(top, maxTop)),
+  };
+}
+
 export function ContextMenu({ menu, onClose }: ContextMenuProps) {
   const { t } = useI18n();
   const skipNextClickRef = useRef(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const [position, setPosition] = useState(() => ({
+    left: menu?.x ?? 0,
+    top: menu?.y ?? 0,
+  }));
+
+  useLayoutEffect(() => {
+    if (!menu) return;
+    const nextMenu = menu;
+
+    function updatePosition() {
+      const element = menuRef.current;
+      if (!element) return;
+      const rect = element.getBoundingClientRect();
+      setPosition(clampToViewport(nextMenu.x, nextMenu.y, rect.width, rect.height));
+    }
+
+    updatePosition();
+    window.addEventListener("resize", updatePosition);
+    return () => {
+      window.removeEventListener("resize", updatePosition);
+    };
+  }, [menu]);
 
   useEffect(() => {
     if (!menu) return;
@@ -83,94 +121,118 @@ export function ContextMenu({ menu, onClose }: ContextMenuProps) {
     runAction(item);
   }
 
+  function renderMenuItems(items: ContextMenuItem[]) {
+    return items.map((item, index) => {
+      if (item.type === "separator") {
+        return <div key={`separator-${index}`} className="context-menu__separator" role="separator" />;
+      }
+      if (item.type === "label") {
+        return (
+          <div key={`label-${index}-${item.label}`} className="context-menu__label">
+            {item.label}
+          </div>
+        );
+      }
+      if (item.type === "submenu") {
+        return (
+          <ContextSubmenu key={`submenu-${index}-${item.label}`} item={item} renderItems={renderMenuItems} label={t("context.submenu", { label: item.label })} />
+        );
+      }
+      return (
+        <button
+          key={`action-${index}-${item.label}`}
+          type="button"
+          role="menuitem"
+          disabled={item.disabled}
+          onPointerDown={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            runActionFromPointerDown(item);
+          }}
+          onClick={() => {
+            runActionFromClick(item);
+          }}
+        >
+          {item.label}
+        </button>
+      );
+    });
+  }
+
   return (
     <div
+      ref={menuRef}
       className="context-menu"
       role="menu"
       style={{
-        left: menu.x,
-        top: menu.y,
+        left: position.left,
+        top: position.top,
       }}
       onContextMenu={(event) => event.preventDefault()}
       onPointerDown={(event) => event.stopPropagation()}
     >
-      {menu.items.map((item, index) => {
-        if (item.type === "separator") {
-          return <div key={`separator-${index}`} className="context-menu__separator" role="separator" />;
-        }
-        if (item.type === "label") {
-          return (
-            <div key={`label-${index}-${item.label}`} className="context-menu__label">
-              {item.label}
-            </div>
-          );
-        }
-        if (item.type === "submenu") {
-          return (
-            <div key={`submenu-${index}-${item.label}`} className="context-menu__submenu" data-hover-bridge="true">
-              <button type="button" role="menuitem" aria-haspopup="menu">
-                {item.label}
-              </button>
-              <div
-                className="context-menu context-menu__submenu-panel"
-                role="menu"
-                aria-label={t("context.submenu", { label: item.label })}
-                data-visible-on-hover="true"
-              >
-                {item.items.map((child, childIndex) => {
-                  if (child.type === "separator") {
-                    return <div key={`separator-${childIndex}`} className="context-menu__separator" role="separator" />;
-                  }
-                  if (child.type === "label") {
-                    return (
-                      <div key={`label-${childIndex}-${child.label}`} className="context-menu__label">
-                        {child.label}
-                      </div>
-                    );
-                  }
-                  if (child.type === "submenu") return null;
-                  return (
-                    <button
-                      key={`action-${childIndex}-${child.label}`}
-                      type="button"
-                      role="menuitem"
-                      disabled={child.disabled}
-                      onPointerDown={(event) => {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        runActionFromPointerDown(child);
-                      }}
-                      onClick={() => {
-                        runActionFromClick(child);
-                      }}
-                    >
-                      {child.label}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          );
-        }
-        return (
-          <button
-            key={`action-${index}-${item.label}`}
-            type="button"
-            role="menuitem"
-            disabled={item.disabled}
-            onPointerDown={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              runActionFromPointerDown(item);
-            }}
-            onClick={() => {
-              runActionFromClick(item);
-            }}
-          >
-            {item.label}
-          </button>
-        );
-      })}
+      {renderMenuItems(menu.items)}
+    </div>
+  );
+}
+
+interface ContextSubmenuProps {
+  item: Extract<ContextMenuItem, { type: "submenu" }>;
+  label: string;
+  renderItems: (items: ContextMenuItem[]) => React.ReactNode;
+}
+
+function ContextSubmenu({ item, label, renderItems }: ContextSubmenuProps) {
+  const submenuRef = useRef<HTMLDivElement | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const [position, setPosition] = useState({ left: 0, top: -5 });
+
+  useLayoutEffect(() => {
+    function updatePosition() {
+      const submenu = submenuRef.current;
+      const panel = panelRef.current;
+      if (!submenu || !panel) return;
+      const submenuRect = submenu.getBoundingClientRect();
+      const panelRect = panel.getBoundingClientRect();
+      const preferredLeft = submenuRect.width + 14;
+      const preferredTop = -5;
+      const absolutePosition = clampToViewport(
+        submenuRect.left + preferredLeft,
+        submenuRect.top + preferredTop,
+        panelRect.width,
+        panelRect.height,
+      );
+      setPosition({
+        left: absolutePosition.left - submenuRect.left,
+        top: absolutePosition.top - submenuRect.top,
+      });
+    }
+
+    updatePosition();
+    window.addEventListener("resize", updatePosition);
+    return () => {
+      window.removeEventListener("resize", updatePosition);
+    };
+  }, [item.items]);
+
+  return (
+    <div ref={submenuRef} className="context-menu__submenu" data-hover-bridge="true">
+      <button type="button" role="menuitem" aria-haspopup="menu">
+        {item.label}
+      </button>
+      <div
+        ref={panelRef}
+        className="context-menu context-menu__submenu-panel"
+        role="menu"
+        aria-label={label}
+        data-visible-on-hover="true"
+        style={{
+          left: position.left,
+          top: position.top,
+        }}
+      >
+        {renderItems(item.items)}
+      </div>
     </div>
   );
 }

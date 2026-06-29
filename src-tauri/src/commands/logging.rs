@@ -41,6 +41,11 @@ pub fn list_app_logs(
 }
 
 #[tauri::command]
+pub fn clear_app_logs(logger: State<'_, AppLogger>) -> Result<usize, String> {
+    logger.clear_logs()
+}
+
+#[tauri::command]
 pub fn write_app_log(
     settings_store: State<'_, SettingsStore>,
     logger: State<'_, AppLogger>,

@@ -229,7 +229,7 @@ pub fn primary_key_query_for_table(
 ) -> Result<MetadataQuery, String> {
     match kind {
         "mysql" => Ok(MetadataQuery {
-            sql: "select column_name from information_schema.key_column_usage where table_schema = ? and table_name = ? and constraint_name = 'PRIMARY' order by ordinal_position".to_string(),
+            sql: "select cast(column_name as char) as column_name from information_schema.key_column_usage where table_schema = ? and table_name = ? and constraint_name = 'PRIMARY' order by ordinal_position".to_string(),
             binds: vec![database.to_string(), table.to_string()],
         }),
         "postgresql" => Ok(MetadataQuery {
@@ -252,7 +252,7 @@ pub fn mysql_table_column_metadata_query(
     table: &str,
 ) -> Result<MetadataQuery, String> {
     Ok(MetadataQuery {
-        sql: "select column_name, data_type, is_nullable, column_default, extra from information_schema.columns where table_schema = ? and table_name = ? order by ordinal_position".to_string(),
+        sql: "select cast(column_name as char) as column_name, cast(data_type as char) as data_type, cast(is_nullable as char) as is_nullable, cast(column_default as char) as column_default, cast(extra as char) as extra from information_schema.columns where table_schema = ? and table_name = ? order by ordinal_position".to_string(),
         binds: vec![database.to_string(), table.to_string()],
     })
 }
@@ -1263,7 +1263,9 @@ async fn load_mysql_primary_key_columns(
         .fetch_all(connection)
         .await
         .map_err(|error| error.to_string())?;
-    Ok(rows.into_iter().map(|row| row.get("column_name")).collect())
+    rows.into_iter()
+        .map(|row| mysql_metadata_string(&row, "column_name"))
+        .collect()
 }
 
 async fn load_mysql_table_column_metadata(
@@ -1278,20 +1280,19 @@ async fn load_mysql_table_column_metadata(
         .fetch_all(connection)
         .await
         .map_err(|error| error.to_string())?;
-    Ok(rows
-        .into_iter()
+    rows.into_iter()
         .map(|row| {
             let extra = row
                 .try_get::<String, _>("extra")
+                .or_else(|_| mysql_metadata_string(&row, "extra"))
                 .unwrap_or_default()
                 .to_ascii_lowercase();
-            MysqlColumnMetadata {
+            Ok(MysqlColumnMetadata {
                 column: DatabaseResultColumn {
-                    name: row.get("column_name"),
-                    data_type: row.get("data_type"),
+                    name: mysql_metadata_string(&row, "column_name")?,
+                    data_type: mysql_metadata_string(&row, "data_type")?,
                     nullable: Some(
-                        row.get::<String, _>("is_nullable")
-                            .eq_ignore_ascii_case("YES"),
+                        mysql_metadata_string(&row, "is_nullable")?.eq_ignore_ascii_case("YES"),
                     ),
                     has_default: Some(
                         row.try_get_raw("column_default")
@@ -1301,9 +1302,9 @@ async fn load_mysql_table_column_metadata(
                         extra.contains("auto_increment") || extra.contains("generated"),
                     ),
                 },
-            }
+            })
         })
-        .collect())
+        .collect()
 }
 
 fn merge_mysql_result_columns(
@@ -1533,6 +1534,26 @@ fn mysql_count_value(row: &MySqlRow, column_name: &str) -> Result<u64, String> {
         return u64::try_from(value).map_err(|error| error.to_string());
     }
     Err("failed to decode table row count".to_string())
+}
+
+fn mysql_metadata_string(row: &MySqlRow, column_name: &str) -> Result<String, String> {
+    if let Ok(value_ref) = row.try_get_raw(column_name) {
+        if value_ref.is_null() {
+            return Ok(String::new());
+        }
+    }
+    if let Ok(value) = row.try_get::<String, _>(column_name) {
+        return Ok(value);
+    }
+    if let Ok(value) = row.try_get_unchecked::<String, _>(column_name) {
+        return Ok(value);
+    }
+    if let Ok(bytes) = row.try_get_unchecked::<Vec<u8>, _>(column_name) {
+        return Ok(String::from_utf8_lossy(&bytes).into_owned());
+    }
+    Err(format!(
+        "failed to decode mysql metadata column: {column_name}"
+    ))
 }
 
 fn postgresql_count_value(row: &PgRow, column_name: &str) -> Result<u64, String> {

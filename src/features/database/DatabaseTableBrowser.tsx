@@ -34,6 +34,7 @@ import {
 
 const DEFAULT_PAGE_SIZE = 200;
 const PAGE_SIZE_OPTIONS = [10, 100, 200, 400, 500, 1000];
+const TABLE_PAGE_REQUEST_TIMEOUT_MS = 20_000;
 
 interface DatabaseTableBrowserProps {
   connectionId: string;
@@ -65,11 +66,32 @@ function loadDatabaseTablePageOnce(request: DatabaseTablePageRequest) {
   const pendingRequest = pendingTablePageRequests.get(requestKey);
   if (pendingRequest) return pendingRequest;
 
-  const requestPromise = callBackend<DatabaseTablePageResult>("load_database_table_page", { request }).finally(() => {
+  const requestPromise = withTablePageTimeout(
+    callBackend<DatabaseTablePageResult>("load_database_table_page", { request }),
+    TABLE_PAGE_REQUEST_TIMEOUT_MS,
+  ).finally(() => {
     pendingTablePageRequests.delete(requestKey);
   });
   pendingTablePageRequests.set(requestKey, requestPromise);
   return requestPromise;
+}
+
+export function withTablePageTimeout<T>(promise: Promise<T>, timeoutMs: number) {
+  return new Promise<T>((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      reject(new Error("database table page loading timed out"));
+    }, timeoutMs);
+    promise.then(
+      (value) => {
+        window.clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        window.clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
 }
 
 export function DatabaseTableBrowser({ connectionId, target, exportMessage, onExport }: DatabaseTableBrowserProps) {

@@ -79,6 +79,18 @@ describe("global style defaults", () => {
     expect(globalsCss).toContain(".database-object-tree li:hover,\n.database-object-tree__item-button:hover {\n  background: color-mix(in srgb, var(--accent) 8%, var(--panel-raised));");
   });
 
+  it("keeps context menus from clipping submenu panels", () => {
+    const globalsCss = readCssSource();
+    const contextMenuRule = globalsCss.slice(
+      globalsCss.indexOf(".context-menu {"),
+      globalsCss.indexOf(".context-menu button {"),
+    );
+
+    expect(globalsCss).toContain(".context-menu {\n  position: fixed;");
+    expect(contextMenuRule).not.toContain("overflow: auto;");
+    expect(globalsCss).toContain(".context-menu__submenu-panel {\n  position: absolute;");
+  });
+
   it("does not draw focus outlines around split workspace panes", () => {
     const globalsCss = readCssSource();
 
