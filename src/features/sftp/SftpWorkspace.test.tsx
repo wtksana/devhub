@@ -730,14 +730,28 @@ describe("SftpWorkspace", () => {
     expect(await screen.findByText("hosts")).toBeInTheDocument();
   });
 
-  it("treats tilde in the address bar as the sftp home directory", async () => {
+  it("keeps tilde visible and opens directories from the sftp home directory", async () => {
     mockOpenSession();
     callBackendMock.mockResolvedValueOnce([
+      {
+        name: ".ssh",
+        path: "./.ssh",
+        kind: "directory",
+        size: 4096,
+      },
       {
         name: "profile",
         path: "./profile",
         kind: "file",
         size: 64,
+      },
+    ]);
+    callBackendMock.mockResolvedValueOnce([
+      {
+        name: "authorized_keys",
+        path: "./.ssh/authorized_keys",
+        kind: "file",
+        size: 128,
       },
     ]);
 
@@ -754,7 +768,18 @@ describe("SftpWorkspace", () => {
         request: { session_id: "sftp-session-1", path: "." },
       });
     });
+    expect(addressBar).toHaveValue("~");
     expect(await screen.findByText("profile")).toBeInTheDocument();
+
+    await userEvent.dblClick(screen.getByText(".ssh"));
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("list_sftp_directory", {
+        request: { session_id: "sftp-session-1", path: "./.ssh" },
+      });
+    });
+    expect(addressBar).toHaveValue("~/.ssh");
+    expect(await screen.findByText("authorized_keys")).toBeInTheDocument();
   });
 
   it("keeps back and forward history while navigating directories", async () => {

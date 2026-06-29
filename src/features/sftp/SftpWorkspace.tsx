@@ -181,8 +181,16 @@ function normalizeRemotePath(value: string) {
   if (!path) return "/";
   if (path === "~" || path === "~/") return ".";
   if (path.startsWith("~/")) return `.${path.slice(1).replace(/\/+$/, "")}`;
+  if (path === "." || path === "./") return ".";
+  if (path.startsWith("./")) return `.${path.slice(1).replace(/\/+$/, "")}`;
   const absolutePath = path.startsWith("/") ? path : `/${path}`;
   return absolutePath.replace(/\/+$/, "") || "/";
+}
+
+function displayRemotePath(path: string) {
+  if (path === ".") return "~";
+  if (path.startsWith("./")) return `~${path.slice(1)}`;
+  return path;
 }
 
 function joinRemotePath(parent: string, name: string) {
@@ -576,7 +584,7 @@ export function SftpWorkspace({
         setForwardStack([]);
       }
       setPath(loadedPath);
-      setAddressPath(loadedPath);
+      setAddressPath(displayRemotePath(loadedPath));
     },
     [loadPath, path],
   );
@@ -585,7 +593,7 @@ export function SftpWorkspace({
     const loadedPath = await loadPath(path);
     if (!loadedPath) return;
     setPath(loadedPath);
-    setAddressPath(loadedPath);
+    setAddressPath(displayRemotePath(loadedPath));
   }, [loadPath, path]);
 
   const goBack = useCallback(async () => {
@@ -596,7 +604,7 @@ export function SftpWorkspace({
     setBackStack((stack) => stack.slice(0, -1));
     setForwardStack((stack) => [path, ...stack]);
     setPath(loadedPath);
-    setAddressPath(loadedPath);
+    setAddressPath(displayRemotePath(loadedPath));
   }, [backStack, loadPath, path]);
 
   const goForward = useCallback(async () => {
@@ -607,7 +615,7 @@ export function SftpWorkspace({
     setBackStack((stack) => [...stack, path]);
     setForwardStack((stack) => stack.slice(1));
     setPath(loadedPath);
-    setAddressPath(loadedPath);
+    setAddressPath(displayRemotePath(loadedPath));
   }, [forwardStack, loadPath, path]);
 
   function toggleSort(key: SortKey) {

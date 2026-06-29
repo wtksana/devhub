@@ -148,6 +148,10 @@ function isTerminalSessionErrorOutput(data: string) {
   return data.includes("[devhub] ssh error:") || data.includes("[devhub] io error:");
 }
 
+function includesNonAscii(data: string) {
+  return /[^\x00-\x7F]/.test(data);
+}
+
 const TERMINAL_SCROLLBACK = 1000;
 
 export function TerminalTab({
@@ -254,6 +258,13 @@ export function TerminalTab({
     if (!containerRef.current) return;
     containerRef.current.style.background = terminalTheme.background;
     containerRef.current.style.setProperty("--terminal-background", terminalTheme.background);
+  }
+
+  function clearXtermInputTextarea() {
+    const input = containerRef.current?.querySelector("textarea");
+    if (input) {
+      input.value = "";
+    }
   }
 
   useEffect(() => {
@@ -432,6 +443,9 @@ export function TerminalTab({
       void callBackend<void>("write_terminal", {
         request: { session_id: sessionId, data },
       });
+      if (includesNonAscii(data)) {
+        window.setTimeout(clearXtermInputTextarea, 0);
+      }
     }
     sendTerminalInputRef.current = sendTerminalInput;
 

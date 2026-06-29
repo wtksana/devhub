@@ -1167,6 +1167,39 @@ describe("TerminalTab", () => {
     });
   });
 
+  it("clears the xterm textarea after ime text is sent", async () => {
+    callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
+    listenBackendMock.mockResolvedValueOnce(vi.fn());
+
+    renderTerminalTab({ connectionId: "prod-web-01", fontFamily: "Maple Mono", fontSize: 16, theme: "dark", isActive: true });
+
+    const terminalContainer = screen.getByLabelText("SSH 终端");
+    const textarea = document.createElement("textarea");
+    textarea.value = "帮我";
+    terminalContainer.append(textarea);
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+        request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
+      });
+    });
+    callBackendMock.mockClear();
+
+    const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
+    const onData = terminal.onData.mock.calls[0]?.[0] as ((data: string) => void) | undefined;
+    onData?.("帮我");
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("write_terminal", {
+        request: { session_id: "session-1", data: "帮我" },
+      });
+    });
+
+    await waitFor(() => {
+      expect(textarea.value).toBe("");
+    });
+  });
+
   it("clears the terminal display from the context menu", async () => {
     callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
     listenBackendMock.mockResolvedValueOnce(vi.fn());
