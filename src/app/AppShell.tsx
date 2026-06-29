@@ -931,7 +931,9 @@ function AppShellContent({ settingsState }: { settingsState: ReturnType<typeof u
             fontSize={settings.appearance.terminal_font_size}
           />
         ) : null}
-        {tab.kind === "settings" ? <SettingsPanel settingsState={settingsState} onOpenLogs={openLogsTab} /> : null}
+        {tab.kind === "settings" ? (
+          <SettingsPanel settingsState={settingsState} onOpenLogs={openLogsTab} resolvedTheme={theme} />
+        ) : null}
         {tab.kind === "logs" ? <LogViewer /> : null}
       </div>
     );

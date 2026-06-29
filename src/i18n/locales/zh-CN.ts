@@ -246,6 +246,8 @@ export const zhCN = {
   "redis.key_missing": "该 key 不存在或已过期。",
   "redis.string_content": "Redis string 内容",
   "redis.save_value": "保存内容",
+  "redis.save_value_success": "保存内容成功！",
+  "redis.key_action_success": "操作成功！",
   "redis.ttl_seconds": "TTL 秒数",
   "redis.set_ttl": "设置 TTL",
   "redis.remove_ttl": "移除 TTL",

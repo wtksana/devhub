@@ -1,4 +1,5 @@
 use tauri::State;
+use tokio::time::{timeout, Duration};
 
 use crate::commands::logging::{
     log_operation, metadata, metadata_bool, metadata_number, metadata_string,
@@ -7,7 +8,7 @@ use crate::core::app_logger::AppLogger;
 use crate::core::settings_store::SettingsStore;
 use crate::db::connection::DatabaseConnectionManager;
 use crate::db::export;
-use crate::db::metadata;
+use crate::db::metadata as database_metadata;
 use crate::db::query;
 use crate::db::sql_file;
 use crate::db::sql_files::DatabaseSqlFileStore;
@@ -15,14 +16,16 @@ use crate::models::database::{
     DatabaseQueryResult, DatabaseResultExportResult, DatabaseSqlFile,
     DatabaseSqlFileExecutionResult, DatabaseSqlFilePreview, DatabaseTableDdlResult,
     DatabaseTablePageResult, DatabaseTableStructureUpdateResult, DatabaseTableUpdateResult,
-    DeleteDatabaseTableRowsRequest,
-    ExecuteDatabaseQueryRequest, ExecuteDatabaseSqlFileRequest, ExportDatabaseResultRequest,
-    GetDatabaseTableDdlRequest, InsertDatabaseTableRowsRequest, ListDatabaseSqlFilesRequest,
-    LoadDatabaseTablePageRequest, PreviewDatabaseSqlFileRequest, SaveDatabaseSqlFileRequest,
-    UpdateDatabaseTableRowsRequest, UpdateDatabaseTableStructureRequest,
+    DeleteDatabaseTableRowsRequest, ExecuteDatabaseQueryRequest, ExecuteDatabaseSqlFileRequest,
+    ExportDatabaseResultRequest, GetDatabaseTableDdlRequest, InsertDatabaseTableRowsRequest,
+    ListDatabaseSqlFilesRequest, LoadDatabaseTablePageRequest, PreviewDatabaseSqlFileRequest,
+    SaveDatabaseSqlFileRequest, UpdateDatabaseTableRowsRequest,
+    UpdateDatabaseTableStructureRequest,
 };
 use crate::models::database::{DatabaseTreeNode, ListDatabaseObjectsRequest};
 use crate::models::settings::{ConnectionSettings, DatabaseConnectionSettings};
+
+const DATABASE_OBJECT_QUERY_TIMEOUT_SECONDS: u64 = 10;
 
 #[tauri::command]
 pub async fn test_database_connection(
@@ -92,8 +95,30 @@ pub async fn list_database_objects(
         _ => request.connection_id.clone(),
     };
     let connection = load_database_connection(settings_store.inner(), &request.connection_id)?;
-    let result =
-        metadata::list_database_objects(database_manager.inner(), &connection, &request).await;
+    let log_metadata = database_object_request_metadata(&request);
+    log_operation(
+        settings_store.inner(),
+        logger.inner(),
+        "info",
+        "database",
+        database_object_list_action(&request),
+        Some(target.clone()),
+        "started",
+        None,
+        None,
+        Some(log_metadata),
+    );
+    let result = match timeout(
+        Duration::from_secs(DATABASE_OBJECT_QUERY_TIMEOUT_SECONDS),
+        database_metadata::list_database_objects(database_manager.inner(), &connection, &request),
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(_) => Err(format!(
+            "database object query timed out after {DATABASE_OBJECT_QUERY_TIMEOUT_SECONDS}s"
+        )),
+    };
     match &result {
         Ok(nodes) => log_operation(
             settings_store.inner(),
@@ -333,7 +358,10 @@ pub async fn preview_database_table_structure(
     let log_metadata = metadata([
         ("database", metadata_string(request.database.clone())),
         ("table", metadata_string(request.table.clone())),
-        ("operation_count", metadata_number(request.operations.len() as i64)),
+        (
+            "operation_count",
+            metadata_number(request.operations.len() as i64),
+        ),
     ]);
     let connection = load_database_connection(settings_store.inner(), &request.connection_id)?;
     let result = query::preview_database_table_structure(&connection, &request).await;
@@ -361,7 +389,10 @@ pub async fn update_database_table_structure(
     let log_metadata = metadata([
         ("database", metadata_string(request.database.clone())),
         ("table", metadata_string(request.table.clone())),
-        ("operation_count", metadata_number(request.operations.len() as i64)),
+        (
+            "operation_count",
+            metadata_number(request.operations.len() as i64),
+        ),
     ]);
     let connection = load_database_connection(settings_store.inner(), &request.connection_id)?;
     let result =
@@ -597,7 +628,7 @@ fn sql_kind(sql: &str) -> &'static str {
         .unwrap_or_default()
         .to_ascii_lowercase();
     match first.as_str() {
-        "select" | "with" => "select",
+        "select" | "with" | "show" | "describe" | "desc" | "explain" => "select",
         "insert" => "insert",
         "update" => "update",
         "delete" => "delete",
@@ -807,7 +838,9 @@ mod tests {
         assert_eq!(sql_kind("update users set name = 'a'"), "update");
         assert_eq!(sql_kind("delete from users"), "delete");
         assert_eq!(sql_kind("create table t(id int)"), "ddl");
-        assert_eq!(sql_kind("show tables"), "other");
+        assert_eq!(sql_kind("show tables"), "select");
+        assert_eq!(sql_kind("desc users"), "select");
+        assert_eq!(sql_kind("explain select * from users"), "select");
     }
 
     #[test]

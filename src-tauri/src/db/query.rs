@@ -3,8 +3,8 @@ use std::time::Instant;
 
 use sqlx::mysql::{MySqlArguments, MySqlRow};
 use sqlx::postgres::{PgArguments, PgRow};
-use sqlx::types::chrono::{DateTime, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use sqlx::types::BigDecimal;
+use sqlx::types::chrono::{DateTime, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use sqlx::{Column, MySql, MySqlConnection, PgConnection, Postgres, Row, TypeInfo, ValueRef};
 
 use crate::db::connection::{DatabaseConnectionManager, DatabasePool};
@@ -105,17 +105,18 @@ pub async fn execute_database_query(
         return Err("sql is required".to_string());
     }
 
-    let is_select = is_select_sql(normalized_sql);
+    let is_result_set = is_result_set_sql(normalized_sql);
+    let should_apply_limit = is_select_sql(normalized_sql);
     let limit = request
         .limit
         .unwrap_or(DEFAULT_QUERY_LIMIT)
         .clamp(1, 10_000);
-    let sql = if is_select {
+    let sql = if should_apply_limit {
         apply_select_limit(normalized_sql, limit)?
     } else {
         normalized_sql.to_string()
     };
-    let limited = is_select && sql != normalized_sql;
+    let limited = should_apply_limit && sql != normalized_sql;
 
     match connection.kind.as_str() {
         "mysql" => {
@@ -123,13 +124,13 @@ pub async fn execute_database_query(
             let DatabasePool::Mysql(pool) = manager.pool(connection, database).await? else {
                 return Err("database pool kind mismatch".to_string());
             };
-            execute_mysql_query(&pool, &sql, is_select, limited).await
+            execute_mysql_query(&pool, &sql, is_result_set, limited).await
         }
         "postgresql" => {
             let DatabasePool::Postgresql(pool) = manager.pool(connection, None).await? else {
                 return Err("database pool kind mismatch".to_string());
             };
-            execute_postgresql_query(&pool, &sql, is_select, limited).await
+            execute_postgresql_query(&pool, &sql, is_result_set, limited).await
         }
         kind => Err(format!("unsupported database connection kind: {kind}")),
     }
@@ -174,7 +175,17 @@ pub async fn execute_database_statement(
 }
 
 pub fn is_select_sql(sql: &str) -> bool {
-    first_sql_keyword(sql).is_some_and(|keyword| keyword.eq_ignore_ascii_case("select"))
+    first_sql_keyword(sql)
+        .is_some_and(|keyword| matches!(keyword.to_ascii_lowercase().as_str(), "select" | "with"))
+}
+
+pub fn is_result_set_sql(sql: &str) -> bool {
+    first_sql_keyword(sql).is_some_and(|keyword| {
+        matches!(
+            keyword.to_ascii_lowercase().as_str(),
+            "select" | "with" | "show" | "describe" | "desc" | "explain"
+        )
+    })
 }
 
 pub fn is_dangerous_sql(sql: &str) -> bool {
@@ -232,7 +243,10 @@ pub fn mysql_table_ddl_query(table: &str) -> Result<String, String> {
     ))
 }
 
-pub fn mysql_table_column_metadata_query(database: &str, table: &str) -> Result<MetadataQuery, String> {
+pub fn mysql_table_column_metadata_query(
+    database: &str,
+    table: &str,
+) -> Result<MetadataQuery, String> {
     Ok(MetadataQuery {
         sql: "select column_name, data_type, is_nullable, column_default, extra from information_schema.columns where table_schema = ? and table_name = ? order by ordinal_position".to_string(),
         binds: vec![database.to_string(), table.to_string()],
@@ -309,10 +323,7 @@ fn build_mysql_table_structure_ddl(
                 if name.is_empty() {
                     return Err("column name is required".to_string());
                 }
-                column_operations.push(format!(
-                    "DROP COLUMN {}",
-                    quote_identifier("mysql", name)?
-                ));
+                column_operations.push(format!("DROP COLUMN {}", quote_identifier("mysql", name)?));
             }
             TableStructureOperation::AddIndex { index } => {
                 index_operations.push(mysql_add_index_clause(index)?);
@@ -342,7 +353,9 @@ fn build_mysql_table_structure_ddl(
     Ok(statements.join("\n"))
 }
 
-fn mysql_add_index_clause(index: &crate::models::database::TableStructureIndexDefinition) -> Result<String, String> {
+fn mysql_add_index_clause(
+    index: &crate::models::database::TableStructureIndexDefinition,
+) -> Result<String, String> {
     let name = index.name.trim();
     if name.is_empty() {
         return Err("index name is required".to_string());
@@ -383,11 +396,21 @@ fn mysql_column_definition(column: &TableStructureColumnDefinition) -> Result<St
     if let Some(default_value) = mysql_column_default_clause(column) {
         definition.push_str(&default_value);
     }
-    if let Some(extra) = column.extra.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+    if let Some(extra) = column
+        .extra
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
         definition.push(' ');
         definition.push_str(&extra.to_ascii_uppercase());
     }
-    if let Some(comment) = column.comment.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+    if let Some(comment) = column
+        .comment
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
         definition.push_str(" COMMENT ");
         definition.push_str(&mysql_string_literal(comment));
     }
@@ -442,7 +465,12 @@ fn is_mysql_default_expression(value: &str) -> bool {
     let upper = value.to_ascii_uppercase();
     matches!(
         upper.as_str(),
-        "CURRENT_TIMESTAMP" | "CURRENT_TIMESTAMP()" | "CURRENT_DATE" | "CURRENT_DATE()" | "CURRENT_TIME" | "CURRENT_TIME()"
+        "CURRENT_TIMESTAMP"
+            | "CURRENT_TIMESTAMP()"
+            | "CURRENT_DATE"
+            | "CURRENT_DATE()"
+            | "CURRENT_TIME"
+            | "CURRENT_TIME()"
     ) || value.parse::<i64>().is_ok()
         || value.parse::<f64>().is_ok()
 }
@@ -476,7 +504,10 @@ pub fn postgresql_table_ddl_query(schema: &str, table: &str) -> Result<MetadataQ
     })
 }
 
-pub fn postgresql_index_query_for_table(schema: &str, table: &str) -> Result<MetadataQuery, String> {
+pub fn postgresql_index_query_for_table(
+    schema: &str,
+    table: &str,
+) -> Result<MetadataQuery, String> {
     Ok(MetadataQuery {
         sql: "select indexdef from pg_indexes where schemaname = $1 and tablename = $2 order by indexname".to_string(),
         binds: vec![schema.to_string(), table.to_string()],
@@ -714,7 +745,9 @@ pub fn build_table_insert_queries(
                     sql: match kind {
                         "mysql" => format!("INSERT INTO {table} () VALUES ()"),
                         "postgresql" => format!("INSERT INTO {table} DEFAULT VALUES"),
-                        kind => return Err(format!("unsupported database connection kind: {kind}")),
+                        kind => {
+                            return Err(format!("unsupported database connection kind: {kind}"));
+                        }
                     },
                     values: Vec::new(),
                 });
@@ -851,7 +884,9 @@ pub async fn load_database_table_page(
 
     match connection.kind.as_str() {
         "mysql" => {
-            let DatabasePool::Mysql(pool) = manager.pool(connection, Some(&normalized.database)).await? else {
+            let DatabasePool::Mysql(pool) =
+                manager.pool(connection, Some(&normalized.database)).await?
+            else {
                 return Err("database pool kind mismatch".to_string());
             };
             load_mysql_table_page(&pool, &normalized, &queries).await
@@ -873,7 +908,9 @@ pub async fn update_database_table_rows(
 ) -> Result<DatabaseTableUpdateResult, String> {
     match connection.kind.as_str() {
         "mysql" => {
-            let DatabasePool::Mysql(pool) = manager.pool(connection, Some(&request.database)).await? else {
+            let DatabasePool::Mysql(pool) =
+                manager.pool(connection, Some(&request.database)).await?
+            else {
                 return Err("database pool kind mismatch".to_string());
             };
             update_mysql_table_rows(&pool, request).await
@@ -895,7 +932,9 @@ pub async fn insert_database_table_rows(
 ) -> Result<DatabaseTableUpdateResult, String> {
     match connection.kind.as_str() {
         "mysql" => {
-            let DatabasePool::Mysql(pool) = manager.pool(connection, Some(&request.database)).await? else {
+            let DatabasePool::Mysql(pool) =
+                manager.pool(connection, Some(&request.database)).await?
+            else {
                 return Err("database pool kind mismatch".to_string());
             };
             insert_mysql_table_rows(&pool, request).await
@@ -912,7 +951,9 @@ pub async fn delete_database_table_rows(
 ) -> Result<DatabaseTableUpdateResult, String> {
     match connection.kind.as_str() {
         "mysql" => {
-            let DatabasePool::Mysql(pool) = manager.pool(connection, Some(&request.database)).await? else {
+            let DatabasePool::Mysql(pool) =
+                manager.pool(connection, Some(&request.database)).await?
+            else {
                 return Err("database pool kind mismatch".to_string());
             };
             delete_mysql_table_rows(&pool, request).await
@@ -958,7 +999,8 @@ pub async fn preview_database_table_structure(
     request: &UpdateDatabaseTableStructureRequest,
 ) -> Result<DatabaseTableStructureUpdateResult, String> {
     let started_at = Instant::now();
-    let ddl = build_table_structure_ddl(&connection.kind, request.table.trim(), &request.operations)?;
+    let ddl =
+        build_table_structure_ddl(&connection.kind, request.table.trim(), &request.operations)?;
     Ok(DatabaseTableStructureUpdateResult {
         ddl,
         duration_ms: started_at.elapsed().as_millis(),
@@ -991,7 +1033,9 @@ pub async fn update_database_table_structure(
                 .await
                 .map_err(|error| error.to_string())?;
         }
-        "postgresql" => return Err("postgresql table structure editing is not supported yet".to_string()),
+        "postgresql" => {
+            return Err("postgresql table structure editing is not supported yet".to_string());
+        }
         kind => return Err(format!("unsupported database connection kind: {kind}")),
     }
 
@@ -1074,7 +1118,8 @@ async fn load_mysql_table_page(
         load_mysql_primary_key_columns(&mut connection, &request.database, &request.table).await?;
     let editable = !primary_key_columns.is_empty();
     let column_metadata =
-        load_mysql_table_column_metadata(&mut connection, &request.database, &request.table).await?;
+        load_mysql_table_column_metadata(&mut connection, &request.database, &request.table)
+            .await?;
     let rows = sqlx::query(&queries.page_sql)
         .fetch_all(&mut *connection)
         .await
@@ -1164,9 +1209,17 @@ async fn load_mysql_table_column_metadata(
                 column: DatabaseResultColumn {
                     name: row.get("column_name"),
                     data_type: row.get("data_type"),
-                    nullable: Some(row.get::<String, _>("is_nullable").eq_ignore_ascii_case("YES")),
-                    has_default: Some(row.try_get_raw("column_default").is_ok_and(|value| !value.is_null())),
-                    generated: Some(extra.contains("auto_increment") || extra.contains("generated")),
+                    nullable: Some(
+                        row.get::<String, _>("is_nullable")
+                            .eq_ignore_ascii_case("YES"),
+                    ),
+                    has_default: Some(
+                        row.try_get_raw("column_default")
+                            .is_ok_and(|value| !value.is_null()),
+                    ),
+                    generated: Some(
+                        extra.contains("auto_increment") || extra.contains("generated"),
+                    ),
                 },
             }
         })
@@ -1178,7 +1231,10 @@ fn merge_mysql_result_columns(
     metadata: Vec<MysqlColumnMetadata>,
 ) -> Vec<DatabaseResultColumn> {
     if result_columns.is_empty() {
-        return metadata.into_iter().map(|metadata| metadata.column).collect();
+        return metadata
+            .into_iter()
+            .map(|metadata| metadata.column)
+            .collect();
     }
     let metadata_by_name = metadata
         .into_iter()
@@ -1406,7 +1462,7 @@ fn postgresql_count_value(row: &PgRow, column_name: &str) -> Result<u64, String>
     Err("failed to decode table row count".to_string())
 }
 
-async fn execute_mysql_query(
+pub(crate) async fn execute_mysql_query(
     pool: &sqlx::MySqlPool,
     sql: &str,
     is_select: bool,
@@ -1566,6 +1622,11 @@ fn mysql_cell_value(row: &MySqlRow, column_name: &str, type_name: &str) -> Datab
             return DatabaseCellValue::Number { value };
         }
     }
+    if mysql_prefers_string_decode(type_name) {
+        if let Ok(value) = mysql_text_cell_string(row, column_name) {
+            return DatabaseCellValue::Text { value };
+        }
+    }
     if mysql_prefers_numeric_decode(type_name) {
         if let Some(value) = mysql_number_cell_value(row, column_name) {
             return value;
@@ -1585,9 +1646,23 @@ fn mysql_cell_value(row: &MySqlRow, column_name: &str, type_name: &str) -> Datab
     if let Ok(value) = row.try_get::<bool, _>(column_name) {
         return DatabaseCellValue::Bool { value };
     }
+    if let Some(value) = mysql_raw_text_cell_value(row, column_name) {
+        return value;
+    }
     DatabaseCellValue::Text {
         value: "<unsupported>".to_string(),
     }
+}
+
+fn mysql_text_cell_string(row: &MySqlRow, column_name: &str) -> Result<String, sqlx::Error> {
+    row.try_get_unchecked::<String, _>(column_name)
+}
+
+fn mysql_raw_text_cell_value(row: &MySqlRow, column_name: &str) -> Option<DatabaseCellValue> {
+    let bytes = row.try_get_unchecked::<Vec<u8>, _>(column_name).ok()?;
+    Some(DatabaseCellValue::Text {
+        value: String::from_utf8_lossy(&bytes).into_owned(),
+    })
 }
 
 fn mysql_number_cell_value(row: &MySqlRow, column_name: &str) -> Option<DatabaseCellValue> {
@@ -1615,24 +1690,27 @@ fn mysql_datetime_cell_value(
     type_name: &str,
 ) -> Option<DatabaseCellValue> {
     match type_name.to_ascii_uppercase().as_str() {
-        "DATE" => row
-            .try_get::<NaiveDate, _>(column_name)
-            .ok()
-            .map(|value| DatabaseCellValue::Text {
-                value: value.to_string(),
-            }),
-        "TIME" => row
-            .try_get::<NaiveTime, _>(column_name)
-            .ok()
-            .map(|value| DatabaseCellValue::Text {
-                value: value.to_string(),
-            }),
-        "DATETIME" | "TIMESTAMP" => row
-            .try_get::<NaiveDateTime, _>(column_name)
-            .ok()
-            .map(|value| DatabaseCellValue::Text {
-                value: value.to_string(),
-            }),
+        "DATE" => {
+            row.try_get::<NaiveDate, _>(column_name)
+                .ok()
+                .map(|value| DatabaseCellValue::Text {
+                    value: value.to_string(),
+                })
+        }
+        "TIME" => {
+            row.try_get::<NaiveTime, _>(column_name)
+                .ok()
+                .map(|value| DatabaseCellValue::Text {
+                    value: value.to_string(),
+                })
+        }
+        "DATETIME" | "TIMESTAMP" => {
+            row.try_get::<NaiveDateTime, _>(column_name)
+                .ok()
+                .map(|value| DatabaseCellValue::Text {
+                    value: value.to_string(),
+                })
+        }
         _ => None,
     }
 }
@@ -1659,6 +1737,31 @@ pub(crate) fn mysql_prefers_text_decode(type_name: &str) -> bool {
     matches!(
         type_name.to_ascii_uppercase().as_str(),
         "DECIMAL" | "NEWDECIMAL" | "NUMERIC"
+    )
+}
+
+pub(crate) fn mysql_prefers_string_decode(type_name: &str) -> bool {
+    matches!(
+        type_name.to_ascii_uppercase().as_str(),
+        "CHAR"
+            | "VARCHAR"
+            | "TINYTEXT"
+            | "TEXT"
+            | "MEDIUMTEXT"
+            | "LONGTEXT"
+            | "BINARY"
+            | "VARBINARY"
+            | "BLOB"
+            | "TINYBLOB"
+            | "MEDIUMBLOB"
+            | "LONGBLOB"
+            | "STRING"
+            | "VAR_STRING"
+            | "MYSQL_TYPE_STRING"
+            | "MYSQL_TYPE_VAR_STRING"
+            | "ENUM"
+            | "SET"
+            | "JSON"
     )
 }
 
@@ -1711,18 +1814,20 @@ fn postgresql_datetime_cell_value(
     type_name: &str,
 ) -> Option<DatabaseCellValue> {
     match type_name.to_ascii_uppercase().as_str() {
-        "DATE" => row
-            .try_get::<NaiveDate, _>(column_name)
-            .ok()
-            .map(|value| DatabaseCellValue::Text {
-                value: value.to_string(),
-            }),
-        "TIME" | "TIME WITHOUT TIME ZONE" => row
-            .try_get::<NaiveTime, _>(column_name)
-            .ok()
-            .map(|value| DatabaseCellValue::Text {
-                value: value.to_string(),
-            }),
+        "DATE" => {
+            row.try_get::<NaiveDate, _>(column_name)
+                .ok()
+                .map(|value| DatabaseCellValue::Text {
+                    value: value.to_string(),
+                })
+        }
+        "TIME" | "TIME WITHOUT TIME ZONE" => {
+            row.try_get::<NaiveTime, _>(column_name)
+                .ok()
+                .map(|value| DatabaseCellValue::Text {
+                    value: value.to_string(),
+                })
+        }
         "TIMESTAMP" | "TIMESTAMP WITHOUT TIME ZONE" => row
             .try_get::<NaiveDateTime, _>(column_name)
             .ok()

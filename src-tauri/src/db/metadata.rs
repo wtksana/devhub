@@ -1,7 +1,10 @@
 use sqlx::{MySqlConnection, PgConnection, Row};
 
 use crate::db::connection::{DatabaseConnectionManager, DatabasePool};
-use crate::models::database::{DatabaseTreeNode, ListDatabaseObjectsRequest};
+use crate::db::query;
+use crate::models::database::{
+    DatabaseCellValue, DatabaseTreeNode, ListDatabaseObjectsRequest,
+};
 use crate::models::settings::DatabaseConnectionSettings;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -39,11 +42,14 @@ pub fn metadata_query_for_tables(
 ) -> Result<MetadataQuery, String> {
     match kind {
         "mysql" => {
-            let mut sql = "select table_name, table_type from information_schema.tables where table_schema = ?".to_string();
-            let mut binds = vec![database_or_schema.to_string()];
+            let mut sql = format!(
+                "select table_name, table_type from information_schema.tables where table_schema = {}",
+                mysql_string_literal(database_or_schema)
+            );
+            let binds = Vec::new();
             if let Some(table_type) = table_type {
-                sql.push_str(" and table_type = ?");
-                binds.push(table_type.to_string());
+                sql.push_str(" and table_type = ");
+                sql.push_str(&mysql_string_literal(table_type));
             }
             sql.push_str(" order by table_type, table_name");
             Ok(MetadataQuery { sql, binds })
@@ -102,9 +108,9 @@ async fn list_mysql_objects(
     pool: &sqlx::MySqlPool,
     request: &ListDatabaseObjectsRequest,
 ) -> Result<Vec<DatabaseTreeNode>, String> {
-    let mut connection = pool.acquire().await.map_err(|error| error.to_string())?;
     let nodes = match request.parent_kind.as_deref() {
         None => {
+            let mut connection = pool.acquire().await.map_err(|error| error.to_string())?;
             let rows = sqlx::query(
                 "select schema_name from information_schema.schemata order by schema_name",
             )
@@ -130,28 +136,10 @@ async fn list_mysql_objects(
                 .as_deref()
                 .or(request.schema.as_deref())
                 .ok_or_else(|| "database is required".to_string())?;
-            let query = metadata_query_for_tables("mysql", schema, None)?;
-            let rows = sqlx::query(&query.sql)
-                .bind(&query.binds[0])
-                .fetch_all(&mut *connection)
-                .await
-                .map_err(|error| error.to_string())?;
-            rows.into_iter()
-                .map(|row| {
-                    let name: String = row.get("table_name");
-                    let table_type: String = row.get("table_type");
-                    let kind = table_kind(&table_type);
-                    DatabaseTreeNode {
-                        id: format!("{kind}:{schema}.{name}"),
-                        name,
-                        kind,
-                        has_children: true,
-                        detail: Some(table_type),
-                    }
-                })
-                .collect()
+            list_mysql_tables_via_query_path(pool, schema).await?
         }
         Some("table") | Some("view") => {
+            let mut connection = pool.acquire().await.map_err(|error| error.to_string())?;
             let schema = request
                 .database
                 .as_deref()
@@ -168,6 +156,49 @@ async fn list_mysql_objects(
         Some(kind) => return Err(format!("unsupported database object kind: {kind}")),
     };
     Ok(nodes)
+}
+
+async fn list_mysql_tables_via_query_path(
+    pool: &sqlx::MySqlPool,
+    schema: &str,
+) -> Result<Vec<DatabaseTreeNode>, String> {
+    let query = metadata_query_for_tables("mysql", schema, None)?;
+    let result = query::execute_mysql_query(pool, &query.sql, true, false).await?;
+    Ok(table_nodes_from_query_result(schema, result.rows))
+}
+
+fn table_nodes_from_query_result(
+    schema: &str,
+    rows: Vec<Vec<DatabaseCellValue>>,
+) -> Vec<DatabaseTreeNode> {
+    rows.into_iter()
+        .filter_map(|row| {
+            let name = cell_string(row.first()?)?;
+            let table_type = cell_string(row.get(1)?).unwrap_or_default();
+            Some(table_node(schema, name, table_type))
+        })
+        .collect()
+}
+
+fn table_node(schema: &str, name: String, table_type: String) -> DatabaseTreeNode {
+    let kind = table_kind(&table_type);
+    DatabaseTreeNode {
+        id: format!("{kind}:{schema}.{name}"),
+        name,
+        kind,
+        has_children: true,
+        detail: Some(table_type),
+    }
+}
+
+fn cell_string(value: &DatabaseCellValue) -> Option<String> {
+    match value {
+        DatabaseCellValue::Text { value } | DatabaseCellValue::Number { value } => {
+            Some(value.clone())
+        }
+        DatabaseCellValue::Bool { value } => Some(value.to_string()),
+        DatabaseCellValue::Null => None,
+    }
 }
 
 async fn list_postgresql_objects(
@@ -363,4 +394,8 @@ fn table_kind(table_type: &str) -> String {
     } else {
         "table".to_string()
     }
+}
+
+fn mysql_string_literal(value: &str) -> String {
+    format!("'{}'", value.replace('\\', "\\\\").replace('\'', "''"))
 }

@@ -433,6 +433,7 @@ describe("RedisWorkspace", () => {
       },
     });
     await waitFor(() => expect(screen.getByLabelText("Redis string 内容")).toHaveValue("light"));
+    expect(await screen.findByText("保存内容成功！")).toBeInTheDocument();
   });
 
   it("edits Redis hash fields from the detail dialog", async () => {

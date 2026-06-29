@@ -785,7 +785,7 @@ p {
   margin: 0;
   padding: 6px;
   overflow-x: hidden;
-  overflow-y: auto;
+  overflow-y: hidden;
 }
 
 .connection-list__status {
@@ -902,7 +902,7 @@ p {
   gap: 8px;
 }
 
-.connection-groups {
+.connection-list__scroll {
   flex: 1 1 auto;
   min-height: 0;
   overflow-x: hidden;
@@ -911,6 +911,21 @@ p {
   flex-direction: column;
   gap: 10px;
   padding: 8px;
+}
+
+.connection-list__scroll ul {
+  padding: 0;
+}
+
+.connection-local-list {
+  flex: 0 0 auto;
+}
+
+.connection-groups {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
 .connection-group {
@@ -3318,6 +3333,15 @@ th.database-table-browser__row-number {
 .redis-key-dialog__actions span {
   color: var(--muted);
   font-size: var(--ui-font-size-small, 15px);
+}
+
+.redis-key-dialog__actions .redis-key-dialog__action-message {
+  flex: 1;
+  min-height: 28px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 8px;
+  color: var(--success);
 }
 
 .redis-key-dialog__actions > div {

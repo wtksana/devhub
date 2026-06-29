@@ -93,6 +93,7 @@ export function DatabaseTableBrowser({ connectionId, target, exportMessage, onEx
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [gridScrollRequest, setGridScrollRequest] = useState<{ direction: "top" | "bottom"; token: number } | undefined>();
   const editingCellRef = useRef<EditingCell>(null);
   const editingInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -170,6 +171,7 @@ export function DatabaseTableBrowser({ connectionId, target, exportMessage, onEx
     runAfterDiscardConfirmation(() => {
       setPage(1);
       setFilter(filterInput.trim());
+      requestGridScroll("top");
     });
   }
 
@@ -179,6 +181,7 @@ export function DatabaseTableBrowser({ connectionId, target, exportMessage, onEx
       setSortColumn(null);
       setSortDirection(null);
       setOrderBy(orderByInput.trim());
+      requestGridScroll("top");
     });
   }
 
@@ -190,16 +193,19 @@ export function DatabaseTableBrowser({ connectionId, target, exportMessage, onEx
         setSortColumn(columnName);
         setSortDirection("asc");
         setPage(1);
+        requestGridScroll("top");
         return;
       }
       if (sortDirection === "asc") {
         setSortDirection("desc");
         setPage(1);
+        requestGridScroll("top");
         return;
       }
       setSortColumn(null);
       setSortDirection(null);
       setPage(1);
+      requestGridScroll("top");
     });
   }
 
@@ -213,6 +219,7 @@ export function DatabaseTableBrowser({ connectionId, target, exportMessage, onEx
     runAfterDiscardConfirmation(() => {
       const normalizedPage = normalizePage(String(nextPage));
       setPage(normalizedPage);
+      requestGridScroll("top");
     });
   }
 
@@ -221,6 +228,7 @@ export function DatabaseTableBrowser({ connectionId, target, exportMessage, onEx
     runAfterDiscardConfirmation(() => {
       setPage(1);
       setPageSize(nextPageSize);
+      requestGridScroll("top");
     });
   }
 
@@ -245,6 +253,14 @@ export function DatabaseTableBrowser({ connectionId, target, exportMessage, onEx
     if (!result) return;
     const values = Object.fromEntries(result.columns.map((column) => [column.name, { kind: "text", value: "" } as DatabaseCellValue]));
     setNewRows((current) => [...current, { id: `new-${Date.now()}-${current.length}`, values }]);
+    requestGridScroll("bottom");
+  }
+
+  function requestGridScroll(direction: "top" | "bottom") {
+    setGridScrollRequest((current) => ({
+      direction,
+      token: (current?.token ?? 0) + 1,
+    }));
   }
 
   function setActiveEditingCell(nextEditingCell: EditingCell) {
@@ -673,6 +689,7 @@ export function DatabaseTableBrowser({ connectionId, target, exportMessage, onEx
           dirtyRows={dirtyRows}
           page={result.page}
           pageSize={result.page_size}
+          scrollRequest={gridScrollRequest}
           sortColumn={sortColumn}
           sortDirection={sortDirection}
           onSortColumn={toggleSort}

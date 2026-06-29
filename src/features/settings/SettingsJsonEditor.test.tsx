@@ -1,12 +1,17 @@
 import "@testing-library/jest-dom/vitest";
-import { render, screen } from "@testing-library/react";
+import { render, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { SettingsJsonEditor } from "./SettingsJsonEditor";
 import type { DevHubSettings } from "./settingsTypes";
 
 const { editorMock } = vi.hoisted(() => ({
-  editorMock: vi.fn((props: { options: { fontFamily?: string; fontSize?: number } }) => (
-    <div data-testid="monaco-editor" data-font-family={props.options.fontFamily} data-font-size={props.options.fontSize} />
+  editorMock: vi.fn((props: { options: { fontFamily?: string; fontSize?: number }; theme?: string }) => (
+    <div
+      data-testid="monaco-editor"
+      data-font-family={props.options.fontFamily}
+      data-font-size={props.options.fontSize}
+      data-theme={props.theme}
+    />
   )),
 }));
 
@@ -50,9 +55,25 @@ const settings: DevHubSettings = {
 
 describe("SettingsJsonEditor", () => {
   it("uses 14px and the UI font family in the settings json editor", () => {
-    render(<SettingsJsonEditor settings={settings} rawJson="{}" saveRawJson={vi.fn()} />);
+    const { container } = render(<SettingsJsonEditor settings={settings} rawJson="{}" saveRawJson={vi.fn()} />);
 
-    expect(screen.getByTestId("monaco-editor")).toHaveAttribute("data-font-size", "14");
-    expect(screen.getByTestId("monaco-editor")).toHaveAttribute("data-font-family", "Zed Sans");
+    expect(within(container).getByTestId("monaco-editor")).toHaveAttribute("data-font-size", "14");
+    expect(within(container).getByTestId("monaco-editor")).toHaveAttribute("data-font-family", "Zed Sans");
+  });
+
+  it("uses the resolved light theme for the settings json editor", () => {
+    const { container } = render(
+      <SettingsJsonEditor settings={settings} rawJson="{}" saveRawJson={vi.fn()} resolvedTheme="light" />,
+    );
+
+    expect(within(container).getByTestId("monaco-editor")).toHaveAttribute("data-theme", "light");
+  });
+
+  it("uses the resolved dark theme for the settings json editor", () => {
+    const { container } = render(
+      <SettingsJsonEditor settings={settings} rawJson="{}" saveRawJson={vi.fn()} resolvedTheme="dark" />,
+    );
+
+    expect(within(container).getByTestId("monaco-editor")).toHaveAttribute("data-theme", "vs-dark");
   });
 });

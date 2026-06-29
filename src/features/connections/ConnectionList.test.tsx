@@ -547,6 +547,20 @@ describe("ConnectionList", () => {
     expect(groupOptions).toEqual(["production", "staging"]);
   });
 
+  it("keeps the local terminal and saved connections in one scrollable list", () => {
+    renderConnectionList({ connections: groupedConnections, connectionGroups: ["production", "staging"] });
+
+    const scrollRegion = screen.getByLabelText("连接分组列表");
+    const localItem = screen.getByText("本地终端").closest("li");
+    const remoteItem = screen.getByText("生产 Web").closest("li");
+
+    expect(scrollRegion).toHaveClass("connection-list__scroll");
+    expect(localItem).not.toBeNull();
+    expect(remoteItem).not.toBeNull();
+    expect(scrollRegion).toContainElement(localItem as HTMLElement);
+    expect(scrollRegion).toContainElement(remoteItem as HTMLElement);
+  });
+
   it("hides the ungrouped section when there are no ungrouped saved connections", () => {
     renderConnectionList({
       connections: [...connections, ...privateKeyConnections],

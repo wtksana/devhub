@@ -1,16 +1,19 @@
 use std::collections::BTreeMap;
 
 use crate::db::connection::{database_connection_url, database_pool_key};
-use crate::db::metadata::{metadata_query_for_columns, metadata_query_for_indexes, metadata_query_for_tables};
+use crate::db::metadata::{
+    metadata_query_for_columns, metadata_query_for_indexes, metadata_query_for_tables,
+};
 use crate::db::query::{
     append_postgresql_indexes_to_ddl, apply_select_limit, build_table_delete_queries,
     build_table_insert_queries, build_table_page_queries, build_table_structure_ddl,
-    build_table_update_queries, is_dangerous_sql, mysql_prefers_datetime_decode,
-    mysql_prefers_numeric_decode, mysql_prefers_text_decode, mysql_table_column_metadata_query,
-    mysql_table_ddl_from_values, mysql_table_ddl_query, normalize_table_delete_request,
-    normalize_table_insert_request, normalize_table_page_request, normalize_table_update_request,
-    postgresql_index_query_for_table, postgresql_prefers_datetime_decode,
-    postgresql_table_ddl_query, primary_key_query_for_table, quote_identifier,
+    build_table_update_queries, is_dangerous_sql, is_result_set_sql, mysql_prefers_datetime_decode,
+    mysql_prefers_numeric_decode, mysql_prefers_string_decode, mysql_prefers_text_decode,
+    mysql_table_column_metadata_query, mysql_table_ddl_from_values, mysql_table_ddl_query,
+    normalize_table_delete_request, normalize_table_insert_request, normalize_table_page_request,
+    normalize_table_update_request, postgresql_index_query_for_table,
+    postgresql_prefers_datetime_decode, postgresql_table_ddl_query, primary_key_query_for_table,
+    quote_identifier,
 };
 use crate::models::database::{
     DatabaseCellValue, DatabaseTableDeleteRow, DatabaseTableInsertRow, DatabaseTableUpdateRow,
@@ -84,10 +87,21 @@ fn builds_database_pool_key_with_database_override() {
 
 #[test]
 fn builds_mysql_table_metadata_query() {
-    let query = metadata_query_for_tables("mysql", "app", None).unwrap();
+    let query = metadata_query_for_tables("mysql", "game'app", None).unwrap();
 
     assert!(query.sql.contains("information_schema.tables"));
     assert!(query.sql.contains("table_schema"));
+    assert!(query.sql.contains("where table_schema = 'game''app'"));
+    assert!(query.binds.is_empty());
+}
+
+#[test]
+fn builds_mysql_table_metadata_query_with_table_type_filter() {
+    let query = metadata_query_for_tables("mysql", "app", Some("BASE TABLE")).unwrap();
+
+    assert!(query.sql.contains("table_schema = 'app'"));
+    assert!(query.sql.contains("table_type = 'BASE TABLE'"));
+    assert!(query.binds.is_empty());
 }
 
 #[test]
@@ -147,11 +161,32 @@ fn appends_default_limit_to_select_without_limit() {
 }
 
 #[test]
+fn appends_default_limit_to_with_query_without_limit() {
+    assert_eq!(
+        apply_select_limit(
+            "with recent as (select * from users) select * from recent",
+            200
+        )
+        .unwrap(),
+        "with recent as (select * from users) select * from recent LIMIT 200"
+    );
+}
+
+#[test]
 fn keeps_select_with_existing_limit() {
     assert_eq!(
         apply_select_limit("select * from users limit 20", 200).unwrap(),
         "select * from users limit 20"
     );
+}
+
+#[test]
+fn treats_show_describe_and_explain_as_result_set_sql() {
+    assert!(is_result_set_sql("show tables from `game`"));
+    assert!(is_result_set_sql("show grants for current_user()"));
+    assert!(is_result_set_sql("describe users"));
+    assert!(is_result_set_sql("desc users"));
+    assert!(is_result_set_sql("explain select * from users"));
 }
 
 #[test]
@@ -164,6 +199,28 @@ fn treats_mysql_decimal_as_text_first_type() {
     assert!(mysql_prefers_text_decode("DECIMAL"));
     assert!(mysql_prefers_text_decode("NEWDECIMAL"));
     assert!(mysql_prefers_text_decode("NUMERIC"));
+}
+
+#[test]
+fn treats_mysql_string_types_as_text_types() {
+    assert!(mysql_prefers_string_decode("CHAR"));
+    assert!(mysql_prefers_string_decode("VARCHAR"));
+    assert!(mysql_prefers_string_decode("VAR_STRING"));
+    assert!(mysql_prefers_string_decode("STRING"));
+    assert!(mysql_prefers_string_decode("TEXT"));
+    assert!(mysql_prefers_string_decode("LONGTEXT"));
+    assert!(mysql_prefers_string_decode("BINARY"));
+    assert!(mysql_prefers_string_decode("VARBINARY"));
+    assert!(mysql_prefers_string_decode("BLOB"));
+    assert!(mysql_prefers_string_decode("LONGBLOB"));
+    assert!(mysql_prefers_string_decode("JSON"));
+}
+
+#[test]
+fn treats_mysql_unknown_string_aliases_as_string_types() {
+    assert!(mysql_prefers_string_decode("VAR_STRING"));
+    assert!(mysql_prefers_string_decode("MYSQL_TYPE_VAR_STRING"));
+    assert!(mysql_prefers_string_decode("MYSQL_TYPE_STRING"));
 }
 
 #[test]
@@ -585,7 +642,10 @@ fn builds_postgresql_table_ddl_query_with_escaped_identifiers() {
     assert!(query.sql.contains("create table \"public\"\"schema\".%s"));
     assert!(query.sql.contains("quote_ident(c.table_name)"));
     assert!(query.sql.contains("information_schema.columns"));
-    assert_eq!(query.binds, vec!["public\"schema".to_string(), "user\"log".to_string()]);
+    assert_eq!(
+        query.binds,
+        vec!["public\"schema".to_string(), "user\"log".to_string()]
+    );
 }
 
 #[test]
@@ -662,8 +722,18 @@ fn builds_mysql_table_insert_query() {
         table: "users".to_string(),
         rows: vec![DatabaseTableInsertRow {
             values: vec![
-                ("id".to_string(), DatabaseCellValue::Number { value: "1".to_string() }),
-                ("name".to_string(), DatabaseCellValue::Text { value: "Alice".to_string() }),
+                (
+                    "id".to_string(),
+                    DatabaseCellValue::Number {
+                        value: "1".to_string(),
+                    },
+                ),
+                (
+                    "name".to_string(),
+                    DatabaseCellValue::Text {
+                        value: "Alice".to_string(),
+                    },
+                ),
             ]
             .into_iter()
             .collect::<BTreeMap<_, _>>(),
@@ -679,8 +749,12 @@ fn builds_mysql_table_insert_query() {
     assert_eq!(
         queries[0].values,
         vec![
-            DatabaseCellValue::Number { value: "1".to_string() },
-            DatabaseCellValue::Text { value: "Alice".to_string() },
+            DatabaseCellValue::Number {
+                value: "1".to_string()
+            },
+            DatabaseCellValue::Text {
+                value: "Alice".to_string()
+            },
         ]
     );
 }
@@ -712,7 +786,9 @@ fn builds_mysql_table_delete_query() {
         rows: vec![DatabaseTableDeleteRow {
             primary_key_values: vec![(
                 "id".to_string(),
-                DatabaseCellValue::Number { value: "1".to_string() },
+                DatabaseCellValue::Number {
+                    value: "1".to_string(),
+                },
             )]
             .into_iter()
             .collect::<BTreeMap<_, _>>(),
@@ -724,7 +800,9 @@ fn builds_mysql_table_delete_query() {
     assert_eq!(queries[0].sql, "DELETE FROM `users` WHERE `id` = ?");
     assert_eq!(
         queries[0].values,
-        vec![DatabaseCellValue::Number { value: "1".to_string() }]
+        vec![DatabaseCellValue::Number {
+            value: "1".to_string()
+        }]
     );
 }
 

@@ -2581,7 +2581,9 @@ function firstSqlKeyword(sql: string) {
 
 function sqlKind(sql: string) {
   const keyword = firstSqlKeyword(sql)?.toLowerCase();
-  if (keyword === "select" || keyword === "with") return "select";
+  if (keyword === "select" || keyword === "with" || keyword === "show" || keyword === "describe" || keyword === "desc" || keyword === "explain") {
+    return "select";
+  }
   if (keyword === "insert") return "insert";
   if (keyword === "update") return "update";
   if (keyword === "delete") return "delete";

@@ -7,11 +7,13 @@ interface SettingsJsonEditorProps {
   settings: DevHubSettings;
   rawJson: string;
   saveRawJson: (value: string) => Promise<void>;
+  resolvedTheme?: "dark" | "light";
 }
 
-export function SettingsJsonEditor({ settings, rawJson, saveRawJson }: SettingsJsonEditorProps) {
+export function SettingsJsonEditor({ settings, rawJson, saveRawJson, resolvedTheme }: SettingsJsonEditorProps) {
   const [draft, setDraft] = useState(rawJson);
   const { t } = useI18n();
+  const editorTheme = (resolvedTheme ?? settings.appearance.theme) === "dark" ? "vs-dark" : "light";
 
   useEffect(() => {
     setDraft(rawJson);
@@ -30,7 +32,7 @@ export function SettingsJsonEditor({ settings, rawJson, saveRawJson }: SettingsJ
           height="100%"
           defaultLanguage="json"
           value={draft}
-          theme="vs-dark"
+          theme={editorTheme}
           onChange={(value) => setDraft(value ?? "")}
           options={{
             minimap: { enabled: false },

@@ -235,6 +235,7 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
   const [error, setError] = useState<string | null>(null);
   const [keyDetail, setKeyDetail] = useState<RedisKeyValueResponse | null>(null);
   const [keyDetailError, setKeyDetailError] = useState<string | null>(null);
+  const [keyDetailMessage, setKeyDetailMessage] = useState<string | null>(null);
   const [isKeyDetailLoading, setIsKeyDetailLoading] = useState(false);
   const [stringDraft, setStringDraft] = useState("");
   const [ttlDraft, setTtlDraft] = useState("");
@@ -537,6 +538,7 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
 
   function applyKeyDetail(detail: RedisKeyValueResponse) {
     setKeyDetail(detail);
+    setKeyDetailMessage(null);
     setStringDraft(detail.value.kind === "string" ? detail.value.value : "");
     setHashDrafts(detail.value.kind === "hash"
       ? Object.fromEntries(detail.value.entries)
@@ -572,6 +574,7 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
     if (!connectionId || !keyDetail || keyDetail.value.kind !== "string") return;
     setIsKeyActionRunning(true);
     setKeyDetailError(null);
+    setKeyDetailMessage(null);
     try {
       await callBackend("set_redis_string_value", {
         request: {
@@ -582,6 +585,7 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
         },
       });
       await reloadKeyDetail();
+      setKeyDetailMessage(t("redis.save_value_success"));
     } catch (caught) {
       setKeyDetailError(caught instanceof Error ? caught.message : String(caught));
       logRedisError("set_redis_string_value", caught, keyDetail.key);
@@ -593,9 +597,11 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
   async function runKeyDetailAction(actionName: string, key: string, action: () => Promise<void>) {
     setIsKeyActionRunning(true);
     setKeyDetailError(null);
+    setKeyDetailMessage(null);
     try {
       await action();
       await reloadKeyDetail();
+      setKeyDetailMessage(t("redis.key_action_success"));
     } catch (caught) {
       setKeyDetailError(caught instanceof Error ? caught.message : String(caught));
       logRedisError(actionName, caught, key);
@@ -625,6 +631,7 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
     const field = newHashField.trim();
     if (!field) {
       setKeyDetailError(t("redis.hash_field_required"));
+      setKeyDetailMessage(null);
       return;
     }
     await runKeyDetailAction("set_redis_hash_field", keyDetail.key, async () => {
@@ -702,6 +709,7 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
     const member = newSetMember.trim();
     if (!member) {
       setKeyDetailError(t("redis.member_required"));
+      setKeyDetailMessage(null);
       return;
     }
     await runKeyDetailAction("add_redis_set_member", keyDetail.key, async () => {
@@ -750,6 +758,7 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
     const member = newZsetMember.trim();
     if (!member) {
       setKeyDetailError(t("redis.member_required"));
+      setKeyDetailMessage(null);
       return;
     }
     await runKeyDetailAction("set_redis_zset_member", keyDetail.key, async () => {
@@ -784,11 +793,13 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
     const ttlSeconds = Number(ttlDraft);
     if (!Number.isInteger(ttlSeconds) || ttlSeconds <= 0) {
       setKeyDetailError(t("redis.ttl_invalid"));
+      setKeyDetailMessage(null);
       return;
     }
 
     setIsKeyActionRunning(true);
     setKeyDetailError(null);
+    setKeyDetailMessage(null);
     try {
       await callBackend("set_redis_key_ttl", {
         request: {
@@ -799,6 +810,7 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
         },
       });
       await reloadKeyDetail();
+      setKeyDetailMessage(t("redis.key_action_success"));
     } catch (caught) {
       setKeyDetailError(caught instanceof Error ? caught.message : String(caught));
       logRedisError("set_redis_key_ttl", caught, keyDetail.key, { ttl_seconds: ttlSeconds });
@@ -811,6 +823,7 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
     if (!connectionId || !keyDetail) return;
     setIsKeyActionRunning(true);
     setKeyDetailError(null);
+    setKeyDetailMessage(null);
     try {
       await callBackend("persist_redis_key", {
         request: {
@@ -820,6 +833,7 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
         },
       });
       await reloadKeyDetail();
+      setKeyDetailMessage(t("redis.key_action_success"));
     } catch (caught) {
       setKeyDetailError(caught instanceof Error ? caught.message : String(caught));
       logRedisError("persist_redis_key", caught, keyDetail.key);
@@ -1303,6 +1317,9 @@ export function RedisWorkspace({ connectionId, initialDatabase = 0 }: RedisWorks
                     ) : (
                       <span>{t("redis.collection_edit_hint")}</span>
                     )}
+                    <span className="redis-key-dialog__action-message" role="status">
+                      {keyDetailMessage ?? ""}
+                    </span>
                     <div>
                       <button
                         type="button"

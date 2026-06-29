@@ -73,22 +73,31 @@ function FontSelect({
 interface SettingsPanelProps {
   settingsState?: SettingsState;
   onOpenLogs?: () => void;
+  resolvedTheme?: "dark" | "light";
 }
 
-export function SettingsPanel({ settingsState: providedSettingsState, onOpenLogs }: SettingsPanelProps) {
+export function SettingsPanel({ settingsState: providedSettingsState, onOpenLogs, resolvedTheme }: SettingsPanelProps) {
   if (providedSettingsState) {
-    return <SettingsPanelView settingsState={providedSettingsState} onOpenLogs={onOpenLogs} />;
+    return <SettingsPanelView settingsState={providedSettingsState} onOpenLogs={onOpenLogs} resolvedTheme={resolvedTheme} />;
   }
 
-  return <SettingsPanelWithLocalSettings onOpenLogs={onOpenLogs} />;
+  return <SettingsPanelWithLocalSettings onOpenLogs={onOpenLogs} resolvedTheme={resolvedTheme} />;
 }
 
-function SettingsPanelWithLocalSettings({ onOpenLogs }: { onOpenLogs?: () => void }) {
+function SettingsPanelWithLocalSettings({ onOpenLogs, resolvedTheme }: { onOpenLogs?: () => void; resolvedTheme?: "dark" | "light" }) {
   const settingsState = useSettings();
-  return <SettingsPanelView settingsState={settingsState} onOpenLogs={onOpenLogs} />;
+  return <SettingsPanelView settingsState={settingsState} onOpenLogs={onOpenLogs} resolvedTheme={resolvedTheme} />;
 }
 
-function SettingsPanelView({ settingsState, onOpenLogs }: { settingsState: SettingsState; onOpenLogs?: () => void }) {
+function SettingsPanelView({
+  settingsState,
+  onOpenLogs,
+  resolvedTheme,
+}: {
+  settingsState: SettingsState;
+  onOpenLogs?: () => void;
+  resolvedTheme?: "dark" | "light";
+}) {
   const { settings, error, saveSettings } = settingsState;
   const { t } = useI18n();
   const [draftSettings, setDraftSettings] = useState(settings);
@@ -651,7 +660,7 @@ function SettingsPanelView({ settingsState, onOpenLogs }: { settingsState: Setti
             sectionRefs.current["settings.json"] = element;
           }}
         >
-          <SettingsJsonEditor {...settingsState} />
+          <SettingsJsonEditor {...settingsState} resolvedTheme={resolvedTheme} />
         </div>
         ) : null}
       </div>

@@ -248,6 +248,8 @@ export const enUS: Dictionary = {
   "redis.key_missing": "This key does not exist or has expired.",
   "redis.string_content": "Redis string content",
   "redis.save_value": "Save content",
+  "redis.save_value_success": "Content saved.",
+  "redis.key_action_success": "Operation completed.",
   "redis.ttl_seconds": "TTL seconds",
   "redis.set_ttl": "Set TTL",
   "redis.remove_ttl": "Remove TTL",

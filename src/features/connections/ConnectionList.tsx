@@ -829,40 +829,42 @@ export function ConnectionList({
           </div>
         </div>
       ) : null}
-      <ul className="connection-local-list">
-        <li onDoubleClick={() => onOpenTerminal(localConnectionId)}>
-          <strong>
-            <img src={sshConnectionIcon} alt={t("connections.ssh_icon")} />
-            <span className="connection-list__name">{t("connections.local_terminal")}</span>
-          </strong>
-          <span>{t("connections.local_shell")}</span>
-        </li>
-      </ul>
-      <div className="connection-groups" aria-label={t("connections.group_list")} onContextMenu={openBlankContextMenu}>
-        {groupedConnections.map(([groupName, groupConnections]) => (
-          <section
-            key={groupName}
-            className="connection-group"
-            aria-label={t("connections.group_label", { name: groupDisplayName(groupName) })}
-          >
-            <h3>{groupDisplayName(groupName)}</h3>
-            <ul>
-              {groupConnections.map((connection) => (
-                <li
-                  key={connection.id}
-                  onDoubleClick={() => activateConnection(connection)}
-                  onContextMenu={(event) => openConnectionContextMenu(event, connection)}
-                >
-                  <strong>
-                    <img src={connectionIcon(connection)} alt={connectionIconAlt(connection)} />
-                    <span className="connection-list__name">{connection.name}</span>
-                  </strong>
-                  <span>{connectionSubtitle(connection)}</span>
-                </li>
-              ))}
-            </ul>
-          </section>
-        ))}
+      <div className="connection-list__scroll" aria-label={t("connections.group_list")} onContextMenu={openBlankContextMenu}>
+        <ul className="connection-local-list">
+          <li onDoubleClick={() => onOpenTerminal(localConnectionId)}>
+            <strong>
+              <img src={sshConnectionIcon} alt={t("connections.ssh_icon")} />
+              <span className="connection-list__name">{t("connections.local_terminal")}</span>
+            </strong>
+            <span>{t("connections.local_shell")}</span>
+          </li>
+        </ul>
+        <div className="connection-groups">
+          {groupedConnections.map(([groupName, groupConnections]) => (
+            <section
+              key={groupName}
+              className="connection-group"
+              aria-label={t("connections.group_label", { name: groupDisplayName(groupName) })}
+            >
+              <h3>{groupDisplayName(groupName)}</h3>
+              <ul>
+                {groupConnections.map((connection) => (
+                  <li
+                    key={connection.id}
+                    onDoubleClick={() => activateConnection(connection)}
+                    onContextMenu={(event) => openConnectionContextMenu(event, connection)}
+                  >
+                    <strong>
+                      <img src={connectionIcon(connection)} alt={connectionIconAlt(connection)} />
+                      <span className="connection-list__name">{connection.name}</span>
+                    </strong>
+                    <span>{connectionSubtitle(connection)}</span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ))}
+        </div>
       </div>
       <ContextMenu menu={contextMenu} onClose={() => setContextMenu(null)} />
     </section>

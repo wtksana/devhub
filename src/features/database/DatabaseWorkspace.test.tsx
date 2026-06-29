@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { StrictMode, type ComponentProps } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -245,16 +245,12 @@ describe("DatabaseWorkspace", () => {
     expect(callBackendMock).toHaveBeenCalledWith("list_database_objects", {
       request: {
         connection_id: "mysql-dev",
-      },
-    });
-    expect(callBackendMock).toHaveBeenCalledWith("list_database_objects", {
-      request: {
-        connection_id: "mysql-dev",
         parent_kind: "database",
         database: "app",
       },
     });
 
+    await userEvent.click(screen.getByLabelText("数据库"));
     await userEvent.selectOptions(screen.getByLabelText("数据库"), "audit");
 
     expect(await screen.findByText("events")).toBeInTheDocument();
@@ -288,7 +284,7 @@ describe("DatabaseWorkspace", () => {
     expect(await screen.findByText("users")).toBeInTheDocument();
     await waitFor(() => {
       const objectCalls = callBackendMock.mock.calls.filter(([command]) => command === "list_database_objects");
-      expect(objectCalls).toHaveLength(2);
+      expect(objectCalls).toHaveLength(1);
     });
     const tableObjectCalls = callBackendMock.mock.calls.filter(([command, payload]) => {
       if (command !== "list_database_objects") return false;
@@ -459,9 +455,6 @@ describe("DatabaseWorkspace", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("metadata failed");
 
     callBackendMock.mockResolvedValueOnce([
-      { id: "database:app", name: "app", kind: "database", has_children: true },
-    ]);
-    callBackendMock.mockResolvedValueOnce([
       { id: "table:app.users", name: "users", kind: "table", has_children: true },
     ]);
     await userEvent.click(screen.getByRole("button", { name: "重试" }));
@@ -470,6 +463,8 @@ describe("DatabaseWorkspace", () => {
       expect(callBackendMock).toHaveBeenCalledWith("list_database_objects", {
         request: {
           connection_id: "mysql-dev",
+          parent_kind: "database",
+          database: "app",
         },
       });
     });
@@ -485,6 +480,9 @@ describe("DatabaseWorkspace", () => {
           { id: "database:game", name: "game", kind: "database", has_children: true },
         ]);
       }
+      if (request.parent_kind === "database" && request.database === "game") {
+        return Promise.resolve([]);
+      }
       return Promise.resolve([]);
     });
 
@@ -498,6 +496,107 @@ describe("DatabaseWorkspace", () => {
         parent_kind: "database",
         database: "game",
       },
+    });
+  });
+
+  it("shows loading while database tables are pending and retries after timeout", async () => {
+    vi.useFakeTimers();
+    callBackendMock.mockImplementation((command, payload) => {
+      if (command !== "list_database_objects") return Promise.resolve([]);
+      const request = (payload as { request: { parent_kind?: string; database?: string } }).request;
+      if (!request.parent_kind) return Promise.resolve([]);
+      return new Promise(() => {});
+    });
+
+    renderDatabaseWorkspace("game");
+
+    await act(async () => {});
+    expect(screen.getByText("加载中")).toBeInTheDocument();
+    expect(screen.queryByText("当前数据库暂无表")).not.toBeInTheDocument();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(15_000);
+    });
+
+    expect(screen.getByText("数据库对象加载失败")).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("database object loading timed out");
+
+    callBackendMock.mockImplementation((command, payload) => {
+      if (command !== "list_database_objects") return Promise.resolve([]);
+      const request = (payload as { request: { parent_kind?: string; database?: string } }).request;
+      if (!request.parent_kind) return Promise.resolve([]);
+      return Promise.resolve([
+        { id: "table:game.player", name: "player", kind: "table", has_children: true, detail: "BASE TABLE" },
+      ]);
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "重试" }));
+    });
+
+    expect(screen.getByText("player")).toBeInTheDocument();
+    const tableObjectCalls = callBackendMock.mock.calls.filter(([command, payload]) => {
+      if (command !== "list_database_objects") return false;
+      const request = (payload as { request?: { parent_kind?: string; database?: string } }).request;
+      return request?.parent_kind === "database" && request.database === "game";
+    });
+    expect(tableObjectCalls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("loads configured default database tables even when root database list is empty", async () => {
+    callBackendMock.mockImplementation((command, payload) => {
+      if (command !== "list_database_objects") return Promise.resolve([]);
+      const request = (payload as { request: { parent_kind?: string; database?: string } }).request;
+      if (!request.parent_kind) {
+        return Promise.resolve([]);
+      }
+      if (request.parent_kind === "database" && request.database === "game") {
+        return Promise.resolve([
+          { id: "table:game.player", name: "player", kind: "table", has_children: true, detail: "BASE TABLE" },
+        ]);
+      }
+      return Promise.resolve([]);
+    });
+
+    renderDatabaseWorkspace("game");
+
+    expect(await screen.findByText("player")).toBeInTheDocument();
+    expect(callBackendMock).toHaveBeenCalledWith("list_database_objects", {
+      request: {
+        connection_id: "mysql-dev",
+        parent_kind: "database",
+        database: "game",
+      },
+    });
+  });
+
+  it("keeps configured database tables visible when root database loading fails later", async () => {
+    let rejectRootDatabaseList: (error: Error) => void = () => {};
+    callBackendMock.mockImplementation((command, payload) => {
+      if (command !== "list_database_objects") return Promise.resolve([]);
+      const request = (payload as { request: { parent_kind?: string; database?: string } }).request;
+      if (!request.parent_kind) {
+        return new Promise((_, reject) => {
+          rejectRootDatabaseList = reject;
+        });
+      }
+      if (request.parent_kind === "database" && request.database === "game") {
+        return Promise.resolve([
+          { id: "table:game.player", name: "player", kind: "table", has_children: true, detail: "BASE TABLE" },
+        ]);
+      }
+      return Promise.resolve([]);
+    });
+
+    renderDatabaseWorkspace("game");
+
+    expect(await screen.findByText("player")).toBeInTheDocument();
+    await act(async () => {
+      rejectRootDatabaseList(new Error("database list timed out"));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("player")).toBeInTheDocument();
+      expect(screen.queryByText("数据库对象加载失败")).not.toBeInTheDocument();
     });
   });
 
@@ -666,11 +765,6 @@ describe("DatabaseWorkspace", () => {
 
     renderDatabaseWorkspace("app");
 
-    await waitFor(() => expect(callBackendMock).toHaveBeenCalledWith("list_database_objects", {
-      request: {
-        connection_id: "mysql-dev",
-      },
-    }));
     await userEvent.clear(screen.getByLabelText("SQL 编辑器"));
     await userEvent.type(screen.getByLabelText("SQL 编辑器"), "update users set active = 1");
     setSelectedSqlText("update users set active = 1");
@@ -2443,6 +2537,8 @@ describe("DatabaseWorkspace", () => {
 
     await userEvent.dblClick(await screen.findByText("users"));
     await screen.findByLabelText("表数据");
+    const tableWrap = screen.getByLabelText("表数据").querySelector<HTMLElement>(".database-table-browser__table-wrap");
+    expect(tableWrap).not.toBeNull();
 
     await userEvent.click(screen.getByRole("button", { name: "下一页" }));
     await waitFor(() => {
@@ -2478,6 +2574,7 @@ describe("DatabaseWorkspace", () => {
     });
 
     expect(screen.getByLabelText("排序")).toHaveAttribute("placeholder", "如 id desc");
+    tableWrap!.scrollTop = 120;
     await userEvent.type(screen.getByLabelText("排序"), "id desc{Enter}");
     await waitFor(() => {
       expect(callBackendMock).toHaveBeenCalledWith("load_database_table_page", {
@@ -2489,7 +2586,9 @@ describe("DatabaseWorkspace", () => {
         }),
       });
     });
+    expect(tableWrap!.scrollTop).toBe(0);
 
+    tableWrap!.scrollTop = 120;
     await userEvent.type(screen.getByLabelText("筛选"), "name = 'Alice'{Enter}");
     await waitFor(() => {
       expect(callBackendMock).toHaveBeenCalledWith("load_database_table_page", {
@@ -2498,6 +2597,7 @@ describe("DatabaseWorkspace", () => {
         }),
       });
     });
+    expect(tableWrap!.scrollTop).toBe(0);
   });
 
   it("resizes the database table list and applies table browser paging after commit", async () => {
@@ -3191,7 +3291,12 @@ describe("DatabaseWorkspace", () => {
 
     renderDatabaseWorkspace("app");
     await userEvent.dblClick(await screen.findByText("users"));
+    await screen.findByLabelText("表数据");
+    const tableWrap = screen.getByLabelText("表数据").querySelector<HTMLElement>(".database-table-browser__table-wrap");
+    expect(tableWrap).not.toBeNull();
+    Object.defineProperty(tableWrap!, "scrollHeight", { configurable: true, value: 900 });
     await userEvent.click(await screen.findByRole("button", { name: "添加行" }));
+    await waitFor(() => expect(tableWrap!.scrollTop).toBe(900));
     await userEvent.dblClick(screen.getByLabelText("第 2 行 id"));
     await userEvent.type(screen.getByLabelText("编辑 id"), "2{Enter}");
     await userEvent.dblClick(screen.getByLabelText("第 2 行 name"));

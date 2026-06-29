@@ -35,6 +35,7 @@ interface DatabaseDataGridProps {
   page?: number;
   pageSize?: number;
   footer?: ReactNode;
+  scrollRequest?: { direction: "top" | "bottom"; token: number };
   onSortColumn?: (columnName: string) => void;
   getCellState?: (rowIndex: number, column: DatabaseResultColumn, original: DatabaseCellValue) => DatabaseDataGridCellState;
   getRowState?: (rowIndex: number) => DatabaseDataGridNewRowState;
@@ -58,6 +59,7 @@ export function DatabaseDataGrid({
   page = 1,
   pageSize,
   footer,
+  scrollRequest,
   onSortColumn,
   getCellState,
   getRowState,
@@ -74,6 +76,7 @@ export function DatabaseDataGrid({
   const [cellContextMenu, setCellContextMenu] = useState<ContextMenuState | null>(null);
   const tableCellRefs = useRef<Record<string, HTMLTableCellElement | null>>({});
   const gridRef = useRef<HTMLDivElement | null>(null);
+  const tableWrapRef = useRef<HTMLDivElement | null>(null);
   const gridShapeKey = `${columns.map((column) => column.name).join("\n")}\n${rows.length}`;
 
   useEffect(() => {
@@ -81,6 +84,13 @@ export function DatabaseDataGrid({
     setSelectionRange(null);
     setIsSelectingRange(false);
   }, [gridShapeKey]);
+
+  useEffect(() => {
+    if (!scrollRequest) return;
+    const tableWrap = tableWrapRef.current;
+    if (!tableWrap) return;
+    tableWrap.scrollTop = scrollRequest.direction === "bottom" ? tableWrap.scrollHeight : 0;
+  }, [scrollRequest?.token, scrollRequest?.direction, rows.length]);
 
   useEffect(() => {
     function handleMouseUp() {
@@ -256,7 +266,7 @@ export function DatabaseDataGrid({
 
   return (
     <div className="database-table-browser__table-shell" ref={gridRef}>
-      <div className="database-result__table-wrap database-table-browser__table-wrap">
+      <div className="database-result__table-wrap database-table-browser__table-wrap" ref={tableWrapRef}>
         <table style={{ width: `${tableWidth}px` }}>
           <colgroup>
             <col className="database-table-browser__row-number-column" />

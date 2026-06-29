@@ -207,6 +207,13 @@ describe("global style defaults", () => {
     expect(globalsCss).toContain("  user-select: none;");
   });
 
+  it("keeps the local terminal visible inside the unified connection scroller", () => {
+    const globalsCss = readCssSource();
+
+    expect(globalsCss).toContain(".connection-local-list {\n  flex: 0 0 auto;");
+    expect(globalsCss).toContain(".connection-groups {\n  flex: 0 0 auto;");
+  });
+
   it("keeps icon buttons flat while using stronger icon color and hover states", () => {
     const globalsCss = readCssSource();
 
