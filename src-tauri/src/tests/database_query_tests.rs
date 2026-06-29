@@ -12,7 +12,7 @@ use crate::db::query::{
     build_table_update_queries, is_dangerous_sql, is_result_set_sql, mysql_prefers_datetime_decode,
     mysql_prefers_numeric_decode, mysql_prefers_string_decode, mysql_prefers_text_decode,
     mysql_table_column_metadata_query, mysql_table_ddl_from_values, mysql_table_ddl_query,
-    mysql_table_page_fallback_total_rows, normalize_table_delete_request,
+    mysql_table_page_fallback_total_rows, mysql_timestamp_text, normalize_table_delete_request,
     normalize_table_insert_request, normalize_table_page_request, normalize_table_update_request,
     optional_table_page_metadata_or_default, postgresql_index_query_for_table,
     postgresql_prefers_datetime_decode, postgresql_table_ddl_query, primary_key_query_for_table,
@@ -255,6 +255,17 @@ fn treats_mysql_date_and_time_types_as_datetime_types() {
     assert!(mysql_prefers_datetime_decode("DATETIME"));
     assert!(mysql_prefers_datetime_decode("TIMESTAMP"));
     assert!(mysql_prefers_datetime_decode("TIME"));
+    assert!(mysql_prefers_datetime_decode("MYSQL_TYPE_DATE"));
+    assert!(mysql_prefers_datetime_decode("MYSQL_TYPE_DATETIME"));
+    assert!(mysql_prefers_datetime_decode("MYSQL_TYPE_TIMESTAMP"));
+    assert!(mysql_prefers_datetime_decode("MYSQL_TYPE_TIME"));
+}
+
+#[test]
+fn formats_mysql_timestamp_without_timezone_suffix() {
+    let value = chrono::DateTime::parse_from_rfc3339("2026-06-30T00:13:04+08:00").unwrap();
+
+    assert_eq!(mysql_timestamp_text(value), "2026-06-30 00:13:04");
 }
 
 #[test]

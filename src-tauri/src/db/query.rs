@@ -1791,29 +1791,42 @@ fn mysql_datetime_cell_value(
     type_name: &str,
 ) -> Option<DatabaseCellValue> {
     match type_name.to_ascii_uppercase().as_str() {
-        "DATE" => {
+        "DATE" | "MYSQL_TYPE_DATE" => {
             row.try_get::<NaiveDate, _>(column_name)
                 .ok()
                 .map(|value| DatabaseCellValue::Text {
                     value: value.to_string(),
                 })
         }
-        "TIME" => {
+        "TIME" | "MYSQL_TYPE_TIME" => {
             row.try_get::<NaiveTime, _>(column_name)
                 .ok()
                 .map(|value| DatabaseCellValue::Text {
                     value: value.to_string(),
                 })
         }
-        "DATETIME" | "TIMESTAMP" => {
-            row.try_get::<NaiveDateTime, _>(column_name)
-                .ok()
-                .map(|value| DatabaseCellValue::Text {
-                    value: value.to_string(),
-                })
-        }
+        "DATETIME" | "MYSQL_TYPE_DATETIME" => row
+            .try_get::<NaiveDateTime, _>(column_name)
+            .ok()
+            .map(|value| DatabaseCellValue::Text {
+                value: value.to_string(),
+            }),
+        "TIMESTAMP" | "MYSQL_TYPE_TIMESTAMP" => row
+            .try_get::<DateTime<Utc>, _>(column_name)
+            .ok()
+            .map(|value| DatabaseCellValue::Text {
+                value: mysql_timestamp_text(value),
+            }),
         _ => None,
     }
+}
+
+pub(crate) fn mysql_timestamp_text<Tz>(value: DateTime<Tz>) -> String
+where
+    Tz: chrono::TimeZone,
+    Tz::Offset: std::fmt::Display,
+{
+    value.format("%Y-%m-%d %H:%M:%S").to_string()
 }
 
 pub(crate) fn mysql_prefers_numeric_decode(type_name: &str) -> bool {
@@ -1869,7 +1882,14 @@ pub(crate) fn mysql_prefers_string_decode(type_name: &str) -> bool {
 pub(crate) fn mysql_prefers_datetime_decode(type_name: &str) -> bool {
     matches!(
         type_name.to_ascii_uppercase().as_str(),
-        "DATE" | "DATETIME" | "TIMESTAMP" | "TIME"
+        "DATE"
+            | "DATETIME"
+            | "TIMESTAMP"
+            | "TIME"
+            | "MYSQL_TYPE_DATE"
+            | "MYSQL_TYPE_DATETIME"
+            | "MYSQL_TYPE_TIMESTAMP"
+            | "MYSQL_TYPE_TIME"
     )
 }
 
