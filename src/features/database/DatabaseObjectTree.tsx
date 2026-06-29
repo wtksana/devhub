@@ -128,14 +128,12 @@ export function DatabaseObjectTree({
     }] : []);
     setTables([]);
     setTableFilter("");
-    if (!selectedDatabase) {
-      void loadDatabaseList().then((nodes) => {
-        if (canceled) return;
-        if (nodes[0]?.name) {
-          onDatabaseChange(nodes[0].name);
-        }
-      });
-    }
+    void loadDatabaseList().then((nodes) => {
+      if (canceled) return;
+      if (!selectedDatabase && nodes[0]?.name) {
+        onDatabaseChange(nodes[0].name);
+      }
+    });
     return () => {
       canceled = true;
     };

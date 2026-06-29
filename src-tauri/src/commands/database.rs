@@ -25,7 +25,10 @@ use crate::models::database::{
 use crate::models::database::{DatabaseTreeNode, ListDatabaseObjectsRequest};
 use crate::models::settings::{ConnectionSettings, DatabaseConnectionSettings};
 
+use std::future::Future;
+
 const DATABASE_OBJECT_QUERY_TIMEOUT_SECONDS: u64 = 10;
+const DATABASE_TABLE_PAGE_QUERY_TIMEOUT_SECONDS: u64 = 15;
 
 #[tauri::command]
 pub async fn test_database_connection(
@@ -204,10 +207,26 @@ pub async fn load_database_table_page(
         request.connection_id, request.database, request.table
     );
     let connection = load_database_connection(settings_store.inner(), &request.connection_id)?;
-    let result =
-        query::load_database_table_page(database_manager.inner(), &connection, &request).await;
+    let log_metadata = database_table_page_request_metadata(&request);
+    log_operation(
+        settings_store.inner(),
+        logger.inner(),
+        "info",
+        "database",
+        "load_database_table_page",
+        Some(target.clone()),
+        "started",
+        None,
+        None,
+        Some(log_metadata.clone()),
+    );
+    let result = with_database_table_page_timeout(
+        query::load_database_table_page(database_manager.inner(), &connection, &request),
+        DATABASE_TABLE_PAGE_QUERY_TIMEOUT_SECONDS,
+    )
+    .await;
     match &result {
-        Ok(_) => log_operation(
+        Ok(page_result) => log_operation(
             settings_store.inner(),
             logger.inner(),
             "info",
@@ -217,7 +236,10 @@ pub async fn load_database_table_page(
             "success",
             Some(started_at),
             None,
-            None,
+            Some(database_table_page_result_metadata(
+                log_metadata.clone(),
+                page_result,
+            )),
         ),
         Err(error) => log_operation(
             settings_store.inner(),
@@ -229,7 +251,7 @@ pub async fn load_database_table_page(
             "failed",
             Some(started_at),
             Some(error.clone()),
-            None,
+            Some(log_metadata),
         ),
     }
     result
@@ -647,6 +669,89 @@ fn database_table_metadata(
     ])
 }
 
+fn database_table_page_request_metadata(
+    request: &LoadDatabaseTablePageRequest,
+) -> serde_json::Map<String, serde_json::Value> {
+    let mut items = vec![
+        ("database", metadata_string(request.database.clone())),
+        ("table", metadata_string(request.table.clone())),
+    ];
+    if let Some(page) = request.page {
+        items.push(("page", metadata_number(i64::from(page))));
+    }
+    if let Some(page_size) = request.page_size {
+        items.push(("page_size", metadata_number(i64::from(page_size))));
+    }
+    if let Some(sort_column) = request
+        .sort_column
+        .as_ref()
+        .filter(|value| !value.is_empty())
+    {
+        items.push(("sort_column", metadata_string(sort_column.clone())));
+    }
+    if let Some(sort_direction) = request
+        .sort_direction
+        .as_ref()
+        .filter(|value| !value.is_empty())
+    {
+        items.push(("sort_direction", metadata_string(sort_direction.clone())));
+    }
+    items.push((
+        "has_order_by",
+        metadata_bool(
+            request
+                .order_by
+                .as_ref()
+                .is_some_and(|value| !value.trim().is_empty()),
+        ),
+    ));
+    items.push((
+        "has_filter",
+        metadata_bool(
+            request
+                .filter
+                .as_ref()
+                .is_some_and(|value| !value.trim().is_empty()),
+        ),
+    ));
+    metadata(items)
+}
+
+fn database_table_page_result_metadata(
+    mut log_metadata: serde_json::Map<String, serde_json::Value>,
+    result: &DatabaseTablePageResult,
+) -> serde_json::Map<String, serde_json::Value> {
+    log_metadata.insert(
+        "returned_column_count".to_string(),
+        metadata_number(result.columns.len() as i64),
+    );
+    log_metadata.insert(
+        "returned_row_count".to_string(),
+        metadata_number(result.rows.len() as i64),
+    );
+    log_metadata.insert(
+        "total_rows".to_string(),
+        metadata_number(result.total_rows as i64),
+    );
+    log_metadata.insert("editable".to_string(), metadata_bool(result.editable));
+    log_metadata
+}
+
+async fn with_database_table_page_timeout<F>(
+    future: F,
+    timeout_seconds: u64,
+) -> Result<DatabaseTablePageResult, String>
+where
+    F: Future<Output = Result<DatabaseTablePageResult, String>>,
+{
+    match timeout(Duration::from_secs(timeout_seconds), future).await {
+        Ok(result) => result,
+        Err(_) => Err(format!(
+            "database table page query timed out after {timeout_seconds}s"
+        )),
+    }
+}
+
 const DATABASE_OBJECT_LOG_NAME_LIMIT: usize = 50;
 
 fn database_connection_metadata(
@@ -805,11 +910,17 @@ fn log_database_result<T>(
 mod tests {
     use super::{
         database_connection_metadata, database_file_target, database_object_list_action,
-        database_object_list_metadata, database_sql_file_target, database_table_target, sql_kind,
+        database_object_list_metadata, database_sql_file_target,
+        database_table_page_request_metadata, database_table_target, sql_kind,
+        with_database_table_page_timeout,
     };
-    use crate::models::database::{DatabaseTreeNode, ListDatabaseObjectsRequest};
+    use crate::models::database::{
+        DatabaseTablePageResult, DatabaseTreeNode, ListDatabaseObjectsRequest,
+        LoadDatabaseTablePageRequest,
+    };
     use crate::models::settings::DatabaseConnectionSettings;
     use serde_json::json;
+    use std::future::pending;
 
     #[test]
     fn builds_database_log_targets() {
@@ -962,6 +1073,46 @@ mod tests {
         assert_eq!(
             database_object_list_action(&object_request(Some("other"))),
             "list_database_objects"
+        );
+    }
+
+    #[test]
+    fn builds_table_page_request_metadata() {
+        let request = LoadDatabaseTablePageRequest {
+            connection_id: "mysql-local".to_string(),
+            database: "game".to_string(),
+            table: "userData".to_string(),
+            page: Some(2),
+            page_size: Some(200),
+            sort_column: Some("id".to_string()),
+            sort_direction: Some("desc".to_string()),
+            order_by: Some("id desc".to_string()),
+            filter: Some("status = 1".to_string()),
+        };
+
+        let metadata = database_table_page_request_metadata(&request);
+
+        assert_eq!(metadata["database"], "game");
+        assert_eq!(metadata["table"], "userData");
+        assert_eq!(metadata["page"], 2);
+        assert_eq!(metadata["page_size"], 200);
+        assert_eq!(metadata["sort_column"], "id");
+        assert_eq!(metadata["sort_direction"], "desc");
+        assert_eq!(metadata["has_order_by"], true);
+        assert_eq!(metadata["has_filter"], true);
+    }
+
+    #[tokio::test]
+    async fn table_page_timeout_returns_error_instead_of_hanging() {
+        let result = with_database_table_page_timeout(
+            pending::<Result<DatabaseTablePageResult, String>>(),
+            0,
+        )
+        .await;
+
+        assert_eq!(
+            result.unwrap_err(),
+            "database table page query timed out after 0s"
         );
     }
 

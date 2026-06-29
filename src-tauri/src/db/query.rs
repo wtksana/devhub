@@ -1,11 +1,13 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::future::Future;
 use std::time::Instant;
 
 use sqlx::mysql::{MySqlArguments, MySqlRow};
 use sqlx::postgres::{PgArguments, PgRow};
-use sqlx::types::BigDecimal;
 use sqlx::types::chrono::{DateTime, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime, Utc};
+use sqlx::types::BigDecimal;
 use sqlx::{Column, MySql, MySqlConnection, PgConnection, Postgres, Row, TypeInfo, ValueRef};
+use tokio::time::{timeout, Duration};
 
 use crate::db::connection::{DatabaseConnectionManager, DatabasePool};
 use crate::db::metadata::MetadataQuery;
@@ -22,6 +24,8 @@ use crate::models::settings::DatabaseConnectionSettings;
 const DEFAULT_QUERY_LIMIT: u32 = 200;
 const DEFAULT_TABLE_PAGE_SIZE: u32 = 200;
 const MAX_TABLE_PAGE_SIZE: u32 = 10_000;
+const MYSQL_TABLE_METADATA_TIMEOUT_SECONDS: u64 = 3;
+const MYSQL_TABLE_COUNT_TIMEOUT_SECONDS: u64 = 3;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NormalizedTablePageRequest {
@@ -1109,22 +1113,19 @@ async fn load_mysql_table_page(
 ) -> Result<DatabaseTablePageResult, String> {
     let mut connection = pool.acquire().await.map_err(|error| error.to_string())?;
     let started_at = Instant::now();
-    let count_row = sqlx::query(&queries.count_sql)
-        .fetch_one(&mut *connection)
-        .await
-        .map_err(|error| error.to_string())?;
-    let total_rows = mysql_count_value(&count_row, "total")?;
-    let primary_key_columns =
-        load_mysql_primary_key_columns(&mut connection, &request.database, &request.table).await?;
-    let editable = !primary_key_columns.is_empty();
-    let column_metadata =
-        load_mysql_table_column_metadata(&mut connection, &request.database, &request.table)
-            .await?;
     let rows = sqlx::query(&queries.page_sql)
         .fetch_all(&mut *connection)
         .await
         .map_err(|error| error.to_string())?;
     let result = rows_to_mysql_result(rows, started_at.elapsed().as_millis(), false);
+    let primary_key_columns = load_optional_mysql_primary_key_columns(pool, request).await;
+    let editable = !primary_key_columns.is_empty();
+    let column_metadata = load_optional_mysql_table_column_metadata(pool, request).await;
+    let total_rows = load_mysql_table_page_total_rows(pool, queries)
+        .await
+        .unwrap_or_else(|_| {
+            mysql_table_page_fallback_total_rows(request.page, request.page_size, result.rows.len())
+        });
     let columns = merge_mysql_result_columns(result.columns, column_metadata);
     Ok(DatabaseTablePageResult {
         columns,
@@ -1136,6 +1137,85 @@ async fn load_mysql_table_page(
         primary_key_columns,
         editable,
     })
+}
+
+async fn load_optional_mysql_primary_key_columns(
+    pool: &sqlx::MySqlPool,
+    request: &NormalizedTablePageRequest,
+) -> Vec<String> {
+    let database = request.database.clone();
+    let table = request.table.clone();
+    optional_table_page_metadata_or_default(
+        async move {
+            let mut connection = pool.acquire().await.map_err(|error| error.to_string())?;
+            load_mysql_primary_key_columns(&mut connection, &database, &table).await
+        },
+        MYSQL_TABLE_METADATA_TIMEOUT_SECONDS,
+    )
+    .await
+}
+
+async fn load_optional_mysql_table_column_metadata(
+    pool: &sqlx::MySqlPool,
+    request: &NormalizedTablePageRequest,
+) -> Vec<MysqlColumnMetadata> {
+    let database = request.database.clone();
+    let table = request.table.clone();
+    optional_table_page_metadata_or_default(
+        async move {
+            let mut connection = pool.acquire().await.map_err(|error| error.to_string())?;
+            load_mysql_table_column_metadata(&mut connection, &database, &table).await
+        },
+        MYSQL_TABLE_METADATA_TIMEOUT_SECONDS,
+    )
+    .await
+}
+
+async fn load_mysql_table_page_total_rows(
+    pool: &sqlx::MySqlPool,
+    queries: &TablePageQueries,
+) -> Result<u64, String> {
+    let count_sql = queries.count_sql.clone();
+    let count_row = timeout(
+        Duration::from_secs(MYSQL_TABLE_COUNT_TIMEOUT_SECONDS),
+        async {
+            let mut connection = pool.acquire().await.map_err(|error| error.to_string())?;
+            sqlx::query(&count_sql)
+                .fetch_one(&mut *connection)
+                .await
+                .map_err(|error| error.to_string())
+        },
+    )
+    .await
+    .map_err(|_| {
+        format!("mysql table count timed out after {MYSQL_TABLE_COUNT_TIMEOUT_SECONDS}s")
+    })??;
+    mysql_count_value(&count_row, "total")
+}
+
+pub async fn optional_table_page_metadata_or_default<F, T>(
+    future: F,
+    timeout_seconds: u64,
+) -> Vec<T>
+where
+    F: Future<Output = Result<Vec<T>, String>>,
+{
+    timeout(Duration::from_secs(timeout_seconds), future)
+        .await
+        .ok()
+        .and_then(Result::ok)
+        .unwrap_or_default()
+}
+
+pub fn mysql_table_page_fallback_total_rows(page: u32, page_size: u32, loaded_rows: usize) -> u64 {
+    let loaded_rows = loaded_rows as u64;
+    let page_size = u64::from(page_size);
+    let loaded_before_page = u64::from(page.saturating_sub(1)) * page_size;
+    if loaded_rows < page_size {
+        loaded_before_page + loaded_rows
+    } else {
+        loaded_before_page + loaded_rows + 1
+    }
 }
 
 async fn load_postgresql_table_page(

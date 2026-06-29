@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::future::pending;
 
 use crate::db::connection::{database_connection_url, database_pool_key};
 use crate::db::metadata::{
@@ -10,8 +11,9 @@ use crate::db::query::{
     build_table_update_queries, is_dangerous_sql, is_result_set_sql, mysql_prefers_datetime_decode,
     mysql_prefers_numeric_decode, mysql_prefers_string_decode, mysql_prefers_text_decode,
     mysql_table_column_metadata_query, mysql_table_ddl_from_values, mysql_table_ddl_query,
-    normalize_table_delete_request, normalize_table_insert_request, normalize_table_page_request,
-    normalize_table_update_request, postgresql_index_query_for_table,
+    mysql_table_page_fallback_total_rows, normalize_table_delete_request,
+    normalize_table_insert_request, normalize_table_page_request, normalize_table_update_request,
+    optional_table_page_metadata_or_default, postgresql_index_query_for_table,
     postgresql_prefers_datetime_decode, postgresql_table_ddl_query, primary_key_query_for_table,
     quote_identifier,
 };
@@ -352,6 +354,21 @@ fn normalizes_table_page_request_bounds() {
     assert_eq!(normalized.page, 1);
     assert_eq!(normalized.page_size, 10_000);
     assert_eq!(normalized.filter, None);
+}
+
+#[test]
+fn estimates_table_total_rows_from_loaded_page_when_count_is_unavailable() {
+    assert_eq!(mysql_table_page_fallback_total_rows(1, 200, 200), 201);
+    assert_eq!(mysql_table_page_fallback_total_rows(2, 200, 0), 200);
+    assert_eq!(mysql_table_page_fallback_total_rows(3, 100, 45), 245);
+}
+
+#[tokio::test]
+async fn optional_table_page_metadata_falls_back_to_empty_on_timeout() {
+    let values =
+        optional_table_page_metadata_or_default(pending::<Result<Vec<String>, String>>(), 0).await;
+
+    assert!(values.is_empty());
 }
 
 #[test]

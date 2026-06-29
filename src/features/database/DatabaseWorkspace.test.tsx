@@ -249,6 +249,14 @@ describe("DatabaseWorkspace", () => {
         database: "app",
       },
     });
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("list_database_objects", {
+        request: {
+          connection_id: "mysql-dev",
+        },
+      });
+    });
+    expect(screen.getByRole("option", { name: "audit" })).toBeInTheDocument();
 
     await userEvent.click(screen.getByLabelText("数据库"));
     await userEvent.selectOptions(screen.getByLabelText("数据库"), "audit");
@@ -283,8 +291,12 @@ describe("DatabaseWorkspace", () => {
 
     expect(await screen.findByText("users")).toBeInTheDocument();
     await waitFor(() => {
-      const objectCalls = callBackendMock.mock.calls.filter(([command]) => command === "list_database_objects");
-      expect(objectCalls).toHaveLength(1);
+      const rootObjectCalls = callBackendMock.mock.calls.filter(([command, payload]) => {
+        if (command !== "list_database_objects") return false;
+        const request = (payload as { request?: { parent_kind?: string } }).request;
+        return request && !request.parent_kind;
+      });
+      expect(rootObjectCalls).toHaveLength(1);
     });
     const tableObjectCalls = callBackendMock.mock.calls.filter(([command, payload]) => {
       if (command !== "list_database_objects") return false;
@@ -912,6 +924,33 @@ describe("DatabaseWorkspace", () => {
     await waitFor(() => {
       expect(callBackendMock.mock.calls.filter(([command]) => command === "load_database_table_page")).toHaveLength(1);
     });
+  });
+
+  it("shows an error when table page loading fails", async () => {
+    callBackendMock.mockImplementation((command, payload) => {
+      if (command === "list_database_objects") {
+        const request = (payload as { request: { parent_kind?: string; database?: string } }).request;
+        if (!request.parent_kind) {
+          return Promise.resolve([{ id: "database:app", name: "app", kind: "database", has_children: true }]);
+        }
+        return Promise.resolve([
+          { id: "table:app.users", name: "users", kind: "table", has_children: true, detail: "BASE TABLE" },
+        ]);
+      }
+      if (command === "list_database_sql_files") {
+        return Promise.resolve([{ name: "default", content: "select 1" }]);
+      }
+      if (command === "load_database_table_page") {
+        return Promise.reject(new Error("database table page query timed out after 15s"));
+      }
+      return Promise.resolve([]);
+    });
+
+    renderDatabaseWorkspace("app");
+
+    await userEvent.dblClick(await screen.findByText("users"));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("database table page query timed out after 15s");
   });
 
   it("opens tables from the whole table row and shows table actions from the row context menu", async () => {
