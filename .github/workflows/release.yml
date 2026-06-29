@@ -14,6 +14,10 @@ on:
 permissions:
   contents: write
 
+env:
+  CARGO_HTTP_TIMEOUT: 120
+  CARGO_NET_RETRY: 10
+
 jobs:
   verify:
     name: Verify
@@ -130,6 +134,15 @@ jobs:
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Fetch Rust dependencies
+        shell: bash
+        run: |
+          for attempt in 1 2 3; do
+            cargo fetch --manifest-path src-tauri/Cargo.toml && exit 0
+            sleep $((attempt * 20))
+          done
+          cargo fetch --manifest-path src-tauri/Cargo.toml
 
       - name: Build and publish Tauri app
         uses: tauri-apps/tauri-action@v0
