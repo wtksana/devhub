@@ -478,6 +478,9 @@ export function DatabaseWorkspace({
       if (queryExecutionIdRef.current !== executionId) return;
       setResult(nextResult);
       setTableBrowserTarget(null);
+      if (isTableChangingSql(sqlToExecute)) {
+        setObjectTreeRefreshKey((key) => key + 1);
+      }
       setQueryExecutionState({ status: "idle", message: "" });
     } catch (caught) {
       if (queryExecutionIdRef.current !== executionId) return;
@@ -1180,6 +1183,7 @@ export function DatabaseWorkspace({
         affected: execution.affected_rows,
         duration: execution.duration_ms,
       });
+      setObjectTreeRefreshKey((key) => key + 1);
       setSqlFileExecutionState({ status: "success", message });
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : String(caught);
@@ -2589,6 +2593,11 @@ function sqlKind(sql: string) {
   if (keyword === "delete") return "delete";
   if (keyword === "create" || keyword === "alter" || keyword === "drop" || keyword === "truncate") return "ddl";
   return "other";
+}
+
+function isTableChangingSql(sql: string) {
+  const keyword = firstSqlKeyword(sql)?.toLowerCase();
+  return keyword === "create" || keyword === "alter" || keyword === "drop" || keyword === "truncate" || keyword === "rename";
 }
 
 function sqlFileKey(connectionId: string, database: string, name: string) {

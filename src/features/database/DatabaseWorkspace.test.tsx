@@ -831,6 +831,50 @@ describe("DatabaseWorkspace", () => {
     expect(await screen.findByText("影响 1 行，耗时 2 ms")).toBeInTheDocument();
   });
 
+  it("refreshes the table list after executing table-changing SQL", async () => {
+    let tableRequestCount = 0;
+    callBackendMock.mockImplementation((command, payload) => {
+      if (command === "list_database_objects") {
+        const request = (payload as { request: { parent_kind?: string; database?: string } }).request;
+        if (!request.parent_kind) {
+          return Promise.resolve([{ id: "database:app", name: "app", kind: "database", has_children: true }]);
+        }
+        tableRequestCount += 1;
+        return Promise.resolve(
+          tableRequestCount === 1
+            ? [{ id: "table:app.users", name: "users", kind: "table", has_children: true, detail: "BASE TABLE" }]
+            : [
+                { id: "table:app.users", name: "users", kind: "table", has_children: true, detail: "BASE TABLE" },
+                { id: "table:app.orders", name: "orders", kind: "table", has_children: true, detail: "BASE TABLE" },
+              ],
+        );
+      }
+      if (command === "execute_database_query") {
+        return Promise.resolve({
+          columns: [],
+          rows: [],
+          affected_rows: 0,
+          duration_ms: 5,
+          limited: false,
+        });
+      }
+      return Promise.resolve([]);
+    });
+
+    renderDatabaseWorkspace("app");
+
+    expect(await screen.findByText("users")).toBeInTheDocument();
+    await userEvent.type(screen.getByLabelText("SQL 编辑器"), "create table orders(id int)");
+    setSelectedSqlText("create table orders(id int)");
+    await executeSelectedSqlFromContextMenu(screen.getByLabelText("SQL 编辑器"));
+    await userEvent.click(await screen.findByRole("button", { name: "确认执行" }));
+
+    expect(await screen.findByText("orders")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(tableRequestCount).toBeGreaterThanOrEqual(2);
+    });
+  });
+
   it("opens a table browser when double clicking a table without replacing SQL content", async () => {
     callBackendMock.mockImplementation((command, payload) => {
       if (command === "list_database_objects") {
