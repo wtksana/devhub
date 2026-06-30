@@ -327,16 +327,11 @@ fn run_local_worker(
     let mut pending_output = Vec::new();
     let _input_writer = std::thread::spawn(move || {
         while let Some(message) = input_rx.blocking_recv() {
-            match message {
-                TerminalWorkerMessage::Input(input) => {
-                    if writer.write_all(input.as_bytes()).is_err() {
-                        break;
-                    }
-                    if writer.flush().is_err() {
-                        break;
-                    }
-                }
-                TerminalWorkerMessage::Resize { cols, rows } => {
+            let result = drain_local_worker_messages(
+                message,
+                &mut input_rx,
+                &mut writer,
+                &mut |cols, rows| {
                     let size = PtySize {
                         rows,
                         cols,
@@ -344,10 +339,13 @@ fn run_local_worker(
                         pixel_height: 0,
                     };
                     let master = resize_master.blocking_lock();
-                    if master.resize(size).is_err() {
-                        break;
-                    }
-                }
+                    master
+                        .resize(size)
+                        .map_err(|error| TerminalSessionError::Io(error.to_string()))
+                },
+            );
+            if result.is_err() {
+                break;
             }
         }
     });
@@ -518,11 +516,63 @@ pub fn drain_terminal_input<W: Write>(
     flush_terminal_input(writer, wrote)
 }
 
+pub fn drain_local_worker_messages<W, F>(
+    first_message: TerminalWorkerMessage,
+    input_rx: &mut mpsc::Receiver<TerminalWorkerMessage>,
+    writer: &mut W,
+    resize: &mut F,
+) -> Result<InputDrain>
+where
+    W: Write,
+    F: FnMut(u16, u16) -> Result<()>,
+{
+    let mut wrote = false;
+    let mut pending_resize: Option<(u16, u16)> = None;
+
+    apply_terminal_worker_message(first_message, writer, &mut wrote, &mut pending_resize)?;
+    loop {
+        match input_rx.try_recv() {
+            Ok(message) => {
+                apply_terminal_worker_message(message, writer, &mut wrote, &mut pending_resize)?
+            }
+            Err(TryRecvError::Empty) => break,
+            Err(TryRecvError::Disconnected) => return Ok(InputDrain::Disconnected),
+        }
+    }
+
+    if let Some((cols, rows)) = pending_resize {
+        resize(cols, rows)?;
+    }
+
+    flush_terminal_input(writer, wrote)
+}
+
+fn apply_terminal_worker_message<W: Write>(
+    message: TerminalWorkerMessage,
+    writer: &mut W,
+    wrote: &mut bool,
+    pending_resize: &mut Option<(u16, u16)>,
+) -> Result<()> {
+    match message {
+        TerminalWorkerMessage::Input(input) => {
+            writer
+                .write_all(input.as_bytes())
+                .map_err(|error| TerminalSessionError::Io(error.to_string()))?;
+            *wrote = true;
+        }
+        TerminalWorkerMessage::Resize { cols, rows } => {
+            *pending_resize = Some((cols, rows));
+        }
+    }
+    Ok(())
+}
+
 fn drain_ssh_worker_messages(
     input_rx: &mut mpsc::Receiver<TerminalWorkerMessage>,
     channel: &mut ssh2::Channel,
 ) -> Result<InputDrain> {
     let mut wrote = false;
+    let mut pending_resize: Option<(u16, u16)> = None;
 
     loop {
         match input_rx.try_recv() {
@@ -533,13 +583,17 @@ fn drain_ssh_worker_messages(
                 wrote = true;
             }
             Ok(TerminalWorkerMessage::Resize { cols, rows }) => {
-                channel
-                    .request_pty_size(cols as u32, rows as u32, None, None)
-                    .map_err(|error| TerminalSessionError::Ssh(error.to_string()))?;
+                pending_resize = Some((cols, rows));
             }
             Err(TryRecvError::Empty) => break,
             Err(TryRecvError::Disconnected) => return Ok(InputDrain::Disconnected),
         }
+    }
+
+    if let Some((cols, rows)) = pending_resize {
+        channel
+            .request_pty_size(cols as u32, rows as u32, None, None)
+            .map_err(|error| TerminalSessionError::Ssh(error.to_string()))?;
     }
 
     flush_terminal_input(channel, wrote)

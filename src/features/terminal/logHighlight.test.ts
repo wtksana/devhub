@@ -72,6 +72,15 @@ describe("terminal log highlight", () => {
     expect(containsAnsiColor(coloredLine)).toBe(true);
   });
 
+  it("keeps cursor-control lines unchanged for TUI compatibility", () => {
+    const line = "\x1b[2K\x1b[1GERROR rendering\r\n";
+    const highlighter = createLogHighlighter(settings);
+
+    const output = processLogOutput(line, highlighter);
+
+    expect(output.data).toBe(line);
+  });
+
   it("skips very long lines", () => {
     const highlighter = createLogHighlighter(settings);
     const line = `${"x".repeat(16 * 1024 + 1)} ERROR\n`;

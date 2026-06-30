@@ -1,5 +1,5 @@
 use crate::ssh::session_manager::{
-    drain_terminal_input, decode_terminal_output, is_ignorable_terminal_read_error,
+    drain_local_worker_messages, drain_terminal_input, decode_terminal_output, is_ignorable_terminal_read_error,
     local_shell_command, InputDrain, SessionManager, SshConnectLimiter, TerminalWorkerMessage,
 };
 use std::io::{Error, ErrorKind, Result as IoResult, Write};
@@ -83,6 +83,40 @@ async fn sends_resize_to_terminal_worker() {
             rows: 36
         })
     );
+}
+
+#[tokio::test]
+async fn drains_local_worker_messages_with_only_the_last_resize() {
+    let (input_tx, mut input_rx) = tokio::sync::mpsc::channel(8);
+    input_tx
+        .send(TerminalWorkerMessage::Resize { cols: 100, rows: 30 })
+        .await
+        .unwrap();
+    input_tx
+        .send(TerminalWorkerMessage::Input("pwd\r".to_string()))
+        .await
+        .unwrap();
+    input_tx
+        .send(TerminalWorkerMessage::Resize { cols: 120, rows: 36 })
+        .await
+        .unwrap();
+    let mut writer = Vec::new();
+    let mut resize_calls = Vec::new();
+
+    let result = drain_local_worker_messages(
+        TerminalWorkerMessage::Input("ls\r".to_string()),
+        &mut input_rx,
+        &mut writer,
+        &mut |cols, rows| {
+            resize_calls.push((cols, rows));
+            Ok(())
+        },
+    )
+    .unwrap();
+
+    assert_eq!(result, InputDrain::Wrote);
+    assert_eq!(writer, b"ls\rpwd\r");
+    assert_eq!(resize_calls, vec![(120, 36)]);
 }
 
 #[test]

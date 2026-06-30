@@ -1,6 +1,7 @@
 import type { TerminalLogHighlightSettings } from "../settings/settingsTypes";
 
 const ANSI_COLOR_PATTERN = /\x1b\[(?:\d{1,3};)*\d{1,3}m/;
+const TERMINAL_CONTROL_PATTERN = /\x1b(?:\[[0-9;?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\)|[@-Z\\-_])/;
 const MAX_HIGHLIGHT_LINE_LENGTH = 16 * 1024;
 const MAX_RULES = 50;
 const MAX_HIGHLIGHT_SEGMENTS_PER_LINE = 24;
@@ -116,7 +117,7 @@ export function processLogOutput(data: string, highlighter: LogHighlighter, pend
 }
 
 function highlightLine(line: string, highlighter: LogHighlighter) {
-  if (line.length > MAX_HIGHLIGHT_LINE_LENGTH || containsAnsiColor(line)) {
+  if (line.length > MAX_HIGHLIGHT_LINE_LENGTH || TERMINAL_CONTROL_PATTERN.test(line)) {
     return line;
   }
 

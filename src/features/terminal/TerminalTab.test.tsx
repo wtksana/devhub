@@ -711,7 +711,7 @@ describe("TerminalTab", () => {
     expect(terminal.write).toHaveBeenCalledWith("\x1b[31mERROR\x1b[39m raw\n");
   });
 
-  it("requests a redraw when alternate buffer content is sparse after opening a full-screen program", async () => {
+  it("requests a redraw when a sparse alternate buffer looks like a vim screen", async () => {
     let outputHandler: ((payload: { session_id: string; data: string }) => void) | null = null;
     callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
     listenBackendMock.mockImplementationOnce(async (_event, handler) => {
@@ -795,6 +795,47 @@ describe("TerminalTab", () => {
     vi.useRealTimers();
   });
 
+  it("does not request a redraw for sparse non-vim alternate screen output", async () => {
+    let outputHandler: ((payload: { session_id: string; data: string }) => void) | null = null;
+    callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
+    listenBackendMock.mockImplementationOnce(async (_event, handler) => {
+      outputHandler = handler as (payload: { session_id: string; data: string }) => void;
+      return vi.fn<() => void>();
+    });
+
+    renderTerminalTab(terminalProps({ theme: "light" }));
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+        request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
+      });
+    });
+    callBackendMock.mockClear();
+    vi.useFakeTimers();
+
+    const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
+    terminal.rows = 46;
+    terminal.buffer = {
+      active: {
+        type: "alternate",
+        cursorX: 0,
+        cursorY: 0,
+        length: 46,
+        getLine: (index) => ({
+          translateToString: () => (index < 2 ? `assistant output ${index}` : ""),
+        }),
+      },
+    };
+
+    const emitOutput = outputHandler as unknown as (payload: { session_id: string; data: string }) => void;
+    emitOutput({ session_id: "session-1", data: "\u001b[?1049hassistant output" });
+
+    vi.advanceTimersByTime(64);
+
+    expect(callBackendMock).not.toHaveBeenCalledWith("write_terminal", expect.anything());
+    vi.useRealTimers();
+  });
+
   it("refits and resizes the backend session when the terminal container changes size", async () => {
     vi.stubGlobal("ResizeObserver", MockResizeObserver);
     callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
@@ -822,6 +863,38 @@ describe("TerminalTab", () => {
         request: { session_id: "session-1", cols: 120, rows: 36 },
       });
     });
+  });
+
+  it("does not resend backend resize when the fitted terminal size is unchanged", async () => {
+    vi.stubGlobal("ResizeObserver", MockResizeObserver);
+    callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
+    listenBackendMock.mockResolvedValueOnce(vi.fn());
+
+    renderTerminalTab({ connectionId: "prod-web-01", fontFamily: "Maple Mono", fontSize: 16, theme: "dark", isActive: true });
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+        request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
+      });
+    });
+    callBackendMock.mockClear();
+
+    const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
+    terminal.cols = 120;
+    terminal.rows = 36;
+
+    MockResizeObserver.instances[0].emit();
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("resize_terminal", {
+        request: { session_id: "session-1", cols: 120, rows: 36 },
+      });
+    });
+    callBackendMock.mockClear();
+
+    MockResizeObserver.instances[0].emit();
+    await Promise.resolve();
+
+    expect(callBackendMock).not.toHaveBeenCalledWith("resize_terminal", expect.anything());
   });
 
   it("refits and resizes a visible backend session when the workspace pane layout changes", async () => {
@@ -1191,7 +1264,7 @@ describe("TerminalTab", () => {
     });
   });
 
-  it("clears the xterm textarea after ime text is sent", async () => {
+  it("clears committed ime text when it is still the whole xterm textarea value", async () => {
     const { textarea, onData } = await renderTerminalWithXtermTextarea("帮我");
     onData?.("帮我");
 
@@ -1200,13 +1273,13 @@ describe("TerminalTab", () => {
         request: { session_id: "session-1", data: "帮我" },
       });
     });
+    vi.useFakeTimers();
+    await vi.runOnlyPendingTimersAsync();
 
-    await waitFor(() => {
-      expect(textarea.value).toBe("");
-    });
+    expect(textarea.value).toBe("");
   });
 
-  it("keeps only new mixed ime input when the xterm textarea changes before cleanup", async () => {
+  it("does not rewrite mixed ime input while xterm is composing", async () => {
     const { textarea, onData } = await renderTerminalWithXtermTextarea("帮我");
     vi.useFakeTimers();
     onData?.("帮我");
@@ -1214,10 +1287,10 @@ describe("TerminalTab", () => {
 
     await vi.runOnlyPendingTimersAsync();
 
-    expect(textarea.value).toBe(" a");
+    expect(textarea.value).toBe("帮我 a");
   });
 
-  it("removes previous ascii ime text when the next composition duplicates it", async () => {
+  it("does not rewrite duplicated ascii ime text while xterm is composing", async () => {
     const { textarea, onData } = await renderTerminalWithXtermTextarea("dev");
     vi.useFakeTimers();
     onData?.("dev");
@@ -1225,7 +1298,7 @@ describe("TerminalTab", () => {
 
     await vi.runOnlyPendingTimersAsync();
 
-    expect(textarea.value).toBe("ev");
+    expect(textarea.value).toBe("devev");
   });
 
   it("clears the terminal display from the context menu", async () => {

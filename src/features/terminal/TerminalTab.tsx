@@ -176,6 +176,7 @@ export function TerminalTab({
   const isManualLogHighlightModeRef = useRef(false);
   const setLogHighlightModeRef = useRef<((enabled: boolean) => void) | null>(null);
   const sendTerminalInputRef = useRef<((data: string) => void) | null>(null);
+  const lastBackendSizeRef = useRef<{ cols: number; rows: number } | null>(null);
   const [isManualLogHighlightMode, setIsManualLogHighlightMode] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
 
@@ -230,6 +231,20 @@ export function TerminalTab({
     });
   }
 
+  function resizeBackendSessionIfChanged(sessionId: string, terminal: Terminal) {
+    const cols = terminal.cols || 80;
+    const rows = terminal.rows || 24;
+    if (lastBackendSizeRef.current?.cols === cols && lastBackendSizeRef.current.rows === rows) return;
+    lastBackendSizeRef.current = { cols, rows };
+    void callBackend<void>("resize_terminal", {
+      request: {
+        session_id: sessionId,
+        cols,
+        rows,
+      },
+    });
+  }
+
   function handleContextMenu(event: React.MouseEvent<HTMLDivElement>) {
     event.preventDefault();
     event.stopPropagation();
@@ -256,10 +271,10 @@ export function TerminalTab({
     containerRef.current.style.setProperty("--terminal-background", terminalTheme.background);
   }
 
-  function clearXtermCommittedInputFromTextarea(committedValue: string) {
+  function clearCommittedInputIfStillPending(committedValue: string) {
     const input = containerRef.current?.querySelector("textarea");
-    if (input?.value.startsWith(committedValue)) {
-      input.value = input.value.slice(committedValue.length);
+    if (input?.value === committedValue) {
+      input.value = "";
     }
   }
 
@@ -329,13 +344,7 @@ export function TerminalTab({
       fitAddon.fit();
       const sessionId = sessionIdRef.current;
       if (!sessionId) return;
-      void callBackend<void>("resize_terminal", {
-        request: {
-          session_id: sessionId,
-          cols: terminal.cols || 80,
-          rows: terminal.rows || 24,
-        },
-      });
+      resizeBackendSessionIfChanged(sessionId, terminal);
     }
 
     function scheduleFit() {
@@ -363,6 +372,21 @@ export function TerminalTab({
       return count;
     }
 
+    function visibleScreenText() {
+      const buffer = terminal.buffer.active;
+      const lineCount = Math.min(buffer.length, terminal.rows || 24);
+      const lines: string[] = [];
+      for (let index = 0; index < lineCount; index += 1) {
+        lines.push(buffer.getLine(index)?.translateToString(true) ?? "");
+      }
+      return lines.join("\n");
+    }
+
+    function looksLikeSparseVimScreen() {
+      const text = visibleScreenText();
+      return /"\S[^"\n]*"\s+\d+L,\s+\d+C/.test(text) || /\b(?:All|Top|Bot)\b/.test(text);
+    }
+
     function scheduleAlternateScreenRedrawProbe() {
       if (redrawProbeTimer !== null) {
         window.clearTimeout(redrawProbeTimer);
@@ -373,6 +397,7 @@ export function TerminalTab({
         if (disposed || !sessionId || hasRequestedAlternateScreenRedraw) return;
         if (terminal.buffer.active.type !== "alternate") return;
         if (nonEmptyVisibleLineCount() > 3) return;
+        if (!looksLikeSparseVimScreen()) return;
         hasRequestedAlternateScreenRedraw = true;
         void callBackend<void>("write_terminal", {
           request: { session_id: sessionId, data: "\f" },
@@ -439,7 +464,7 @@ export function TerminalTab({
       void callBackend<void>("write_terminal", {
         request: { session_id: sessionId, data },
       });
-      window.setTimeout(() => clearXtermCommittedInputFromTextarea(data), 0);
+      window.setTimeout(() => clearCommittedInputIfStillPending(data), 0);
     }
     sendTerminalInputRef.current = sendTerminalInput;
 
@@ -499,6 +524,7 @@ export function TerminalTab({
             rows: terminal.rows || 24,
           },
         });
+        lastBackendSizeRef.current = { cols: terminal.cols || 80, rows: terminal.rows || 24 };
         sessionIdRef.current = response.session_id;
         lastSessionIdRef.current = response.session_id;
         if (disposed) {
@@ -550,6 +576,7 @@ export function TerminalTab({
       const sessionId = sessionIdRef.current;
       sessionIdRef.current = null;
       lastSessionIdRef.current = null;
+      lastBackendSizeRef.current = null;
       setConnectionStatus("closed");
       if (sessionId) {
         closeBackendSession(sessionId);
@@ -568,13 +595,7 @@ export function TerminalTab({
     fitAddonRef.current?.fit();
     const sessionId = sessionIdRef.current;
     if (!sessionId) return;
-    void callBackend<void>("resize_terminal", {
-      request: {
-        session_id: sessionId,
-        cols: terminalRef.current.cols || 80,
-        rows: terminalRef.current.rows || 24,
-      },
-    });
+    resizeBackendSessionIfChanged(sessionId, terminalRef.current);
   }, [isActive]);
 
   useEffect(() => {
@@ -586,13 +607,7 @@ export function TerminalTab({
       terminal.scrollToBottom();
       const sessionId = sessionIdRef.current;
       if (!sessionId) return;
-      void callBackend<void>("resize_terminal", {
-        request: {
-          session_id: sessionId,
-          cols: terminal.cols || 80,
-          rows: terminal.rows || 24,
-        },
-      });
+      resizeBackendSessionIfChanged(sessionId, terminal);
     });
     return () => {
       window.cancelAnimationFrame(frame);
