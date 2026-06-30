@@ -2,6 +2,8 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { Unicode11Addon } from "@xterm/addon-unicode11";
+import { WebglAddon } from "@xterm/addon-webgl";
 import { TerminalTab } from "./TerminalTab";
 import { callBackend, listenBackend } from "../../lib/tauri";
 import { readClipboardText, writeClipboardText } from "../../lib/clipboard";
@@ -27,9 +29,14 @@ interface MockTerminal {
   cols: number;
   rows: number;
   options: Record<string, unknown>;
+  unicode: { activeVersion: string };
+  modes: { mouseTrackingMode: "none" | "x10" | "vt200" | "drag" | "any" };
+  loadAddon: ReturnType<typeof vi.fn>;
+  open: ReturnType<typeof vi.fn>;
   write: ReturnType<typeof vi.fn>;
   writeln: ReturnType<typeof vi.fn>;
   onData: ReturnType<typeof vi.fn>;
+  onWriteParsed: ReturnType<typeof vi.fn>;
   dispose: ReturnType<typeof vi.fn>;
   focus: ReturnType<typeof vi.fn>;
   refresh: ReturnType<typeof vi.fn>;
@@ -63,6 +70,14 @@ interface MockFitAddon {
   fit: ReturnType<typeof vi.fn>;
 }
 
+interface MockUnicode11Addon {}
+
+interface MockWebglAddon {
+  clearTextureAtlas: ReturnType<typeof vi.fn>;
+  dispose: ReturnType<typeof vi.fn>;
+  onContextLoss: ReturnType<typeof vi.fn>;
+}
+
 class MockResizeObserver {
   static instances: MockResizeObserver[] = [];
 
@@ -88,6 +103,7 @@ describe("TerminalTab", () => {
     vi.useRealTimers();
     MockResizeObserver.instances = [];
     vi.unstubAllGlobals();
+    window.localStorage.clear();
   });
 
   function renderTerminalTab(props: Partial<React.ComponentProps<typeof TerminalTab>> = {}) {
@@ -160,6 +176,14 @@ describe("TerminalTab", () => {
     );
 
     const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
+    const fitAddon = vi.mocked(FitAddon).mock.instances[0] as unknown as MockFitAddon;
+    const unicode11Addon = vi.mocked(Unicode11Addon).mock.instances[0] as unknown as MockUnicode11Addon;
+    const webglAddon = vi.mocked(WebglAddon).mock.instances[0] as unknown as MockWebglAddon;
+    expect(terminal.loadAddon).toHaveBeenCalledWith(unicode11Addon);
+    expect(terminal.unicode.activeVersion).toBe("11");
+    expect(WebglAddon).toHaveBeenCalledWith(true);
+    expect(terminal.loadAddon).toHaveBeenCalledWith(webglAddon);
+    expect(terminal.loadAddon).toHaveBeenCalledWith(fitAddon);
     expect(terminal.focus).toHaveBeenCalled();
     expect(outputHandler).not.toBeNull();
     const emitOutput = outputHandler as unknown as (payload: { session_id: string; data: string }) => void;
@@ -185,6 +209,186 @@ describe("TerminalTab", () => {
     });
     expect(unlisten).toHaveBeenCalledTimes(1);
     expect(terminal.dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it("continues opening the terminal when WebGL renderer setup fails", async () => {
+    vi.mocked(Terminal).mockImplementationOnce(function (this: unknown) {
+      const terminal = this as MockTerminal;
+      terminal.cols = 80;
+      terminal.rows = 24;
+      terminal.options = {};
+      terminal.unicode = { activeVersion: "6" };
+      terminal.modes = { mouseTrackingMode: "none" };
+      terminal.loadAddon = vi.fn((addon: unknown) => {
+        if (addon instanceof WebglAddon) {
+          throw new Error("webgl unavailable");
+        }
+      });
+      terminal.open = vi.fn();
+      terminal.write = vi.fn();
+      terminal.writeln = vi.fn();
+      terminal.onData = vi.fn(() => ({ dispose: vi.fn() }));
+      terminal.onWriteParsed = vi.fn(() => ({ dispose: vi.fn() }));
+      terminal.dispose = vi.fn();
+      terminal.focus = vi.fn();
+      terminal.refresh = vi.fn();
+      terminal.scrollToBottom = vi.fn();
+      terminal.getSelection = vi.fn(() => "");
+      terminal.clear = vi.fn();
+    });
+    callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
+    listenBackendMock.mockResolvedValueOnce(vi.fn());
+
+    renderTerminalTab();
+
+    const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
+    expect(terminal.open).toHaveBeenCalled();
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+        request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
+      });
+    });
+  });
+
+  it("does not log terminal diagnostics by default", () => {
+    const consoleInfo = vi.spyOn(console, "info").mockImplementation(() => {});
+    callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
+    listenBackendMock.mockResolvedValueOnce(vi.fn());
+
+    renderTerminalTab();
+
+    expect(consoleInfo).not.toHaveBeenCalledWith("[devhub] terminal diagnostics", expect.anything());
+    consoleInfo.mockRestore();
+  });
+
+  it("logs terminal diagnostics when enabled from localStorage", () => {
+    const consoleInfo = vi.spyOn(console, "info").mockImplementation(() => {});
+    window.localStorage.setItem("devhub.terminalDiagnostics", "1");
+    callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
+    listenBackendMock.mockResolvedValueOnce(vi.fn());
+
+    renderTerminalTab();
+
+    expect(consoleInfo).toHaveBeenCalledWith(
+      "[devhub] terminal diagnostics",
+      expect.objectContaining({
+        reason: "initialized",
+        connectionId: "prod-web-01",
+        renderer: "webgl",
+        unicodeActiveVersion: "11",
+        mouseTrackingMode: "none",
+      }),
+    );
+    consoleInfo.mockRestore();
+  });
+
+  it("logs alternate screen wheel diagnostics with mouse tracking state", async () => {
+    const consoleInfo = vi.spyOn(console, "info").mockImplementation(() => {});
+    window.localStorage.setItem("devhub.terminalDiagnostics", "1");
+    callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
+    listenBackendMock.mockResolvedValueOnce(vi.fn());
+
+    renderTerminalTab();
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+        request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
+      });
+    });
+    const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
+    terminal.buffer = {
+      active: {
+        type: "alternate",
+        baseY: 0,
+        cursorX: 4,
+        cursorY: 5,
+        length: 24,
+        getLine: () => ({ translateToString: () => "" }),
+      },
+    };
+    terminal.modes = { mouseTrackingMode: "any" };
+    consoleInfo.mockClear();
+
+    fireEvent.wheel(screen.getByLabelText("SSH 终端"), { deltaY: 100 });
+
+    expect(consoleInfo).toHaveBeenCalledWith(
+      "[devhub] terminal diagnostics",
+      expect.objectContaining({
+        reason: "alternate-wheel",
+        bufferType: "alternate",
+        mouseTrackingMode: "any",
+        renderer: "webgl",
+      }),
+    );
+    consoleInfo.mockRestore();
+  });
+
+  it("captures alternate screen wheel diagnostics before xterm stops propagation", async () => {
+    const consoleInfo = vi.spyOn(console, "info").mockImplementation(() => {});
+    window.localStorage.setItem("devhub.terminalDiagnostics", "1");
+    callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
+    listenBackendMock.mockResolvedValueOnce(vi.fn());
+
+    renderTerminalTab();
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+        request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
+      });
+    });
+    const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
+    terminal.buffer = {
+      active: {
+        type: "alternate",
+        baseY: 0,
+        cursorX: 4,
+        cursorY: 5,
+        length: 24,
+        getLine: () => ({ translateToString: () => "" }),
+      },
+    };
+    terminal.modes = { mouseTrackingMode: "any" };
+    const xtermChild = document.createElement("div");
+    xtermChild.addEventListener("wheel", (event) => event.stopPropagation());
+    screen.getByLabelText("SSH 终端").append(xtermChild);
+    consoleInfo.mockClear();
+
+    fireEvent.wheel(xtermChild, { deltaY: 100 });
+
+    expect(consoleInfo).toHaveBeenCalledWith(
+      "[devhub] terminal diagnostics",
+      expect.objectContaining({
+        reason: "alternate-wheel",
+        bufferType: "alternate",
+        mouseTrackingMode: "any",
+        renderer: "webgl",
+      }),
+    );
+    consoleInfo.mockRestore();
+  });
+
+  it("logs WebGL context loss diagnostics when enabled", () => {
+    const consoleInfo = vi.spyOn(console, "info").mockImplementation(() => {});
+    window.localStorage.setItem("devhub.terminalDiagnostics", "1");
+    callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
+    listenBackendMock.mockResolvedValueOnce(vi.fn());
+
+    renderTerminalTab();
+
+    const webglAddon = vi.mocked(WebglAddon).mock.instances[0] as unknown as MockWebglAddon;
+    const onContextLossHandler = webglAddon.onContextLoss.mock.calls[0]?.[0] as (() => void) | undefined;
+    consoleInfo.mockClear();
+    onContextLossHandler?.();
+
+    expect(consoleInfo).toHaveBeenCalledWith(
+      "[devhub] terminal diagnostics",
+      expect.objectContaining({
+        reason: "webgl-context-lost",
+        renderer: "dom",
+        webglContextLost: true,
+      }),
+    );
+    consoleInfo.mockRestore();
   });
 
   it("reports connected only after the backend marks the terminal interactive", async () => {
@@ -836,6 +1040,168 @@ describe("TerminalTab", () => {
     vi.useRealTimers();
   });
 
+  it("scrolls to bottom after leaving alternate screen", async () => {
+    let outputHandler: ((payload: { session_id: string; data: string }) => void) | null = null;
+    callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
+    listenBackendMock.mockImplementationOnce(async (_event, handler) => {
+      outputHandler = handler as (payload: { session_id: string; data: string }) => void;
+      return vi.fn<() => void>();
+    });
+
+    renderTerminalTab();
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+        request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
+      });
+    });
+    const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
+    terminal.buffer = {
+      active: {
+        type: "alternate",
+        cursorX: 0,
+        cursorY: 0,
+        length: 24,
+        getLine: () => ({ translateToString: () => "" }),
+      },
+    };
+    terminal.scrollToBottom.mockClear();
+
+    const emitOutput = outputHandler as unknown as (payload: { session_id: string; data: string }) => void;
+    emitOutput({ session_id: "session-1", data: "\u001b[?1049lroot@host:~# " });
+
+    await waitFor(() => {
+      expect(terminal.scrollToBottom).toHaveBeenCalled();
+    });
+  });
+
+  it("scrolls to bottom when entering alternate screen", async () => {
+    let outputHandler: ((payload: { session_id: string; data: string }) => void) | null = null;
+    callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
+    listenBackendMock.mockImplementationOnce(async (_event, handler) => {
+      outputHandler = handler as (payload: { session_id: string; data: string }) => void;
+      return vi.fn<() => void>();
+    });
+
+    renderTerminalTab();
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+        request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
+      });
+    });
+    const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
+    terminal.buffer = {
+      active: {
+        type: "alternate",
+        cursorX: 0,
+        cursorY: 0,
+        length: 24,
+        getLine: () => ({ translateToString: () => "" }),
+      },
+    };
+    terminal.scrollToBottom.mockClear();
+
+    const emitOutput = outputHandler as unknown as (payload: { session_id: string; data: string }) => void;
+    emitOutput({ session_id: "session-1", data: "\u001b[?1049hopencode" });
+
+    await waitFor(() => {
+      expect(terminal.scrollToBottom).toHaveBeenCalled();
+    });
+  });
+
+  it("captures wheel events inside alternate screen terminals without blocking xterm", async () => {
+    callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
+    listenBackendMock.mockResolvedValueOnce(vi.fn());
+
+    renderTerminalTab();
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+        request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
+      });
+    });
+    const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
+    terminal.focus.mockClear();
+    terminal.buffer = {
+      active: {
+        type: "alternate",
+        cursorX: 0,
+        cursorY: 0,
+        length: 24,
+        getLine: () => ({ translateToString: () => "" }),
+      },
+    };
+    const wheelEvent = new WheelEvent("wheel", { bubbles: true, deltaY: 100 });
+    const stopPropagationSpy = vi.spyOn(wheelEvent, "stopPropagation");
+
+    screen.getByLabelText("SSH 终端").dispatchEvent(wheelEvent);
+
+    expect(terminal.focus).toHaveBeenCalled();
+    expect(stopPropagationSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not force a WebGL refresh after alternate screen wheel events", async () => {
+    callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
+    listenBackendMock.mockResolvedValueOnce(vi.fn());
+
+    renderTerminalTab();
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+        request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
+      });
+    });
+    const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
+    terminal.rows = 46;
+    terminal.buffer = {
+      active: {
+        type: "alternate",
+        cursorX: 0,
+        cursorY: 0,
+        length: 46,
+        getLine: () => ({ translateToString: () => "" }),
+      },
+    };
+    const webglAddon = vi.mocked(WebglAddon).mock.instances[0] as unknown as MockWebglAddon;
+    const onWriteParsed = terminal.onWriteParsed.mock.calls[0]?.[0] as (() => void) | undefined;
+
+    vi.useFakeTimers();
+    fireEvent.wheel(screen.getByLabelText("SSH 终端"), { deltaY: 100 });
+    onWriteParsed?.();
+    await vi.advanceTimersByTimeAsync(100);
+
+    expect(webglAddon.clearTextureAtlas).not.toHaveBeenCalled();
+    expect(terminal.refresh).not.toHaveBeenCalled();
+  });
+
+  it("does not refresh normal buffer after wheel scrolling", async () => {
+    callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
+    listenBackendMock.mockResolvedValueOnce(vi.fn());
+
+    renderTerminalTab();
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+        request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
+      });
+    });
+    const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
+    terminal.buffer = {
+      active: {
+        type: "normal",
+        cursorX: 0,
+        cursorY: 0,
+        length: 24,
+        getLine: () => ({ translateToString: () => "" }),
+      },
+    };
+
+    fireEvent.wheel(screen.getByLabelText("SSH 终端"), { deltaY: 100 });
+
+    expect(terminal.refresh).not.toHaveBeenCalled();
+  });
+
   it("refits and resizes the backend session when the terminal container changes size", async () => {
     vi.stubGlobal("ResizeObserver", MockResizeObserver);
     callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
@@ -1079,6 +1445,19 @@ describe("TerminalTab", () => {
     expect(vi.mocked(Terminal)).toHaveBeenCalledWith(
       expect.objectContaining({
         scrollback: 1000,
+      }),
+    );
+  });
+
+  it("enables proposed xterm API for the Unicode width addon", () => {
+    callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
+    listenBackendMock.mockResolvedValueOnce(vi.fn());
+
+    renderTerminalTab();
+
+    expect(vi.mocked(Terminal)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        allowProposedApi: true,
       }),
     );
   });

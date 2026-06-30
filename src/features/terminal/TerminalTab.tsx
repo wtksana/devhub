@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { Unicode11Addon } from "@xterm/addon-unicode11";
+import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
 import { ContextMenu, type ContextMenuState } from "../../app/ContextMenu";
 import { readClipboardText, writeClipboardText } from "../../lib/clipboard";
@@ -137,6 +139,10 @@ function containsAlternateScreenSequence(data: string) {
   return data.includes("\x1b[?1049h") || data.includes("\x1b[?1047h") || data.includes("\x1b[?47h");
 }
 
+function containsLeaveAlternateScreenSequence(data: string) {
+  return data.includes("\x1b[?1049l") || data.includes("\x1b[?1047l") || data.includes("\x1b[?47l");
+}
+
 function currentVisibleLine(terminal: Terminal) {
   const buffer = terminal.buffer?.active;
   if (!buffer) return "";
@@ -149,6 +155,13 @@ function isTerminalSessionErrorOutput(data: string) {
 }
 
 const TERMINAL_SCROLLBACK = 1000;
+const TERMINAL_DIAGNOSTICS_STORAGE_KEY = "devhub.terminalDiagnostics";
+
+function isTerminalDiagnosticsEnabled() {
+  if (typeof window === "undefined") return false;
+  const query = new URLSearchParams(window.location.search);
+  return query.get("terminalDiagnostics") === "1" || window.localStorage.getItem(TERMINAL_DIAGNOSTICS_STORAGE_KEY) === "1";
+}
 
 export function TerminalTab({
   connectionId,
@@ -177,6 +190,8 @@ export function TerminalTab({
   const setLogHighlightModeRef = useRef<((enabled: boolean) => void) | null>(null);
   const sendTerminalInputRef = useRef<((data: string) => void) | null>(null);
   const lastBackendSizeRef = useRef<{ cols: number; rows: number } | null>(null);
+  const webglAddonRef = useRef<WebglAddon | null>(null);
+  const rendererRef = useRef<"dom" | "webgl">("dom");
   const [isManualLogHighlightMode, setIsManualLogHighlightMode] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
 
@@ -264,6 +279,35 @@ export function TerminalTab({
     });
   }
 
+  function logTerminalDiagnostics(reason: string, terminal = terminalRef.current) {
+    if (!isTerminalDiagnosticsEnabled() || !terminal) return;
+    const buffer = terminal.buffer?.active;
+    console.info("[devhub] terminal diagnostics", {
+      reason,
+      connectionId,
+      renderer: rendererRef.current,
+      webglEnabled: rendererRef.current === "webgl",
+      webglContextLost: reason === "webgl-context-lost",
+      unicodeActiveVersion: terminal.unicode.activeVersion,
+      unicodeVersions: terminal.unicode.versions,
+      mouseTrackingMode: terminal.modes.mouseTrackingMode,
+      bufferType: buffer?.type,
+      cols: terminal.cols,
+      rows: terminal.rows,
+      cursorX: buffer?.cursorX,
+      cursorY: buffer?.cursorY,
+      lineCount: buffer?.length,
+      canvasCount: containerRef.current?.querySelectorAll("canvas").length ?? 0,
+    });
+  }
+
+  function handleAlternateScreenWheel() {
+    const terminal = terminalRef.current;
+    if (terminal?.buffer.active.type !== "alternate") return;
+    logTerminalDiagnostics("alternate-wheel", terminal);
+    terminal.focus();
+  }
+
   function updateContainerTheme(themeName: "dark" | "light") {
     const terminalTheme = terminalThemes[themeName];
     if (!containerRef.current) return;
@@ -294,6 +338,7 @@ export function TerminalTab({
 
     let disposed = false;
     let disposeInput: { dispose: () => void } | null = null;
+    let disposeWebglContextLoss: { dispose: () => void } | null = null;
     let unlistenOutput: (() => void) | null = null;
     let resizeObserver: ResizeObserver | null = null;
     let resizeFrame: number | null = null;
@@ -321,6 +366,7 @@ export function TerminalTab({
     }
 
     const terminal = new Terminal({
+      allowProposedApi: true,
       cursorBlink: true,
       fontFamily: `${fontFamily}, Consolas, monospace`,
       fontSize,
@@ -333,11 +379,29 @@ export function TerminalTab({
     updateContainerTheme(theme);
     const fitAddon = new FitAddon();
     fitAddonRef.current = fitAddon;
+    terminal.loadAddon(new Unicode11Addon());
+    terminal.unicode.activeVersion = "11";
     terminal.loadAddon(fitAddon);
     terminal.open(containerRef.current);
+    try {
+      const webglAddon = new WebglAddon(true);
+      terminal.loadAddon(webglAddon);
+      webglAddonRef.current = webglAddon;
+      rendererRef.current = "webgl";
+      disposeWebglContextLoss = webglAddon.onContextLoss(() => {
+        rendererRef.current = "dom";
+        logTerminalDiagnostics("webgl-context-lost", terminal);
+      });
+    } catch {
+      // Keep the default DOM renderer when WebGL is unavailable.
+      rendererRef.current = "dom";
+    }
+    logTerminalDiagnostics("initialized", terminal);
     fitAddon.fit();
     terminal.focus();
     setConnectionStatus("connecting");
+    const container = containerRef.current;
+    container.addEventListener("wheel", handleAlternateScreenWheel, { capture: true });
 
     function fitAndResizeBackend() {
       if (!isActiveRef.current) return;
@@ -405,6 +469,10 @@ export function TerminalTab({
       }, 48);
     }
 
+    function scheduleScrollToBottom() {
+      window.requestAnimationFrame(() => terminal.scrollToBottom());
+    }
+
     function writeTerminalOutput(data: string) {
       if (!isActiveRef.current) {
         pendingLogLine = "";
@@ -424,8 +492,12 @@ export function TerminalTab({
         terminal.write(data);
       }
       if (containsAlternateScreenSequence(outputWindow)) {
+        scheduleScrollToBottom();
         hasRequestedAlternateScreenRedraw = false;
         scheduleAlternateScreenRedrawProbe();
+      }
+      if (containsLeaveAlternateScreenSequence(outputWindow)) {
+        scheduleScrollToBottom();
       }
     }
 
@@ -571,7 +643,9 @@ export function TerminalTab({
         window.clearTimeout(redrawProbeTimer);
       }
       resizeObserver?.disconnect();
+      container.removeEventListener("wheel", handleAlternateScreenWheel, { capture: true });
       disposeInput?.dispose();
+      disposeWebglContextLoss?.dispose();
       unlistenOutput?.();
       const sessionId = sessionIdRef.current;
       sessionIdRef.current = null;
@@ -584,6 +658,8 @@ export function TerminalTab({
       terminal.dispose();
       terminalRef.current = null;
       fitAddonRef.current = null;
+      webglAddonRef.current = null;
+      rendererRef.current = "dom";
       setLogHighlightModeRef.current = null;
       sendTerminalInputRef.current = null;
     };
@@ -616,7 +692,12 @@ export function TerminalTab({
 
   return (
     <>
-      <div className="terminal-tab" aria-label={t("terminal.label")} ref={containerRef} onContextMenu={handleContextMenu} />
+      <div
+        className="terminal-tab"
+        aria-label={t("terminal.label")}
+        ref={containerRef}
+        onContextMenu={handleContextMenu}
+      />
       <ContextMenu menu={contextMenu} onClose={() => setContextMenu(null)} />
     </>
   );
