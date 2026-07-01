@@ -11,6 +11,7 @@ import { RedisWorkspace } from "../features/redis/RedisWorkspace";
 import { SettingsPanel } from "../features/settings/SettingsPanel";
 import type { DatabaseConnectionSettings, RedisConnectionSettings } from "../features/settings/settingsTypes";
 import { SftpWorkspace } from "../features/sftp/SftpWorkspace";
+import { CommandHistoryViewer } from "../features/terminal/CommandHistoryViewer";
 import { useSettings } from "../features/settings/useSettings";
 import { TerminalWorkspace } from "../features/terminal/TerminalWorkspace";
 import type { TerminalConnectionStatus } from "../features/terminal/TerminalTab";
@@ -23,6 +24,10 @@ interface SettingsWorkspaceTab extends WorkspaceTabItem {
 
 interface LogsWorkspaceTab extends WorkspaceTabItem {
   kind: "logs";
+}
+
+interface CommandHistoryWorkspaceTab extends WorkspaceTabItem {
+  kind: "commandHistory";
 }
 
 interface TerminalWorkspaceTab extends WorkspaceTabItem {
@@ -46,7 +51,14 @@ interface DatabaseWorkspaceTab extends WorkspaceTabItem {
   connectionId: string;
 }
 
-type AppWorkspaceTab = SettingsWorkspaceTab | LogsWorkspaceTab | TerminalWorkspaceTab | SftpWorkspaceTab | RedisWorkspaceTab | DatabaseWorkspaceTab;
+type AppWorkspaceTab =
+  | SettingsWorkspaceTab
+  | LogsWorkspaceTab
+  | CommandHistoryWorkspaceTab
+  | TerminalWorkspaceTab
+  | SftpWorkspaceTab
+  | RedisWorkspaceTab
+  | DatabaseWorkspaceTab;
 
 type WorkspaceSplitDirection = "horizontal" | "vertical";
 
@@ -608,6 +620,23 @@ function AppShellContent({ settingsState }: { settingsState: ReturnType<typeof u
     });
   }
 
+  function openCommandHistoryTab() {
+    const focused = workspacePanes.find((pane) => pane.id === focusedPaneId);
+    const existingCommandHistoryTab = focused?.tabs.find((tab) => tab.kind === "commandHistory");
+    if (existingCommandHistoryTab) {
+      addTabToFocusedPane(
+        { id: existingCommandHistoryTab.id, kind: "commandHistory", title: t("command_history.title") },
+        existingCommandHistoryTab.id,
+      );
+      return;
+    }
+    addTabToFocusedPane({
+      id: uniqueTabId("command-history"),
+      kind: "commandHistory",
+      title: t("command_history.title"),
+    });
+  }
+
   function toggleTheme() {
     void settingsState.saveSettings({
       ...settings,
@@ -821,6 +850,13 @@ function AppShellContent({ settingsState }: { settingsState: ReturnType<typeof u
         title: t("logs.title"),
       };
     }
+    if (tab.kind === "commandHistory") {
+      return {
+        ...tab,
+        id: uniqueTabId("command-history"),
+        title: t("command_history.title"),
+      };
+    }
     return {
       ...tab,
       id: uniqueTabId("settings"),
@@ -932,9 +968,15 @@ function AppShellContent({ settingsState }: { settingsState: ReturnType<typeof u
           />
         ) : null}
         {tab.kind === "settings" ? (
-          <SettingsPanel settingsState={settingsState} onOpenLogs={openLogsTab} resolvedTheme={theme} />
+          <SettingsPanel
+            settingsState={settingsState}
+            onOpenLogs={openLogsTab}
+            onOpenCommandHistory={openCommandHistoryTab}
+            resolvedTheme={theme}
+          />
         ) : null}
         {tab.kind === "logs" ? <LogViewer /> : null}
+        {tab.kind === "commandHistory" ? <CommandHistoryViewer /> : null}
       </div>
     );
   }

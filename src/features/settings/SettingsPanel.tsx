@@ -73,29 +73,54 @@ function FontSelect({
 interface SettingsPanelProps {
   settingsState?: SettingsState;
   onOpenLogs?: () => void;
+  onOpenCommandHistory?: () => void;
   resolvedTheme?: "dark" | "light";
 }
 
-export function SettingsPanel({ settingsState: providedSettingsState, onOpenLogs, resolvedTheme }: SettingsPanelProps) {
+export function SettingsPanel({ settingsState: providedSettingsState, onOpenLogs, onOpenCommandHistory, resolvedTheme }: SettingsPanelProps) {
   if (providedSettingsState) {
-    return <SettingsPanelView settingsState={providedSettingsState} onOpenLogs={onOpenLogs} resolvedTheme={resolvedTheme} />;
+    return (
+      <SettingsPanelView
+        settingsState={providedSettingsState}
+        onOpenLogs={onOpenLogs}
+        onOpenCommandHistory={onOpenCommandHistory}
+        resolvedTheme={resolvedTheme}
+      />
+    );
   }
 
-  return <SettingsPanelWithLocalSettings onOpenLogs={onOpenLogs} resolvedTheme={resolvedTheme} />;
+  return <SettingsPanelWithLocalSettings onOpenLogs={onOpenLogs} onOpenCommandHistory={onOpenCommandHistory} resolvedTheme={resolvedTheme} />;
 }
 
-function SettingsPanelWithLocalSettings({ onOpenLogs, resolvedTheme }: { onOpenLogs?: () => void; resolvedTheme?: "dark" | "light" }) {
+function SettingsPanelWithLocalSettings({
+  onOpenLogs,
+  onOpenCommandHistory,
+  resolvedTheme,
+}: {
+  onOpenLogs?: () => void;
+  onOpenCommandHistory?: () => void;
+  resolvedTheme?: "dark" | "light";
+}) {
   const settingsState = useSettings();
-  return <SettingsPanelView settingsState={settingsState} onOpenLogs={onOpenLogs} resolvedTheme={resolvedTheme} />;
+  return (
+    <SettingsPanelView
+      settingsState={settingsState}
+      onOpenLogs={onOpenLogs}
+      onOpenCommandHistory={onOpenCommandHistory}
+      resolvedTheme={resolvedTheme}
+    />
+  );
 }
 
 function SettingsPanelView({
   settingsState,
   onOpenLogs,
+  onOpenCommandHistory,
   resolvedTheme,
 }: {
   settingsState: SettingsState;
   onOpenLogs?: () => void;
+  onOpenCommandHistory?: () => void;
   resolvedTheme?: "dark" | "light";
 }) {
   const { settings, error, saveSettings } = settingsState;
@@ -286,6 +311,8 @@ function SettingsPanelView({
         t("settings.terminal_log_highlight_auto"),
         t("settings.terminal_log_highlight_case"),
         t("settings.terminal_log_highlight_rules"),
+        t("settings.terminal_command_history"),
+        t("settings.terminal_command_history_desc"),
       ],
       布局: [t("settings.layout"), t("settings.connection_panel_width")],
       连接: [t("settings.connections"), t("settings.connection_config"), t("settings.connection_config_desc")],
@@ -498,6 +525,14 @@ function SettingsPanelView({
                 ))}
               </div>
             </div>
+          </SettingsRow>
+          <SettingsRow
+            title={t("settings.terminal_command_history")}
+            description={t("settings.terminal_command_history_desc")}
+          >
+            <button type="button" onClick={onOpenCommandHistory}>
+              {t("settings.view_command_history")}
+            </button>
           </SettingsRow>
         </section>
         ) : null}

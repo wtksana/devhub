@@ -28,6 +28,18 @@ const writeClipboardTextMock = vi.mocked(writeClipboardText);
 interface MockTerminal {
   cols: number;
   rows: number;
+  _core?: {
+    _renderService?: {
+      dimensions?: {
+        css?: {
+          cell?: {
+            width?: number;
+            height?: number;
+          };
+        };
+      };
+    };
+  };
   options: Record<string, unknown>;
   unicode: { activeVersion: string };
   modes: { mouseTrackingMode: "none" | "x10" | "vt200" | "drag" | "any" };
@@ -148,6 +160,16 @@ describe("TerminalTab", () => {
     callBackendMock.mockClear();
 
     const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
+    terminal.buffer = {
+      active: {
+        type: "normal",
+        baseY: 0,
+        cursorX: 0,
+        cursorY: 0,
+        length: 24,
+        getLine: () => ({ translateToString: () => "" }),
+      },
+    };
     const onData = terminal.onData.mock.calls[0]?.[0] as ((data: string) => void) | undefined;
 
     return { textarea, onData };
@@ -211,6 +233,368 @@ describe("TerminalTab", () => {
     });
     expect(unlisten).toHaveBeenCalledTimes(1);
     expect(terminal.dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows local command suggestions and completes the remaining input", async () => {
+    callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
+    listenBackendMock.mockResolvedValueOnce(vi.fn());
+
+    renderTerminalTab({ connectionId: "prod-web-01", fontFamily: "Maple Mono", fontSize: 16, theme: "dark", isActive: true });
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+        request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
+      });
+    });
+    callBackendMock.mockClear();
+
+    const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
+    terminal.buffer = {
+      active: {
+        type: "normal",
+        baseY: 0,
+        cursorX: 0,
+        cursorY: 0,
+        length: 24,
+        getLine: () => ({ translateToString: () => "" }),
+      },
+    };
+    const onData = terminal.onData.mock.calls[0]?.[0] as ((data: string) => void) | undefined;
+    onData?.("docker logs api\r");
+    onData?.("do");
+
+    expect(await screen.findByRole("option", { name: "docker logs api" })).toBeInTheDocument();
+    fireEvent.mouseDown(screen.getByRole("option", { name: "docker logs api" }));
+
+    expect(callBackendMock).toHaveBeenCalledWith("write_terminal", {
+      request: { session_id: "session-1", data: "cker logs api" },
+    });
+  });
+
+  it("positions command suggestions near the terminal cursor and highlights the active option", async () => {
+    callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
+    listenBackendMock.mockResolvedValueOnce(vi.fn());
+
+    renderTerminalTab({ connectionId: "prod-web-01", fontFamily: "Maple Mono", fontSize: 16, theme: "dark", isActive: true });
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+        request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
+      });
+    });
+
+    const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
+    terminal._core = {
+      _renderService: {
+        dimensions: {
+          css: {
+            cell: { width: 9, height: 18 },
+          },
+        },
+      },
+    };
+    terminal.buffer = {
+      active: {
+        type: "normal",
+        baseY: 0,
+        cursorX: 18,
+        cursorY: 3,
+        length: 24,
+        getLine: () => ({ translateToString: () => "" }),
+      },
+    };
+    const onData = terminal.onData.mock.calls[0]?.[0] as ((data: string) => void) | undefined;
+    onData?.("tail -f app.log\r");
+    onData?.("tail -n 300 app.log\r");
+    onData?.("ta");
+
+    const listbox = await screen.findByRole("listbox", { name: "命令历史候选" });
+    expect(listbox).toHaveStyle({ left: `${(18 + 2) * 9}px`, top: `${(3 + 1) * 18 + 2}px` });
+    expect(screen.getByRole("option", { name: "tail -n 300 app.log" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("option", { name: "tail -f app.log" })).toHaveAttribute("aria-selected", "false");
+  });
+
+  it("does not double count input already visible on the terminal line when positioning suggestions", async () => {
+    callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
+    listenBackendMock.mockResolvedValueOnce(vi.fn());
+
+    renderTerminalTab({ connectionId: "prod-web-01", fontFamily: "Maple Mono", fontSize: 16, theme: "dark", isActive: true });
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+        request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
+      });
+    });
+
+    const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
+    terminal._core = {
+      _renderService: {
+        dimensions: {
+          css: {
+            cell: { width: 9, height: 18 },
+          },
+        },
+      },
+    };
+    terminal.buffer = {
+      active: {
+        type: "normal",
+        baseY: 0,
+        cursorX: 20,
+        cursorY: 3,
+        length: 24,
+        getLine: () => ({ translateToString: () => "[root@host ~]# ta" }),
+      },
+    };
+    const onData = terminal.onData.mock.calls[0]?.[0] as ((data: string) => void) | undefined;
+    onData?.("tail -f app.log\r");
+    onData?.("ta");
+
+    const listbox = await screen.findByRole("listbox", { name: "命令历史候选" });
+    expect(listbox).toHaveStyle({ left: `${20 * 9}px`, top: `${(3 + 1) * 18 + 2}px` });
+  });
+
+  it("moves the active command suggestion with arrow keys before accepting it", async () => {
+    callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
+    listenBackendMock.mockResolvedValueOnce(vi.fn());
+
+    renderTerminalTab({ connectionId: "prod-web-01", fontFamily: "Maple Mono", fontSize: 16, theme: "dark", isActive: true });
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+        request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
+      });
+    });
+    callBackendMock.mockClear();
+
+    const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
+    terminal.buffer = {
+      active: {
+        type: "normal",
+        baseY: 0,
+        cursorX: 0,
+        cursorY: 0,
+        length: 24,
+        getLine: () => ({ translateToString: () => "" }),
+      },
+    };
+    const onData = terminal.onData.mock.calls[0]?.[0] as ((data: string) => void) | undefined;
+    onData?.("tail -f app.log\r");
+    onData?.("tail -n 300 app.log\r");
+    onData?.("ta");
+    await screen.findByRole("option", { name: "tail -n 300 app.log" });
+
+    onData?.("\x1b[B");
+
+    await waitFor(() => {
+      expect(screen.getByRole("option", { name: "tail -f app.log" })).toHaveAttribute("aria-selected", "true");
+    });
+    onData?.("\t");
+
+    expect(callBackendMock).toHaveBeenCalledWith("write_terminal", {
+      request: { session_id: "session-1", data: "il -f app.log" },
+    });
+  });
+
+  it("accepts the first command suggestion with tab without sending tab to the backend", async () => {
+    callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
+    listenBackendMock.mockResolvedValueOnce(vi.fn());
+
+    renderTerminalTab({ connectionId: "prod-web-01", fontFamily: "Maple Mono", fontSize: 16, theme: "dark", isActive: true });
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+        request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
+      });
+    });
+    callBackendMock.mockClear();
+
+    const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
+    terminal.buffer = {
+      active: {
+        type: "normal",
+        baseY: 0,
+        cursorX: 0,
+        cursorY: 0,
+        length: 24,
+        getLine: () => ({ translateToString: () => "" }),
+      },
+    };
+    const onData = terminal.onData.mock.calls[0]?.[0] as ((data: string) => void) | undefined;
+    onData?.("docker ps\r");
+    onData?.("do");
+    onData?.("\t");
+
+    expect(callBackendMock).not.toHaveBeenCalledWith("write_terminal", {
+      request: { session_id: "session-1", data: "\t" },
+    });
+    expect(callBackendMock).toHaveBeenCalledWith("write_terminal", {
+      request: { session_id: "session-1", data: "cker ps" },
+    });
+  });
+
+  it("closes command suggestions with escape without sending escape to the backend", async () => {
+    callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
+    listenBackendMock.mockResolvedValueOnce(vi.fn());
+
+    renderTerminalTab({ connectionId: "prod-web-01", fontFamily: "Maple Mono", fontSize: 16, theme: "dark", isActive: true });
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+        request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
+      });
+    });
+    callBackendMock.mockClear();
+
+    const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
+    terminal.buffer = {
+      active: {
+        type: "normal",
+        baseY: 0,
+        cursorX: 0,
+        cursorY: 0,
+        length: 24,
+        getLine: () => ({ translateToString: () => "" }),
+      },
+    };
+    const onData = terminal.onData.mock.calls[0]?.[0] as ((data: string) => void) | undefined;
+    onData?.("docker ps\r");
+    onData?.("do");
+    expect(await screen.findByRole("option", { name: "docker ps" })).toBeInTheDocument();
+
+    onData?.("\x1b");
+
+    await waitFor(() => {
+      expect(screen.queryByRole("option", { name: "docker ps" })).not.toBeInTheDocument();
+    });
+    expect(callBackendMock).not.toHaveBeenCalledWith("write_terminal", {
+      request: { session_id: "session-1", data: "\x1b" },
+    });
+  });
+
+  it("does not show command suggestions while alternate screen is active", async () => {
+    callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
+    listenBackendMock.mockResolvedValueOnce(vi.fn());
+
+    renderTerminalTab({ connectionId: "prod-web-01", fontFamily: "Maple Mono", fontSize: 16, theme: "dark", isActive: true });
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+        request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
+      });
+    });
+
+    const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
+    const onData = terminal.onData.mock.calls[0]?.[0] as ((data: string) => void) | undefined;
+    onData?.("docker logs api\r");
+    terminal.buffer = {
+      active: {
+        type: "alternate",
+        baseY: 0,
+        cursorX: 0,
+        cursorY: 0,
+        length: 24,
+        getLine: () => ({ translateToString: () => "" }),
+      },
+    };
+    onData?.("do");
+
+    expect(screen.queryByRole("option", { name: "docker logs api" })).not.toBeInTheDocument();
+  });
+
+  it("shows command suggestions in normal buffer even when mouse tracking mode is not none", async () => {
+    callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
+    listenBackendMock.mockResolvedValueOnce(vi.fn());
+
+    renderTerminalTab({ connectionId: "prod-web-01", fontFamily: "Maple Mono", fontSize: 16, theme: "dark", isActive: true });
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+        request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
+      });
+    });
+
+    const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
+    terminal.modes = { mouseTrackingMode: "any" };
+    terminal.buffer = {
+      active: {
+        type: "normal",
+        baseY: 0,
+        cursorX: 0,
+        cursorY: 0,
+        length: 24,
+        getLine: () => ({ translateToString: () => "" }),
+      },
+    };
+    const onData = terminal.onData.mock.calls[0]?.[0] as ((data: string) => void) | undefined;
+    onData?.("nginx -t\r");
+    onData?.("ng");
+
+    expect(await screen.findByRole("option", { name: "nginx -t" })).toBeInTheDocument();
+  });
+
+  it("records the visible shell command when enter submits a command recalled by remote history", async () => {
+    callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
+    listenBackendMock.mockResolvedValueOnce(vi.fn());
+
+    renderTerminalTab({ connectionId: "prod-web-01", fontFamily: "Maple Mono", fontSize: 16, theme: "dark", isActive: true });
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+        request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
+      });
+    });
+
+    const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
+    terminal.buffer = {
+      active: {
+        type: "normal",
+        baseY: 0,
+        cursorX: 8,
+        cursorY: 0,
+        length: 24,
+        getLine: () => ({ translateToString: () => "[root@host ~]# nginx -t" }),
+      },
+    };
+    const onData = terminal.onData.mock.calls[0]?.[0] as ((data: string) => void) | undefined;
+    onData?.("\x1b[A");
+    onData?.("\r");
+    onData?.("ng");
+
+    expect(await screen.findByRole("option", { name: "nginx -t" })).toBeInTheDocument();
+  });
+
+  it("prefers the visible shell command over partial typed input when recording history", async () => {
+    callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
+    listenBackendMock.mockResolvedValueOnce(vi.fn());
+
+    renderTerminalTab({ connectionId: "prod-web-01", fontFamily: "Maple Mono", fontSize: 16, theme: "dark", isActive: true });
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+        request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
+      });
+    });
+
+    const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
+    terminal.buffer = {
+      active: {
+        type: "normal",
+        baseY: 0,
+        cursorX: 8,
+        cursorY: 0,
+        length: 24,
+        getLine: () => ({ translateToString: () => "[root@host ~]# systemctl status nginx" }),
+      },
+    };
+    const onData = terminal.onData.mock.calls[0]?.[0] as ((data: string) => void) | undefined;
+    onData?.("ng");
+    onData?.("\x1b[A");
+    onData?.("\r");
+    onData?.("sy");
+
+    expect(await screen.findByRole("option", { name: "systemctl status nginx" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "ng" })).not.toBeInTheDocument();
   });
 
   it("continues opening the terminal when WebGL renderer setup fails", async () => {

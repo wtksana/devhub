@@ -9,6 +9,13 @@ import { readClipboardText, writeClipboardText } from "../../lib/clipboard";
 import { callBackend, listenBackend } from "../../lib/tauri";
 import { useI18n } from "../../i18n/useI18n";
 import type { TerminalSettings } from "../settings/settingsTypes";
+import {
+  createTerminalInputTracker,
+  extractCommandFromPromptLine,
+  findCommandSuggestions,
+  recordCommandHistory,
+  type TerminalInputTracker,
+} from "./commandHistory";
 import { createLogHighlighter, createTerminalCommandTracker, isTailCommandVisibleLine, processLogOutput } from "./logHighlight";
 
 export type TerminalConnectionStatus = "connecting" | "connected" | "failed" | "closed";
@@ -33,6 +40,26 @@ interface TerminalOutputEvent {
   session_id: string;
   data: string;
   status?: TerminalConnectionStatus;
+}
+
+interface TerminalSuggestionPosition {
+  left: number;
+  top: number;
+}
+
+interface XtermWithRenderDimensions extends Terminal {
+  _core?: {
+    _renderService?: {
+      dimensions?: {
+        css?: {
+          cell?: {
+            width?: number;
+            height?: number;
+          };
+        };
+      };
+    };
+  };
 }
 
 function hexToRgb(hex: string) {
@@ -150,12 +177,45 @@ function currentVisibleLine(terminal: Terminal) {
   return buffer.getLine(lineIndex)?.translateToString(true) ?? "";
 }
 
+function terminalCellSize(terminal: Terminal, fontSize: number) {
+  const dimensions = (terminal as XtermWithRenderDimensions)._core?._renderService?.dimensions?.css?.cell;
+  return {
+    width: dimensions?.width && dimensions.width > 0 ? dimensions.width : Math.max(7, fontSize * 0.62),
+    height: dimensions?.height && dimensions.height > 0 ? dimensions.height : Math.max(14, fontSize * 1.3),
+  };
+}
+
+function terminalSuggestionPosition(
+  terminal: Terminal,
+  fontSize: number,
+  container: HTMLElement | null,
+  input: string,
+): TerminalSuggestionPosition {
+  const cell = terminalCellSize(terminal, fontSize);
+  const buffer = terminal.buffer?.active;
+  const visibleCommand = extractCommandFromPromptLine(currentVisibleLine(terminal));
+  const pendingInputLength = Math.max(0, input.length - visibleCommand.length);
+  const cursorX = (buffer?.cursorX ?? 0) + pendingInputLength;
+  const cursorY = buffer?.cursorY ?? 0;
+  const rawLeft = cursorX * cell.width;
+  const rawTop = (cursorY + 1) * cell.height + 2;
+  const containerWidth = container?.clientWidth || 0;
+  const containerHeight = container?.clientHeight || 0;
+  const maxLeft = containerWidth > 0 ? Math.max(8, containerWidth - 196) : rawLeft;
+  const shouldOpenUp = containerHeight > 0 && rawTop + 190 > containerHeight;
+  return {
+    left: Math.max(8, Math.min(rawLeft, maxLeft)),
+    top: shouldOpenUp ? Math.max(8, cursorY * cell.height - 194) : Math.max(8, rawTop),
+  };
+}
+
 function isTerminalSessionErrorOutput(data: string) {
   return data.includes("[devhub] ssh error:") || data.includes("[devhub] io error:");
 }
 
 const TERMINAL_SCROLLBACK = 1000;
 const TERMINAL_DIAGNOSTICS_STORAGE_KEY = "devhub.terminalDiagnostics";
+const COMMAND_SUGGESTION_LIMIT = 8;
 
 function isTerminalDiagnosticsEnabled() {
   if (typeof window === "undefined") return false;
@@ -189,11 +249,20 @@ export function TerminalTab({
   const isManualLogHighlightModeRef = useRef(false);
   const setLogHighlightModeRef = useRef<((enabled: boolean) => void) | null>(null);
   const sendTerminalInputRef = useRef<((data: string) => void) | null>(null);
+  const inputTrackerRef = useRef<TerminalInputTracker | null>(null);
   const lastBackendSizeRef = useRef<{ cols: number; rows: number } | null>(null);
   const webglAddonRef = useRef<WebglAddon | null>(null);
   const rendererRef = useRef<"dom" | "webgl">("dom");
+  const commandSuggestionsRef = useRef<string[]>([]);
+  const activeCommandSuggestionIndexRef = useRef(0);
   const [isManualLogHighlightMode, setIsManualLogHighlightMode] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+  const [commandSuggestions, setCommandSuggestions] = useState<string[]>([]);
+  const [activeCommandSuggestionIndex, setActiveCommandSuggestionIndex] = useState(0);
+  const [commandSuggestionPosition, setCommandSuggestionPosition] = useState<TerminalSuggestionPosition>({
+    left: 8,
+    top: 28,
+  });
 
   useEffect(() => {
     isActiveRef.current = isActive;
@@ -322,6 +391,75 @@ export function TerminalTab({
     }
   }
 
+  function setVisibleCommandSuggestions(nextSuggestions: string[]) {
+    commandSuggestionsRef.current = nextSuggestions;
+    activeCommandSuggestionIndexRef.current = 0;
+    setActiveCommandSuggestionIndex(0);
+    setCommandSuggestions(nextSuggestions);
+  }
+
+  function moveActiveCommandSuggestion(direction: 1 | -1) {
+    const suggestionCount = commandSuggestionsRef.current.length;
+    if (suggestionCount === 0) return;
+    const nextIndex = (activeCommandSuggestionIndexRef.current + direction + suggestionCount) % suggestionCount;
+    activeCommandSuggestionIndexRef.current = nextIndex;
+    setActiveCommandSuggestionIndex(nextIndex);
+  }
+
+  function isCommandCompletionAllowed() {
+    const terminal = terminalRef.current;
+    if (!terminal || !sessionIdRef.current) return false;
+    if (terminal.buffer?.active && terminal.buffer.active.type !== "normal") return false;
+    return true;
+  }
+
+  function updateCommandSuggestions(input: string) {
+    if (!isCommandCompletionAllowed()) {
+      setVisibleCommandSuggestions([]);
+      return;
+    }
+    const terminal = terminalRef.current;
+    if (terminal) {
+      setCommandSuggestionPosition(terminalSuggestionPosition(terminal, fontSize, containerRef.current, input));
+    }
+    const suggestions = findCommandSuggestions(window.localStorage, connectionId, input, COMMAND_SUGGESTION_LIMIT);
+    if (isTerminalDiagnosticsEnabled() && input.trimStart()) {
+      console.info("[devhub] terminal command suggestions", {
+        connectionId,
+        inputLength: input.length,
+        suggestionCount: suggestions.length,
+        bufferType: terminalRef.current?.buffer?.active.type,
+      });
+    }
+    setVisibleCommandSuggestions(suggestions);
+  }
+
+  function commandFromCurrentVisibleLine() {
+    const terminal = terminalRef.current;
+    if (!terminal || terminal.buffer?.active.type !== "normal") return "";
+    return extractCommandFromPromptLine(currentVisibleLine(terminal));
+  }
+
+  function acceptCommandSuggestion(command: string) {
+    const terminal = terminalRef.current;
+    if (!terminal || !isCommandCompletionAllowed()) return;
+    const inputTracker = inputTrackerRef.current;
+    const currentInput = inputTracker?.getCurrentInput() ?? "";
+    if (!command.toLowerCase().startsWith(currentInput.trimStart().toLowerCase())) return;
+    const leadingWhitespace = currentInput.match(/^\s*/)?.[0] ?? "";
+    const completedInput = `${leadingWhitespace}${command}`;
+    const suffix = completedInput.slice(currentInput.length);
+    setVisibleCommandSuggestions([]);
+    if (!suffix) return;
+    sendTerminalInputRef.current?.(suffix);
+    setVisibleCommandSuggestions([]);
+    refocusTerminal();
+  }
+
+  function activeCommandSuggestion() {
+    return commandSuggestionsRef.current[activeCommandSuggestionIndexRef.current] ?? commandSuggestionsRef.current[0];
+  }
+
   useEffect(() => {
     const terminalTheme = terminalThemes[theme];
     if (terminalRef.current) {
@@ -348,6 +486,8 @@ export function TerminalTab({
     let isLogHighlightMode = false;
     let pendingLogLine = "";
     const commandTracker = createTerminalCommandTracker();
+    const inputTracker = createTerminalInputTracker();
+    inputTrackerRef.current = inputTracker;
     let pendingOutput: TerminalOutputEvent[] = [];
 
     function setConnectionStatus(status: TerminalConnectionStatus) {
@@ -523,11 +663,44 @@ export function TerminalTab({
       }
       const sessionId = sessionIdRef.current;
       if (!sessionId) return;
+      if (data === "\x1b" && commandSuggestionsRef.current.length > 0) {
+        setVisibleCommandSuggestions([]);
+        return;
+      }
+      if (data === "\x1b[B" && commandSuggestionsRef.current.length > 0) {
+        moveActiveCommandSuggestion(1);
+        return;
+      }
+      if (data === "\x1b[A" && commandSuggestionsRef.current.length > 0) {
+        moveActiveCommandSuggestion(-1);
+        return;
+      }
+      if (data === "\t" && commandSuggestionsRef.current.length > 0 && isCommandCompletionAllowed()) {
+        const command = activeCommandSuggestion();
+        if (command) {
+          acceptCommandSuggestion(command);
+        }
+        return;
+      }
       detectTailCommand(data);
+      if (isCommandCompletionAllowed()) {
+        const inputResult = inputTracker.push(data);
+        if (inputResult.submittedCommand !== undefined) {
+          recordCommandHistory(window.localStorage, connectionId, commandFromCurrentVisibleLine() || inputResult.submittedCommand);
+          setVisibleCommandSuggestions([]);
+        } else {
+          updateCommandSuggestions(inputResult.currentInput);
+        }
+      } else {
+        inputTracker.clear();
+        setVisibleCommandSuggestions([]);
+      }
       if (data.includes("\x03")) {
         isLogHighlightMode = false;
         pendingLogLine = "";
         commandTracker.clear();
+        inputTracker.clear();
+        setVisibleCommandSuggestions([]);
         if (isManualLogHighlightModeRef.current) {
           isManualLogHighlightModeRef.current = false;
           setIsManualLogHighlightMode(false);
@@ -662,6 +835,7 @@ export function TerminalTab({
       rendererRef.current = "dom";
       setLogHighlightModeRef.current = null;
       sendTerminalInputRef.current = null;
+      inputTrackerRef.current = null;
     };
   }, [connectionId, fontFamily, fontSize]);
 
@@ -692,12 +866,42 @@ export function TerminalTab({
 
   return (
     <>
-      <div
-        className="terminal-tab"
-        aria-label={t("terminal.label")}
-        ref={containerRef}
-        onContextMenu={handleContextMenu}
-      />
+      <div className="terminal-tab-shell">
+        <div
+          className="terminal-tab"
+          aria-label={t("terminal.label")}
+          ref={containerRef}
+          onContextMenu={handleContextMenu}
+        />
+        {commandSuggestions.length > 0 ? (
+          <div
+            className="terminal-command-suggestions"
+            role="listbox"
+            aria-label="命令历史候选"
+            style={{
+              left: commandSuggestionPosition.left,
+              top: commandSuggestionPosition.top,
+            }}
+          >
+            {commandSuggestions.map((command, index) => (
+              <button
+                className="terminal-command-suggestions__item"
+                key={command}
+                type="button"
+                role="option"
+                aria-selected={index === activeCommandSuggestionIndex}
+                data-active={index === activeCommandSuggestionIndex}
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                  acceptCommandSuggestion(command);
+                }}
+              >
+                {command}
+              </button>
+            ))}
+          </div>
+        ) : null}
+      </div>
       <ContextMenu menu={contextMenu} onClose={() => setContextMenu(null)} />
     </>
   );

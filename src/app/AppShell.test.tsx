@@ -113,6 +113,10 @@ vi.mock("../features/logs/LogViewer", () => ({
   LogViewer: () => <section aria-label="日志">日志查看器</section>,
 }));
 
+vi.mock("../features/terminal/CommandHistoryViewer", () => ({
+  CommandHistoryViewer: () => <section aria-label="命令历史">命令历史查看器</section>,
+}));
+
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({
     minimize: vi.fn(),
@@ -201,6 +205,19 @@ describe("AppShell", () => {
     await userEvent.click(within(screen.getByLabelText("工作区标签")).getByRole("button", { name: "关闭 日志" }));
 
     expect(screen.queryByText("日志查看器")).not.toBeInTheDocument();
+  });
+
+  it("opens command history from settings as a closable workspace tab", async () => {
+    render(<AppShell />);
+
+    await userEvent.click(screen.getByRole("button", { name: "打开设置" }));
+    await userEvent.click(screen.getByRole("button", { name: "查看命令历史" }));
+
+    expect(within(screen.getByLabelText("工作区标签")).getByRole("button", { name: "命令历史" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByText("命令历史查看器")).toBeInTheDocument();
   });
 
   it("toggles dark and light theme from the top bar", async () => {

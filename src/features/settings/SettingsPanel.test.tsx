@@ -71,6 +71,7 @@ describe("SettingsPanel", () => {
     saveSettings.mockClear();
     listSystemFonts.mockClear();
     callBackendMock.mockClear();
+    window.localStorage.clear();
   });
 
   function renderSettingsPanel() {
@@ -326,6 +327,32 @@ describe("SettingsPanel", () => {
         },
       },
     });
+  });
+
+  it("shows command history opener instead of inline history entries", async () => {
+    window.localStorage.setItem(
+      "devhub.terminal.commandHistory.prod-web-01",
+      JSON.stringify(["nginx -t", "systemctl status nginx"]),
+    );
+    renderSettingsPanel();
+
+    expect(screen.getByText("终端命令历史")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "查看命令历史" })).toBeInTheDocument();
+    expect(screen.queryByText("prod-web-01")).not.toBeInTheDocument();
+    expect(screen.queryByText("nginx -t")).not.toBeInTheDocument();
+  });
+
+  it("opens command history from the settings terminal section", async () => {
+    const onOpenCommandHistory = vi.fn();
+    render(
+      <I18nProvider language={settings.appearance.language}>
+        <SettingsPanel onOpenCommandHistory={onOpenCommandHistory} />
+      </I18nProvider>,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "查看命令历史" }));
+
+    expect(onOpenCommandHistory).toHaveBeenCalledTimes(1);
   });
 
   it("edits logging settings and opens the log directory", async () => {
