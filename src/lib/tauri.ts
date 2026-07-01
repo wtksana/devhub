@@ -5,6 +5,10 @@ export function callBackend<T>(command: string, args?: Record<string, unknown>):
   return invoke<T>(command, args);
 }
 
+export function callBackendRaw<T>(command: string, body: Uint8Array, headers: HeadersInit): Promise<T> {
+  return invoke<T>(command, body, { headers });
+}
+
 export function listenBackend<T>(
   event: string,
   handler: (payload: T) => void,

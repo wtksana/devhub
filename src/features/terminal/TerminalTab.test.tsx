@@ -5,13 +5,14 @@ import { FitAddon } from "@xterm/addon-fit";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { TerminalTab } from "./TerminalTab";
-import { callBackend, createBackendChannel, listenBackend } from "../../lib/tauri";
+import { callBackend, callBackendRaw, createBackendChannel, listenBackend } from "../../lib/tauri";
 import { readClipboardText, writeClipboardText } from "../../lib/clipboard";
 import { I18nProvider } from "../../i18n/I18nProvider";
 import type { TerminalSettings } from "../settings/settingsTypes";
 
 vi.mock("../../lib/tauri", () => ({
   callBackend: vi.fn(),
+  callBackendRaw: vi.fn(),
   createBackendChannel: vi.fn(() => ({ onmessage: null })),
   listenBackend: vi.fn(),
 }));
@@ -22,6 +23,7 @@ vi.mock("../../lib/clipboard", () => ({
 }));
 
 const callBackendMock = vi.mocked(callBackend);
+const callBackendRawMock = vi.mocked(callBackendRaw);
 const createBackendChannelMock = vi.mocked(createBackendChannel);
 const listenBackendMock = vi.mocked(listenBackend);
 const readClipboardTextMock = vi.mocked(readClipboardText);
@@ -126,6 +128,14 @@ describe("TerminalTab", () => {
     const openCall = callBackendMock.mock.calls.find(([command]) => command === "open_terminal");
     const args = openCall?.[1] as { onOutput?: { onmessage?: (data: ArrayBuffer) => void } } | undefined;
     return args?.onOutput;
+  }
+
+  function expectTerminalInputSent(data: string, sessionId = "session-1") {
+    expect(callBackendRawMock).toHaveBeenCalledWith(
+      "write_terminal",
+      new TextEncoder().encode(data),
+      { "x-devhub-terminal-session-id": sessionId },
+    );
   }
 
   function renderTerminalTab(props: Partial<React.ComponentProps<typeof TerminalTab>> = {}) {
@@ -238,9 +248,7 @@ describe("TerminalTab", () => {
     onData?.("ls\r");
 
     await waitFor(() => {
-      expect(callBackendMock).toHaveBeenCalledWith("write_terminal", {
-        request: { session_id: "session-1", data: "ls\r" },
-      });
+      expectTerminalInputSent("ls\r");
     });
 
     unmount();
@@ -283,9 +291,7 @@ describe("TerminalTab", () => {
     expect(await screen.findByRole("option", { name: "docker logs api" })).toBeInTheDocument();
     fireEvent.mouseDown(screen.getByRole("option", { name: "docker logs api" }));
 
-    expect(callBackendMock).toHaveBeenCalledWith("write_terminal", {
-      request: { session_id: "session-1", data: "cker logs api" },
-    });
+    expectTerminalInputSent("cker logs api");
   });
 
   it("positions command suggestions near the terminal cursor and highlights the active option", async () => {
@@ -408,9 +414,7 @@ describe("TerminalTab", () => {
     });
     onData?.("\t");
 
-    expect(callBackendMock).toHaveBeenCalledWith("write_terminal", {
-      request: { session_id: "session-1", data: "il -f app.log" },
-    });
+    expectTerminalInputSent("il -f app.log");
   });
 
   it("accepts the first command suggestion with tab without sending tab to the backend", async () => {
@@ -442,12 +446,12 @@ describe("TerminalTab", () => {
     onData?.("do");
     onData?.("\t");
 
-    expect(callBackendMock).not.toHaveBeenCalledWith("write_terminal", {
-      request: { session_id: "session-1", data: "\t" },
-    });
-    expect(callBackendMock).toHaveBeenCalledWith("write_terminal", {
-      request: { session_id: "session-1", data: "cker ps" },
-    });
+    expect(callBackendRawMock).not.toHaveBeenCalledWith(
+      "write_terminal",
+      new TextEncoder().encode("\t"),
+      expect.anything(),
+    );
+    expectTerminalInputSent("cker ps");
   });
 
   it("closes command suggestions with escape without sending escape to the backend", async () => {
@@ -484,9 +488,11 @@ describe("TerminalTab", () => {
     await waitFor(() => {
       expect(screen.queryByRole("option", { name: "docker ps" })).not.toBeInTheDocument();
     });
-    expect(callBackendMock).not.toHaveBeenCalledWith("write_terminal", {
-      request: { session_id: "session-1", data: "\x1b" },
-    });
+    expect(callBackendRawMock).not.toHaveBeenCalledWith(
+      "write_terminal",
+      new TextEncoder().encode("\x1b"),
+      expect.anything(),
+    );
   });
 
   it("does not show command suggestions while alternate screen is active", async () => {
@@ -1159,9 +1165,7 @@ describe("TerminalTab", () => {
     fireEvent.click(screen.getByRole("menuitem", { name: "粘贴" }));
 
     await waitFor(() => {
-      expect(callBackendMock).toHaveBeenCalledWith("write_terminal", {
-        request: { session_id: "session-1", data: "tail -f /var/log/app.log\r" },
-      });
+      expectTerminalInputSent("tail -f /var/log/app.log\r");
     });
     const emitOutput = outputHandler as unknown as (payload: { session_id: string; data: string }) => void;
     emitOutput({ session_id: "session-1", data: "ERROR pasted\n" });
@@ -1359,7 +1363,7 @@ describe("TerminalTab", () => {
 
     vi.advanceTimersByTime(64);
 
-    expect(callBackendMock).not.toHaveBeenCalledWith("write_terminal", expect.anything());
+    expect(callBackendRawMock).not.toHaveBeenCalledWith("write_terminal", expect.anything(), expect.anything());
     vi.useRealTimers();
   });
 
@@ -1400,7 +1404,7 @@ describe("TerminalTab", () => {
 
     vi.advanceTimersByTime(64);
 
-    expect(callBackendMock).not.toHaveBeenCalledWith("write_terminal", expect.anything());
+    expect(callBackendRawMock).not.toHaveBeenCalledWith("write_terminal", expect.anything(), expect.anything());
     vi.useRealTimers();
   });
 
@@ -1441,7 +1445,7 @@ describe("TerminalTab", () => {
 
     vi.advanceTimersByTime(64);
 
-    expect(callBackendMock).not.toHaveBeenCalledWith("write_terminal", expect.anything());
+    expect(callBackendRawMock).not.toHaveBeenCalledWith("write_terminal", expect.anything(), expect.anything());
     vi.useRealTimers();
   });
 
@@ -2097,9 +2101,7 @@ describe("TerminalTab", () => {
 
     await waitFor(() => {
       expect(readClipboardTextMock).toHaveBeenCalledTimes(1);
-      expect(callBackendMock).toHaveBeenCalledWith("write_terminal", {
-        request: { session_id: "session-1", data: "pwd\r" },
-      });
+      expectTerminalInputSent("pwd\r");
     });
     expect(browserReadText).not.toHaveBeenCalled();
     await waitFor(() => {
@@ -2112,9 +2114,7 @@ describe("TerminalTab", () => {
     onData?.("帮我");
 
     await waitFor(() => {
-      expect(callBackendMock).toHaveBeenCalledWith("write_terminal", {
-        request: { session_id: "session-1", data: "帮我" },
-      });
+      expectTerminalInputSent("帮我");
     });
     vi.useFakeTimers();
     await vi.runOnlyPendingTimersAsync();

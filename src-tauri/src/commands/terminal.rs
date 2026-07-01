@@ -1,4 +1,5 @@
-use tauri::ipc::{Channel, Response};
+use tauri::http::HeaderMap;
+use tauri::ipc::{Channel, InvokeBody, Request, Response};
 use tauri::{AppHandle, State};
 
 use crate::commands::logging::log_operation;
@@ -9,6 +10,8 @@ use crate::models::terminal::{
     OpenTerminalRequest, TerminalInputRequest, TerminalResizeRequest, TerminalSessionResponse,
 };
 use crate::ssh::session_manager::SessionManager;
+
+const TERMINAL_SESSION_ID_HEADER: &str = "x-devhub-terminal-session-id";
 
 #[tauri::command]
 pub async fn open_terminal(
@@ -67,12 +70,39 @@ pub async fn open_terminal(
 #[tauri::command]
 pub async fn write_terminal(
     sessions: State<'_, SessionManager>,
-    request: TerminalInputRequest,
+    request: Request<'_>,
 ) -> Result<(), String> {
+    let request = terminal_input_from_raw_parts(request.headers(), request.body())?;
     sessions
         .write_terminal(&request.session_id, request.data)
         .await
         .map_err(|error| error.to_string())
+}
+
+fn terminal_input_from_raw_parts(
+    headers: &HeaderMap,
+    body: &InvokeBody,
+) -> Result<TerminalInputRequest, String> {
+    match body {
+        InvokeBody::Raw(bytes) => {
+            let session_id = headers
+                .get(TERMINAL_SESSION_ID_HEADER)
+                .and_then(|value| value.to_str().ok())
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| "missing terminal session id".to_string())?
+                .to_string();
+            let data = String::from_utf8(bytes.clone())
+                .map_err(|_| "terminal input must be utf-8".to_string())?;
+            Ok(TerminalInputRequest { session_id, data })
+        }
+        InvokeBody::Json(value) => {
+            let request = value
+                .get("request")
+                .cloned()
+                .unwrap_or_else(|| value.clone());
+            serde_json::from_value(request).map_err(|error| error.to_string())
+        }
+    }
 }
 
 #[tauri::command]
@@ -109,4 +139,43 @@ pub async fn close_terminal(
         None,
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use tauri::http::{HeaderMap, HeaderValue};
+    use tauri::ipc::InvokeBody;
+
+    use super::terminal_input_from_raw_parts;
+
+    #[test]
+    fn parses_raw_terminal_input_from_body_and_session_header() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-devhub-terminal-session-id",
+            HeaderValue::from_static("session-1"),
+        );
+        let body = InvokeBody::Raw("dev 用户\r".as_bytes().to_vec());
+
+        let input = terminal_input_from_raw_parts(&headers, &body).unwrap();
+
+        assert_eq!(input.session_id, "session-1");
+        assert_eq!(input.data, "dev 用户\r");
+    }
+
+    #[test]
+    fn keeps_json_terminal_input_request_compatible() {
+        let headers = HeaderMap::new();
+        let body = InvokeBody::Json(serde_json::json!({
+            "request": {
+                "session_id": "session-1",
+                "data": "pwd\r"
+            }
+        }));
+
+        let input = terminal_input_from_raw_parts(&headers, &body).unwrap();
+
+        assert_eq!(input.session_id, "session-1");
+        assert_eq!(input.data, "pwd\r");
+    }
 }

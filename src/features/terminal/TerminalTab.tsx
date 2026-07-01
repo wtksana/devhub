@@ -6,7 +6,7 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
 import { ContextMenu, type ContextMenuState } from "../../app/ContextMenu";
 import { readClipboardText, writeClipboardText } from "../../lib/clipboard";
-import { callBackend, createBackendChannel, listenBackend } from "../../lib/tauri";
+import { callBackend, callBackendRaw, createBackendChannel, listenBackend } from "../../lib/tauri";
 import { useI18n } from "../../i18n/useI18n";
 import type { TerminalSettings } from "../settings/settingsTypes";
 import {
@@ -216,6 +216,8 @@ function isTerminalSessionErrorOutput(data: string) {
 const TERMINAL_SCROLLBACK = 1000;
 const TERMINAL_DIAGNOSTICS_STORAGE_KEY = "devhub.terminalDiagnostics";
 const COMMAND_SUGGESTION_LIMIT = 8;
+const TERMINAL_SESSION_ID_HEADER = "x-devhub-terminal-session-id";
+const terminalInputEncoder = new TextEncoder();
 
 function isTerminalDiagnosticsEnabled() {
   if (typeof window === "undefined") return false;
@@ -671,8 +673,8 @@ export function TerminalTab({
           setIsManualLogHighlightMode(false);
         }
       }
-      void callBackend<void>("write_terminal", {
-        request: { session_id: sessionId, data },
+      void callBackendRaw<void>("write_terminal", terminalInputEncoder.encode(data), {
+        [TERMINAL_SESSION_ID_HEADER]: sessionId,
       });
       window.setTimeout(() => clearCommittedInputIfStillPending(data), 0);
     }

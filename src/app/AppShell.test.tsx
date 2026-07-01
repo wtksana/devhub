@@ -111,6 +111,7 @@ vi.mock("../features/settings/useSettings", () => ({
 
 vi.mock("../lib/tauri", () => ({
   callBackend: vi.fn().mockResolvedValue({ session_id: "session-1" }),
+  callBackendRaw: vi.fn(),
   createBackendChannel: vi.fn(() => ({ onmessage: null })),
   listenBackend: vi.fn().mockImplementation(async (_event, handler) => {
     terminalOutputHandler = handler as (payload: TerminalOutputPayload) => void;
