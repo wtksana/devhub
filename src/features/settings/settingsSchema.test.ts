@@ -248,6 +248,8 @@ describe("settings schema", () => {
     expect(settings.appearance.ui_font_size).toBe(16);
     expect(settings.appearance.language).toBe("system");
     expect(settings.sftp.file_size_unit).toBe("bytes");
+    expect(settings.terminal.term).toBe("xterm-256color");
+    expect(settings.terminal.colorterm).toBe("truecolor");
     expect(settings.terminal.log_highlight.auto_detect_tail).toBe(true);
     expect(settings.terminal.log_highlight.case_sensitive).toBe(false);
     expect(settings.terminal.log_highlight.rules.length).toBeGreaterThan(0);
@@ -318,6 +320,8 @@ describe("settings schema", () => {
         connection_sidebar_width: 280,
       },
       terminal: {
+        term: "screen-256color",
+        colorterm: "24bit",
         log_highlight: {
           auto_detect_tail: false,
           case_sensitive: true,
@@ -329,6 +333,8 @@ describe("settings schema", () => {
       connections: [],
     });
 
+    expect(settings.terminal.term).toBe("screen-256color");
+    expect(settings.terminal.colorterm).toBe("24bit");
     expect(settings.terminal.log_highlight).toEqual({
       auto_detect_tail: false,
       case_sensitive: true,

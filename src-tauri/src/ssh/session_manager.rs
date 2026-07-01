@@ -16,7 +16,7 @@ use uuid::Uuid;
 
 use crate::core::credential_store::CredentialStore;
 use crate::core::settings_store::SettingsStore;
-use crate::models::settings::SshConnectionSettings;
+use crate::models::settings::{SshConnectionSettings, TerminalSettings};
 use crate::models::terminal::TerminalOutputEvent;
 use crate::ssh::client::{
     connect_authenticated, load_ssh_connection, resolve_auth, ResolvedAuth, SshClientError,
@@ -60,6 +60,29 @@ pub enum InputDrain {
 pub enum TerminalWorkerMessage {
     Input(String),
     Resize { cols: u16, rows: u16 },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TerminalEnvironment {
+    pub term: String,
+    pub colorterm: Option<String>,
+}
+
+pub fn terminal_environment(settings: &TerminalSettings) -> TerminalEnvironment {
+    let term = settings.term.trim();
+    let colorterm = settings.colorterm.trim();
+    TerminalEnvironment {
+        term: if term.is_empty() {
+            "xterm-256color".to_string()
+        } else {
+            term.to_string()
+        },
+        colorterm: if colorterm.is_empty() {
+            None
+        } else {
+            Some(colorterm.to_string())
+        },
+    }
 }
 
 #[derive(Clone, Default)]
@@ -142,6 +165,9 @@ impl SessionManager {
                 .await;
         }
 
+        let settings = settings_store
+            .load_or_create()
+            .map_err(|error| TerminalSessionError::Settings(error.to_string()))?;
         let connection = load_ssh_connection(settings_store, &connection_id)?;
         let auth = resolve_auth(credential_store, &connection)?;
         let session_id = Uuid::new_v4().to_string();
@@ -161,6 +187,7 @@ impl SessionManager {
             self.ssh_connect_limiter.clone(),
             connection,
             auth,
+            settings.terminal,
             input_rx,
             cols,
             rows,
@@ -382,6 +409,7 @@ fn spawn_ssh_worker(
     connect_limiter: SshConnectLimiter,
     connection: SshConnectionSettings,
     auth: crate::ssh::client::ResolvedAuth,
+    terminal_settings: TerminalSettings,
     mut input_rx: mpsc::Receiver<TerminalWorkerMessage>,
     cols: u16,
     rows: u16,
@@ -393,6 +421,7 @@ fn spawn_ssh_worker(
             connect_limiter,
             connection,
             auth,
+            terminal_settings,
             &mut input_rx,
             cols,
             rows,
@@ -414,10 +443,12 @@ fn run_ssh_worker(
     connect_limiter: SshConnectLimiter,
     connection: SshConnectionSettings,
     auth: ResolvedAuth,
+    terminal_settings: TerminalSettings,
     input_rx: &mut mpsc::Receiver<TerminalWorkerMessage>,
     cols: u16,
     rows: u16,
 ) -> Result<()> {
+    let environment = terminal_environment(&terminal_settings);
     let ssh = {
         let _connect_permit = connect_limiter.blocking_acquire(&connection.host, connection.port);
         connect_authenticated(
@@ -433,11 +464,14 @@ fn run_ssh_worker(
         .map_err(|error| TerminalSessionError::Ssh(error.to_string()))?;
     channel
         .request_pty(
-            "xterm-256color",
+            &environment.term,
             None,
             Some((cols as u32, rows as u32, 0, 0)),
         )
         .map_err(|error| TerminalSessionError::Ssh(error.to_string()))?;
+    if let Some(colorterm) = environment.colorterm.as_deref() {
+        let _ = channel.setenv("COLORTERM", colorterm);
+    }
     channel
         .shell()
         .map_err(|error| TerminalSessionError::Ssh(error.to_string()))?;

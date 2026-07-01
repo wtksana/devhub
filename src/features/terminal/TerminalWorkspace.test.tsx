@@ -10,6 +10,8 @@ vi.mock("../../lib/tauri", () => ({
 
 describe("TerminalWorkspace", () => {
   const terminalSettings = {
+    term: "xterm-256color",
+    colorterm: "truecolor",
     log_highlight: {
       auto_detect_tail: true,
       case_sensitive: false,

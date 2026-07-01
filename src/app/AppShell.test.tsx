@@ -36,6 +36,8 @@ function createSettings(): DevHubSettings {
       file_size_unit: "bytes",
     },
     terminal: {
+      term: "xterm-256color",
+      colorterm: "truecolor",
       log_highlight: {
         auto_detect_tail: true,
         case_sensitive: false,

@@ -32,6 +32,8 @@ export interface TerminalLogHighlightSettings {
 }
 
 export interface TerminalSettings {
+  term: string;
+  colorterm: string;
   log_highlight: TerminalLogHighlightSettings;
 }
 

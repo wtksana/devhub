@@ -1,6 +1,7 @@
 use crate::ssh::session_manager::{
     drain_local_worker_messages, drain_terminal_input, decode_terminal_output, is_ignorable_terminal_read_error,
-    local_shell_command, InputDrain, SessionManager, SshConnectLimiter, TerminalWorkerMessage,
+    local_shell_command, terminal_environment, InputDrain, SessionManager, SshConnectLimiter,
+    TerminalWorkerMessage,
 };
 use std::io::{Error, ErrorKind, Result as IoResult, Write};
 use std::sync::{
@@ -47,6 +48,18 @@ fn decodes_terminal_output_across_utf8_chunk_boundaries() {
     assert_eq!(first, "");
     assert_eq!(second, "本a");
     assert!(pending.is_empty());
+}
+
+#[test]
+fn uses_terminal_settings_for_remote_terminal_environment() {
+    let mut settings = crate::models::settings::TerminalSettings::default();
+    settings.term = "screen-256color".to_string();
+    settings.colorterm = "24bit".to_string();
+
+    let environment = terminal_environment(&settings);
+
+    assert_eq!(environment.term, "screen-256color");
+    assert_eq!(environment.colorterm.as_deref(), Some("24bit"));
 }
 
 #[tokio::test]

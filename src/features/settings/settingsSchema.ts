@@ -104,6 +104,12 @@ const defaultTerminalLogHighlight = {
   ],
 };
 
+const defaultTerminal = {
+  term: "xterm-256color",
+  colorterm: "truecolor",
+  log_highlight: defaultTerminalLogHighlight,
+};
+
 const defaultLogging = {
   enabled: true,
   level: "info" as const,
@@ -127,6 +133,8 @@ export const devHubSettingsSchema = z.object({
     file_size_unit: z.enum(["bytes", "auto"]),
   }),
   terminal: z.object({
+    term: z.string().min(1),
+    colorterm: z.string(),
     log_highlight: z.object({
       auto_detect_tail: z.boolean(),
       case_sensitive: z.boolean(),
@@ -162,7 +170,7 @@ export function parseSettings(value: unknown): DevHubSettings {
       ...(settings.sftp && typeof settings.sftp === "object" && !Array.isArray(settings.sftp) ? settings.sftp : {}),
     };
     settings.terminal = {
-      log_highlight: defaultTerminalLogHighlight,
+      ...defaultTerminal,
       ...(settings.terminal && typeof settings.terminal === "object" && !Array.isArray(settings.terminal) ? settings.terminal : {}),
     };
     settings.logging = {

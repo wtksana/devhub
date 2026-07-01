@@ -56,6 +56,8 @@ interface MockTerminal {
 }
 
 const terminalSettings: TerminalSettings = {
+  term: "xterm-256color",
+  colorterm: "truecolor",
   log_highlight: {
     auto_detect_tail: true,
     case_sensitive: false,

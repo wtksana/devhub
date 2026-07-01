@@ -53,10 +53,32 @@ pub struct TerminalLogHighlightSettings {
     pub rules: Vec<TerminalLogHighlightRule>,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TerminalSettings {
+    #[serde(default = "default_terminal_term")]
+    pub term: String,
+    #[serde(default = "default_terminal_colorterm")]
+    pub colorterm: String,
     #[serde(default)]
     pub log_highlight: TerminalLogHighlightSettings,
+}
+
+fn default_terminal_term() -> String {
+    "xterm-256color".to_string()
+}
+
+fn default_terminal_colorterm() -> String {
+    "truecolor".to_string()
+}
+
+impl Default for TerminalSettings {
+    fn default() -> Self {
+        Self {
+            term: default_terminal_term(),
+            colorterm: default_terminal_colorterm(),
+            log_highlight: TerminalLogHighlightSettings::default(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

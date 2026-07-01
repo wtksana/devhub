@@ -21,6 +21,8 @@ fn creates_default_settings_when_missing() {
     assert_eq!(value["appearance"]["terminal_font_family"], "Consolas");
     assert_eq!(value["layout"]["connection_sidebar_width"], 280);
     assert_eq!(value["sftp"]["file_size_unit"], "bytes");
+    assert_eq!(value["terminal"]["term"], "xterm-256color");
+    assert_eq!(value["terminal"]["colorterm"], "truecolor");
     assert_eq!(value["terminal"]["log_highlight"]["auto_detect_tail"], true);
     assert_eq!(value["terminal"]["log_highlight"]["case_sensitive"], false);
     assert!(
@@ -60,6 +62,21 @@ fn saves_logging_settings() {
     assert_eq!(loaded.logging.level, "debug");
     assert_eq!(loaded.logging.retention_days, 3);
     assert!(loaded.logging.include_sql);
+}
+
+#[test]
+fn saves_terminal_environment_settings() {
+    let dir = tempdir().unwrap();
+    let store = SettingsStore::new_for_dir(dir.path().to_path_buf());
+    let mut settings = DevHubSettings::default();
+    settings.terminal.term = "screen-256color".to_string();
+    settings.terminal.colorterm = "24bit".to_string();
+
+    store.save(&settings).unwrap();
+    let loaded = store.load_or_create().unwrap();
+
+    assert_eq!(loaded.terminal.term, "screen-256color");
+    assert_eq!(loaded.terminal.colorterm, "24bit");
 }
 
 #[test]

@@ -30,6 +30,8 @@ const settings: DevHubSettings = {
     file_size_unit: "bytes",
   },
   terminal: {
+    term: "xterm-256color",
+    colorterm: "truecolor",
     log_highlight: {
       auto_detect_tail: true,
       case_sensitive: false,
@@ -253,6 +255,7 @@ describe("SettingsPanel", () => {
     expect(saveSettings).toHaveBeenLastCalledWith({
       ...settings,
       terminal: {
+        ...settings.terminal,
         log_highlight: {
           ...settings.terminal.log_highlight,
           auto_detect_tail: false,
@@ -264,6 +267,7 @@ describe("SettingsPanel", () => {
     expect(saveSettings).toHaveBeenLastCalledWith({
       ...settings,
       terminal: {
+        ...settings.terminal,
         log_highlight: {
           auto_detect_tail: false,
           case_sensitive: true,
@@ -279,6 +283,7 @@ describe("SettingsPanel", () => {
     expect(saveSettings).toHaveBeenLastCalledWith({
       ...settings,
       terminal: {
+        ...settings.terminal,
         log_highlight: {
           auto_detect_tail: false,
           case_sensitive: true,
@@ -296,6 +301,7 @@ describe("SettingsPanel", () => {
     expect(saveSettings).toHaveBeenLastCalledWith({
       ...settings,
       terminal: {
+        ...settings.terminal,
         log_highlight: {
           ...settings.terminal.log_highlight,
           rules: [
@@ -313,6 +319,7 @@ describe("SettingsPanel", () => {
     expect(saveSettings).toHaveBeenLastCalledWith({
       ...settings,
       terminal: {
+        ...settings.terminal,
         log_highlight: {
           ...settings.terminal.log_highlight,
           rules: settings.terminal.log_highlight.rules,
