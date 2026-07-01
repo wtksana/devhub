@@ -8,12 +8,6 @@ pub struct OpenTerminalRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TerminalInputRequest {
-    pub session_id: String,
-    pub data: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TerminalResizeRequest {
     pub session_id: String,
     pub cols: u16,

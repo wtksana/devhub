@@ -7,11 +7,17 @@ use crate::core::app_logger::AppLogger;
 use crate::core::credential_store::CredentialStore;
 use crate::core::settings_store::SettingsStore;
 use crate::models::terminal::{
-    OpenTerminalRequest, TerminalInputRequest, TerminalResizeRequest, TerminalSessionResponse,
+    OpenTerminalRequest, TerminalResizeRequest, TerminalSessionResponse,
 };
-use crate::ssh::session_manager::SessionManager;
+use crate::ssh::session_manager::{OpenTerminalSessionRequest, SessionManager};
 
 const TERMINAL_SESSION_ID_HEADER: &str = "x-devhub-terminal-session-id";
+
+#[derive(Debug)]
+struct TerminalRawInput {
+    session_id: String,
+    data: String,
+}
 
 #[tauri::command]
 pub async fn open_terminal(
@@ -30,10 +36,12 @@ pub async fn open_terminal(
             app,
             settings_store.inner(),
             credential_store.inner(),
-            request.connection_id,
-            request.cols,
-            request.rows,
-            on_output,
+            OpenTerminalSessionRequest {
+                connection_id: request.connection_id,
+                cols: request.cols,
+                rows: request.rows,
+                on_output,
+            },
         )
         .await
         .map(|session_id| TerminalSessionResponse { session_id })
@@ -82,7 +90,7 @@ pub async fn write_terminal(
 fn terminal_input_from_raw_parts(
     headers: &HeaderMap,
     body: &InvokeBody,
-) -> Result<TerminalInputRequest, String> {
+) -> Result<TerminalRawInput, String> {
     match body {
         InvokeBody::Raw(bytes) => {
             let session_id = headers
@@ -93,15 +101,9 @@ fn terminal_input_from_raw_parts(
                 .to_string();
             let data = String::from_utf8(bytes.clone())
                 .map_err(|_| "terminal input must be utf-8".to_string())?;
-            Ok(TerminalInputRequest { session_id, data })
+            Ok(TerminalRawInput { session_id, data })
         }
-        InvokeBody::Json(value) => {
-            let request = value
-                .get("request")
-                .cloned()
-                .unwrap_or_else(|| value.clone());
-            serde_json::from_value(request).map_err(|error| error.to_string())
-        }
+        InvokeBody::Json(_) => Err("terminal input must use raw body".to_string()),
     }
 }
 
@@ -164,7 +166,7 @@ mod tests {
     }
 
     #[test]
-    fn keeps_json_terminal_input_request_compatible() {
+    fn rejects_json_terminal_input_request() {
         let headers = HeaderMap::new();
         let body = InvokeBody::Json(serde_json::json!({
             "request": {
@@ -173,9 +175,8 @@ mod tests {
             }
         }));
 
-        let input = terminal_input_from_raw_parts(&headers, &body).unwrap();
+        let error = terminal_input_from_raw_parts(&headers, &body).unwrap_err();
 
-        assert_eq!(input.session_id, "session-1");
-        assert_eq!(input.data, "pwd\r");
+        assert_eq!(error, "terminal input must use raw body");
     }
 }

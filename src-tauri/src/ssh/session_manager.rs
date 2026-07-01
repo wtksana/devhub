@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::process::Command;
-use std::str;
 use std::sync::{Arc, mpsc as std_mpsc};
 use std::thread::JoinHandle;
 use std::time::Duration;
@@ -222,6 +221,13 @@ pub struct ManagedSession {
     rx: Option<Arc<Mutex<mpsc::Receiver<TerminalWorkerMessage>>>>,
 }
 
+pub struct OpenTerminalSessionRequest {
+    pub connection_id: String,
+    pub cols: u16,
+    pub rows: u16,
+    pub on_output: Channel<Response>,
+}
+
 impl SessionManager {
     pub async fn create_placeholder(&self, connection_id: String) -> String {
         let (tx, rx) = mpsc::channel(INPUT_CHANNEL_SIZE);
@@ -246,11 +252,14 @@ impl SessionManager {
         app: AppHandle,
         settings_store: &SettingsStore,
         credential_store: &CredentialStore,
-        connection_id: String,
-        cols: u16,
-        rows: u16,
-        on_output: Channel<Response>,
+        request: OpenTerminalSessionRequest,
     ) -> Result<String> {
+        let OpenTerminalSessionRequest {
+            connection_id,
+            cols,
+            rows,
+            on_output,
+        } = request;
         if connection_id == LOCAL_CONNECTION_ID {
             return self
                 .open_local_terminal(app, connection_id, cols, rows, on_output)
@@ -736,30 +745,6 @@ fn flush_terminal_input<W: Write>(writer: &mut W, wrote: bool) -> Result<InputDr
         Ok(InputDrain::Wrote)
     } else {
         Ok(InputDrain::Idle)
-    }
-}
-
-pub fn decode_terminal_output(pending: &mut Vec<u8>, chunk: &[u8]) -> Result<String> {
-    pending.extend_from_slice(chunk);
-    match str::from_utf8(pending) {
-        Ok(text) => {
-            let output = text.to_string();
-            pending.clear();
-            Ok(output)
-        }
-        Err(error) => {
-            let valid_up_to = error.valid_up_to();
-            if let Some(incomplete_length) = error.error_len() {
-                let output = String::from_utf8_lossy(&pending[..valid_up_to + incomplete_length])
-                    .to_string();
-                pending.drain(..valid_up_to + incomplete_length);
-                return Ok(output);
-            }
-            let output = String::from_utf8_lossy(&pending[..valid_up_to]).to_string();
-            let incomplete = pending[valid_up_to..].to_vec();
-            *pending = incomplete;
-            Ok(output)
-        }
     }
 }
 

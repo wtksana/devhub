@@ -1,7 +1,7 @@
 use crate::ssh::session_manager::{
     InputDrain, SessionManager, SshConnectLimiter, TerminalOutputCoalescer, TerminalWorkerMessage,
-    decode_terminal_output, drain_local_worker_messages, drain_terminal_input,
-    is_ignorable_terminal_read_error, local_shell_command, terminal_environment,
+    drain_local_worker_messages, drain_terminal_input, is_ignorable_terminal_read_error,
+    local_shell_command, terminal_environment,
 };
 use std::io::{Error, ErrorKind, Result as IoResult, Write};
 use std::sync::{
@@ -40,17 +40,6 @@ fn resolves_a_local_shell_command_for_the_current_platform() {
 }
 
 #[test]
-fn decodes_terminal_output_across_utf8_chunk_boundaries() {
-    let mut pending = Vec::new();
-    let first = decode_terminal_output(&mut pending, &[0xe6, 0x9c]).unwrap();
-    let second = decode_terminal_output(&mut pending, &[0xac, b'a']).unwrap();
-
-    assert_eq!(first, "");
-    assert_eq!(second, "本a");
-    assert!(pending.is_empty());
-}
-
-#[test]
 fn coalesces_terminal_output_until_flush_interval() {
     let mut coalescer = TerminalOutputCoalescer::default();
 
@@ -83,9 +72,11 @@ fn coalescer_drops_backlog_as_whole_reset_notice_when_pending_output_overflows()
 
 #[test]
 fn uses_terminal_settings_for_remote_terminal_environment() {
-    let mut settings = crate::models::settings::TerminalSettings::default();
-    settings.term = "screen-256color".to_string();
-    settings.colorterm = "24bit".to_string();
+    let settings = crate::models::settings::TerminalSettings {
+        term: "screen-256color".to_string(),
+        colorterm: "24bit".to_string(),
+        ..Default::default()
+    };
 
     let environment = terminal_environment(&settings);
 
