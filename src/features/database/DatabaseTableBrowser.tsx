@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
 import { useI18n } from "../../i18n/useI18n";
 import { logFrontendError } from "../../lib/appLogging";
 import { callBackend } from "../../lib/tauri";
@@ -59,6 +59,14 @@ type DatabaseTablePageRequest = {
   filter: string | null;
 };
 
+interface ColumnSuggestionInputProps {
+  ariaLabel: string;
+  value: string;
+  placeholder: string;
+  columns: DatabaseResultColumn[];
+  onCommit: (value: string) => void;
+}
+
 const pendingTablePageRequests = new Map<string, Promise<DatabaseTablePageResult>>();
 
 function loadDatabaseTablePageOnce(request: DatabaseTablePageRequest) {
@@ -94,15 +102,143 @@ export function withTablePageTimeout<T>(promise: Promise<T>, timeoutMs: number) 
   });
 }
 
+function currentColumnToken(value: string, selectionStart: number | null) {
+  const cursor = selectionStart ?? value.length;
+  const beforeCursor = value.slice(0, cursor);
+  const match = beforeCursor.match(/[A-Za-z0-9_$-]+$/);
+  if (!match) return null;
+  return {
+    text: match[0],
+    start: cursor - match[0].length,
+    end: cursor,
+  };
+}
+
+function columnSuggestions(value: string, selectionStart: number | null, columns: DatabaseResultColumn[]) {
+  const token = currentColumnToken(value, selectionStart);
+  if (!token || token.text.length === 0) return [];
+  const normalizedToken = token.text.toLowerCase();
+  return columns
+    .map((column) => column.name)
+    .filter((name) => name.toLowerCase().includes(normalizedToken))
+    .slice(0, 8);
+}
+
+function ColumnSuggestionInput({ ariaLabel, value, placeholder, columns, onCommit }: ColumnSuggestionInputProps) {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const selectionStartRef = useRef<number | null>(null);
+  const [draft, setDraft] = useState(value);
+  const [activeIndex, setActiveIndex] = useState(0);
+  const [isSuggesting, setIsSuggesting] = useState(false);
+  const suggestions = isSuggesting ? columnSuggestions(draft, selectionStartRef.current, columns) : [];
+  const hasSuggestions = suggestions.length > 0;
+
+  useEffect(() => {
+    setDraft(value);
+    setIsSuggesting(false);
+    selectionStartRef.current = null;
+  }, [value]);
+
+  useEffect(() => {
+    setActiveIndex(0);
+  }, [draft]);
+
+  function replaceCurrentToken(columnName: string) {
+    const input = inputRef.current;
+    const cursor = input?.selectionStart ?? selectionStartRef.current ?? draft.length;
+    const token = currentColumnToken(draft, cursor);
+    const start = token?.start ?? cursor;
+    const end = token?.end ?? cursor;
+    const nextValue = `${draft.slice(0, start)}${columnName}${draft.slice(end)}`;
+    setDraft(nextValue);
+    setIsSuggesting(false);
+    window.requestAnimationFrame(() => {
+      input?.focus();
+      const nextCursor = start + columnName.length;
+      input?.setSelectionRange(nextCursor, nextCursor);
+      selectionStartRef.current = nextCursor;
+    });
+  }
+
+  function handleKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (hasSuggestions && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
+      event.preventDefault();
+      const direction = event.key === "ArrowDown" ? 1 : -1;
+      setActiveIndex((current) => (current + direction + suggestions.length) % suggestions.length);
+      return;
+    }
+    if (hasSuggestions && (event.key === "Tab" || event.key === "Enter")) {
+      event.preventDefault();
+      replaceCurrentToken(suggestions[activeIndex] ?? suggestions[0]);
+      return;
+    }
+    if (hasSuggestions && event.key === "Escape") {
+      event.preventDefault();
+      setIsSuggesting(false);
+      return;
+    }
+    if (event.key === "Enter") {
+      onCommit(draft);
+    }
+  }
+
+  function updateSuggestions(input: HTMLInputElement, nextValue = draft) {
+    selectionStartRef.current = input.selectionStart;
+    setIsSuggesting(columnSuggestions(nextValue, selectionStartRef.current, columns).length > 0);
+  }
+
+  return (
+    <span className="database-table-browser__suggest-input">
+      <input
+        ref={inputRef}
+        aria-label={ariaLabel}
+        value={draft}
+        placeholder={placeholder}
+        onBlur={() => {
+          setIsSuggesting(false);
+          onCommit(draft);
+        }}
+        onChange={(event) => {
+          setDraft(event.target.value);
+          updateSuggestions(event.target, event.target.value);
+        }}
+        onFocus={(event) => {
+          updateSuggestions(event.target);
+        }}
+        onClick={(event) => updateSuggestions(event.currentTarget)}
+        onKeyDown={handleKeyDown}
+      />
+      {hasSuggestions ? (
+        <div className="database-table-browser__suggestions" role="listbox">
+          {suggestions.map((suggestion, index) => (
+            <button
+              key={suggestion}
+              type="button"
+              role="option"
+              aria-selected={index === activeIndex}
+              className="database-table-browser__suggestion"
+              data-active={index === activeIndex}
+              onMouseDown={(event) => {
+                event.preventDefault();
+                replaceCurrentToken(suggestion);
+              }}
+            >
+              {suggestion}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </span>
+  );
+}
+
 export function DatabaseTableBrowser({ connectionId, target, exportMessage, onExport }: DatabaseTableBrowserProps) {
   const { t } = useI18n();
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
   const [sortColumn, setSortColumn] = useState<string | null>(null);
   const [sortDirection, setSortDirection] = useState<DatabaseSortDirection | null>(null);
-  const [filterInput, setFilterInput] = useState("");
   const [filter, setFilter] = useState("");
-  const [orderByInput, setOrderByInput] = useState("");
   const [orderBy, setOrderBy] = useState("");
   const [result, setResult] = useState<DatabaseTablePageResult | null>(null);
   const [dirtyRows, setDirtyRows] = useState<DirtyRows>({});
@@ -124,9 +260,7 @@ export function DatabaseTableBrowser({ connectionId, target, exportMessage, onEx
     setPageSize(DEFAULT_PAGE_SIZE);
     setSortColumn(null);
     setSortDirection(null);
-    setFilterInput("");
     setFilter("");
-    setOrderByInput("");
     setOrderBy("");
     setDirtyRows({});
     setNewRows([]);
@@ -189,27 +323,26 @@ export function DatabaseTableBrowser({ connectionId, target, exportMessage, onEx
     }
   }
 
-  function applyFilter() {
+  function applyFilter(nextFilter: string) {
     runAfterDiscardConfirmation(() => {
       setPage(1);
-      setFilter(filterInput.trim());
+      setFilter(nextFilter.trim());
       requestGridScroll("top");
     });
   }
 
-  function applyOrderBy() {
+  function applyOrderBy(nextOrderBy: string) {
     runAfterDiscardConfirmation(() => {
       setPage(1);
       setSortColumn(null);
       setSortDirection(null);
-      setOrderBy(orderByInput.trim());
+      setOrderBy(nextOrderBy.trim());
       requestGridScroll("top");
     });
   }
 
   function toggleSort(columnName: string) {
     runAfterDiscardConfirmation(() => {
-      setOrderByInput("");
       setOrderBy("");
       if (sortColumn !== columnName) {
         setSortColumn(columnName);
@@ -677,29 +810,23 @@ export function DatabaseTableBrowser({ connectionId, target, exportMessage, onEx
       </header>
       <div className="database-table-browser__criteria">
         <label className="database-table-browser__criteria-field database-table-browser__filter">
-          <span>{t("database.where_clause")}</span>
-          <input
-            aria-label={t("database.filter")}
-            value={filterInput}
+          <span className="database-table-browser__criteria-label">{t("database.where_clause")}</span>
+          <ColumnSuggestionInput
+            ariaLabel={t("database.filter")}
+            value={filter}
             placeholder={t("database.filter_placeholder")}
-            onBlur={applyFilter}
-            onChange={(event) => setFilterInput(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") applyFilter();
-            }}
+            columns={result?.columns ?? []}
+            onCommit={applyFilter}
           />
         </label>
         <label className="database-table-browser__criteria-field database-table-browser__order">
-          <span>{t("database.order_by")}</span>
-          <input
-            aria-label={t("database.order_by_input")}
-            value={orderByInput}
+          <span className="database-table-browser__criteria-label">{t("database.order_by")}</span>
+          <ColumnSuggestionInput
+            ariaLabel={t("database.order_by_input")}
+            value={orderBy}
             placeholder="如 id desc"
-            onBlur={applyOrderBy}
-            onChange={(event) => setOrderByInput(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") applyOrderBy();
-            }}
+            columns={result?.columns ?? []}
+            onCommit={applyOrderBy}
           />
         </label>
       </div>

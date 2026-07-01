@@ -2683,6 +2683,102 @@ describe("DatabaseWorkspace", () => {
     expect(tableWrap!.scrollTop).toBe(0);
   });
 
+  it("suggests table columns in table filter and order inputs", async () => {
+    callBackendMock.mockImplementation((command, payload) => {
+      if (command === "list_database_objects") {
+        const request = (payload as { request: { parent_kind?: string } }).request;
+        if (!request.parent_kind) {
+          return Promise.resolve([{ id: "database:app", name: "app", kind: "database", has_children: true }]);
+        }
+        return Promise.resolve([{ id: "table:app.projects", name: "projects", kind: "table", has_children: true }]);
+      }
+      if (command === "load_database_table_page") {
+        return Promise.resolve({
+          columns: [
+            { name: "id", data_type: "INT" },
+            { name: "project_no", data_type: "VARCHAR" },
+            { name: "project_name", data_type: "VARCHAR" },
+            { name: "project_type", data_type: "INT" },
+          ],
+          rows: [[
+            { kind: "number", value: "1" },
+            { kind: "text", value: "SMX2024-001" },
+            { kind: "text", value: "项目A" },
+            { kind: "number", value: "11" },
+          ]],
+          total_rows: 1,
+          page: 1,
+          page_size: 200,
+          duration_ms: 9,
+          primary_key_columns: ["id"],
+          editable: true,
+        });
+      }
+      return Promise.resolve([]);
+    });
+
+    renderDatabaseWorkspace("app");
+    await userEvent.dblClick(await screen.findByText("projects"));
+    await screen.findByLabelText("表数据");
+
+    await userEvent.type(screen.getByLabelText("筛选"), "pro");
+    expect(await screen.findByRole("option", { name: "project_no" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "project_name" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("option", { name: "project_name" }));
+    expect(screen.getByLabelText("筛选")).toHaveValue("project_name");
+    await userEvent.type(screen.getByLabelText("筛选"), " = 1 and pro");
+    expect(await screen.findByRole("option", { name: "project_no" })).toBeInTheDocument();
+
+    await userEvent.type(screen.getByLabelText("排序"), "pro");
+    expect(await screen.findByRole("option", { name: "project_no" })).toHaveAttribute("aria-selected", "true");
+    await userEvent.keyboard("{ArrowDown}");
+    expect(screen.getByRole("option", { name: "project_name" })).toHaveAttribute("aria-selected", "true");
+    await userEvent.keyboard("{Enter}");
+    expect(screen.getByLabelText("排序")).toHaveValue("project_name");
+  });
+
+  it("keeps table filter input local until it is committed", async () => {
+    callBackendMock.mockImplementation((command, payload) => {
+      if (command === "list_database_objects") {
+        const request = (payload as { request: { parent_kind?: string } }).request;
+        if (!request.parent_kind) {
+          return Promise.resolve([{ id: "database:app", name: "app", kind: "database", has_children: true }]);
+        }
+        return Promise.resolve([{ id: "table:app.projects", name: "projects", kind: "table", has_children: true }]);
+      }
+      if (command === "load_database_table_page") {
+        return Promise.resolve({
+          columns: [{ name: "project_no", data_type: "VARCHAR" }],
+          rows: [[{ kind: "text", value: "SMX2024-001" }]],
+          total_rows: 1,
+          page: 1,
+          page_size: 200,
+          duration_ms: 9,
+          primary_key_columns: [],
+          editable: true,
+        });
+      }
+      return Promise.resolve([]);
+    });
+
+    renderDatabaseWorkspace("app");
+    await userEvent.dblClick(await screen.findByText("projects"));
+    await screen.findByLabelText("表数据");
+
+    callBackendMock.mockClear();
+    await userEvent.type(screen.getByLabelText("筛选"), "project_no = 1");
+    expect(callBackendMock).not.toHaveBeenCalledWith("load_database_table_page", expect.anything());
+
+    await userEvent.keyboard("{Enter}");
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("load_database_table_page", {
+        request: expect.objectContaining({
+          filter: "project_no = 1",
+        }),
+      });
+    });
+  });
+
   it("resizes the database table list and applies table browser paging after commit", async () => {
     callBackendMock.mockImplementation((command, payload) => {
       if (command === "list_database_objects") {
