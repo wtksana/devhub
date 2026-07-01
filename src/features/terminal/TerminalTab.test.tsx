@@ -46,7 +46,10 @@ interface MockTerminal {
   };
   options: Record<string, unknown>;
   unicode: { activeVersion: string };
-  modes: { mouseTrackingMode: "none" | "x10" | "vt200" | "drag" | "any" };
+  modes: {
+    mouseTrackingMode: "none" | "x10" | "vt200" | "drag" | "any";
+    bracketedPasteMode?: boolean;
+  };
   loadAddon: ReturnType<typeof vi.fn>;
   open: ReturnType<typeof vi.fn>;
   write: ReturnType<typeof vi.fn>;
@@ -57,6 +60,7 @@ interface MockTerminal {
   focus: ReturnType<typeof vi.fn>;
   refresh: ReturnType<typeof vi.fn>;
   scrollToBottom: ReturnType<typeof vi.fn>;
+  paste: ReturnType<typeof vi.fn>;
   getSelection: ReturnType<typeof vi.fn>;
   clear: ReturnType<typeof vi.fn>;
   buffer?: {
@@ -1161,8 +1165,14 @@ describe("TerminalTab", () => {
         getLine: () => ({ translateToString: () => "" }),
       },
     };
+    const onData = terminal.onData.mock.calls[0]?.[0] as ((data: string) => void) | undefined;
     fireEvent.contextMenu(screen.getByLabelText("SSH 终端"), { clientX: 12, clientY: 24 });
     fireEvent.click(screen.getByRole("menuitem", { name: "粘贴" }));
+
+    await waitFor(() => {
+      expect(terminal.paste).toHaveBeenCalledWith("tail -f /var/log/app.log\r");
+    });
+    onData?.("tail -f /var/log/app.log\r");
 
     await waitFor(() => {
       expectTerminalInputSent("tail -f /var/log/app.log\r");
@@ -2078,10 +2088,10 @@ describe("TerminalTab", () => {
     });
   });
 
-  it("pastes clipboard text into the active backend session from the context menu", async () => {
+  it("delegates clipboard paste to xterm so bracketed paste mode is preserved", async () => {
     const browserReadText = vi.fn().mockResolvedValue("browser text");
     vi.stubGlobal("navigator", { clipboard: { readText: browserReadText } });
-    readClipboardTextMock.mockResolvedValue("pwd\r");
+    readClipboardTextMock.mockResolvedValue("{\n  \"name\": \"devhub\"\n}");
     callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
     listenBackendMock.mockResolvedValueOnce(vi.fn());
 
@@ -2101,11 +2111,25 @@ describe("TerminalTab", () => {
 
     await waitFor(() => {
       expect(readClipboardTextMock).toHaveBeenCalledTimes(1);
-      expectTerminalInputSent("pwd\r");
+      expect(terminal.paste).toHaveBeenCalledWith("{\n  \"name\": \"devhub\"\n}");
     });
+    expect(callBackendRawMock).not.toHaveBeenCalledWith(
+      "write_terminal",
+      new TextEncoder().encode("{\n  \"name\": \"devhub\"\n}"),
+      expect.anything(),
+    );
     expect(browserReadText).not.toHaveBeenCalled();
     await waitFor(() => {
       expect(terminal.focus).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("sends xterm bracketed paste sequences unchanged", async () => {
+    const { onData } = await renderTerminalWithXtermTextarea("");
+    onData?.("\x1b[200~{\n  \"name\": \"devhub\"\n}\x1b[201~");
+
+    await waitFor(() => {
+      expectTerminalInputSent("\x1b[200~{\n  \"name\": \"devhub\"\n}\x1b[201~");
     });
   });
 

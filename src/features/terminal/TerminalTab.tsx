@@ -292,7 +292,7 @@ export function TerminalTab({
       if (!sessionId) return;
       const text = await readClipboardText();
       if (!text) return;
-      sendTerminalInputRef.current?.(text);
+      terminalRef.current?.paste(text);
     } finally {
       refocusTerminal();
     }

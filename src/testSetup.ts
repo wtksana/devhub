@@ -27,6 +27,7 @@ vi.mock("@xterm/xterm", () => ({
     focus: ReturnType<typeof vi.fn>;
     refresh: ReturnType<typeof vi.fn>;
     scrollToBottom: ReturnType<typeof vi.fn>;
+    paste: ReturnType<typeof vi.fn>;
     getSelection: ReturnType<typeof vi.fn>;
     clear: ReturnType<typeof vi.fn>;
     options: Record<string, unknown>;
@@ -48,6 +49,7 @@ vi.mock("@xterm/xterm", () => ({
     this.focus = vi.fn();
     this.refresh = vi.fn();
     this.scrollToBottom = vi.fn();
+    this.paste = vi.fn();
     this.getSelection = vi.fn(() => "");
     this.clear = vi.fn();
   }),
