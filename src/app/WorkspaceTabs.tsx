@@ -106,6 +106,13 @@ export function WorkspaceTabs({
     window.addEventListener("pointercancel", handlePointerUp);
   }
 
+  function closeTabWithMiddleButton(tabId: string, event: React.MouseEvent) {
+    if (event.button !== 1) return;
+    event.preventDefault();
+    event.stopPropagation();
+    onClose(tabId);
+  }
+
   return (
     <nav
       className="workspace-tabs"
@@ -123,6 +130,7 @@ export function WorkspaceTabs({
           data-tab-id={tab.id}
           data-active={activeTabId === tab.id}
           onPointerDown={(event) => startPendingTabDrag(tab.id, event)}
+          onAuxClick={(event) => closeTabWithMiddleButton(tab.id, event)}
           onContextMenu={(event) => onContextMenu?.(event, tab.id)}
         >
           {tab.status ? (

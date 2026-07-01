@@ -103,4 +103,27 @@ describe("WorkspaceTabs", () => {
 
     expect(onTabDragStart).not.toHaveBeenCalled();
   });
+
+  it("closes a workspace tab with the middle mouse button", () => {
+    const onSelect = vi.fn();
+    const onClose = vi.fn();
+    render(
+      <WorkspaceTabs
+        paneId="pane-1"
+        tabs={[
+          { id: "tab-1", title: "连接 1" },
+          { id: "tab-2", title: "连接 2" },
+        ]}
+        activeTabId="tab-1"
+        onSelect={onSelect}
+        onClose={onClose}
+      />,
+    );
+
+    const tab = screen.getByText("连接 2").closest(".workspace-tab") as HTMLElement;
+    fireEvent(tab, new MouseEvent("auxclick", { bubbles: true, button: 1 }));
+
+    expect(onClose).toHaveBeenCalledWith("tab-2");
+    expect(onSelect).not.toHaveBeenCalled();
+  });
 });
