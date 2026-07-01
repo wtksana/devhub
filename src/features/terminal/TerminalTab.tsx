@@ -6,7 +6,7 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
 import { ContextMenu, type ContextMenuState } from "../../app/ContextMenu";
 import { readClipboardText, writeClipboardText } from "../../lib/clipboard";
-import { callBackend, listenBackend } from "../../lib/tauri";
+import { callBackend, createBackendChannel, listenBackend } from "../../lib/tauri";
 import { useI18n } from "../../i18n/useI18n";
 import type { TerminalSettings } from "../settings/settingsTypes";
 import {
@@ -320,6 +320,10 @@ export function TerminalTab({
     const rows = terminal.rows || 24;
     if (lastBackendSizeRef.current?.cols === cols && lastBackendSizeRef.current.rows === rows) return;
     lastBackendSizeRef.current = { cols, rows };
+    resizeBackendSession(sessionId, cols, rows);
+  }
+
+  function resizeBackendSession(sessionId: string, cols: number, rows: number) {
     void callBackend<void>("resize_terminal", {
       request: {
         session_id: sessionId,
@@ -327,6 +331,15 @@ export function TerminalTab({
         rows,
       },
     });
+  }
+
+  function kickAlternateScreenRedraw(sessionId: string, terminal: Terminal) {
+    if (terminal.buffer?.active.type !== "alternate") return;
+    const cols = terminal.cols || 80;
+    const rows = terminal.rows || 24;
+    resizeBackendSession(sessionId, cols, rows + 1);
+    resizeBackendSession(sessionId, cols, rows);
+    lastBackendSizeRef.current = { cols, rows };
   }
 
   function handleContextMenu(event: React.MouseEvent<HTMLDivElement>) {
@@ -480,11 +493,10 @@ export function TerminalTab({
     let unlistenOutput: (() => void) | null = null;
     let resizeObserver: ResizeObserver | null = null;
     let resizeFrame: number | null = null;
-    let redrawProbeTimer: number | null = null;
     let recentOutputTail = "";
-    let hasRequestedAlternateScreenRedraw = false;
     let isLogHighlightMode = false;
     let pendingLogLine = "";
+    const outputTextDecoder = new TextDecoder();
     const commandTracker = createTerminalCommandTracker();
     const inputTracker = createTerminalInputTracker();
     inputTrackerRef.current = inputTracker;
@@ -563,66 +575,21 @@ export function TerminalTab({
       });
     }
 
-    function nonEmptyVisibleLineCount() {
-      const buffer = terminal.buffer.active;
-      const lineCount = Math.min(buffer.length, terminal.rows || 24);
-      let count = 0;
-      for (let index = 0; index < lineCount; index += 1) {
-        const text = buffer.getLine(index)?.translateToString(true).trim() ?? "";
-        if (text.length > 0) {
-          count += 1;
-        }
-      }
-      return count;
-    }
-
-    function visibleScreenText() {
-      const buffer = terminal.buffer.active;
-      const lineCount = Math.min(buffer.length, terminal.rows || 24);
-      const lines: string[] = [];
-      for (let index = 0; index < lineCount; index += 1) {
-        lines.push(buffer.getLine(index)?.translateToString(true) ?? "");
-      }
-      return lines.join("\n");
-    }
-
-    function looksLikeSparseVimScreen() {
-      const text = visibleScreenText();
-      return /"\S[^"\n]*"\s+\d+L,\s+\d+C/.test(text) || /\b(?:All|Top|Bot)\b/.test(text);
-    }
-
-    function scheduleAlternateScreenRedrawProbe() {
-      if (redrawProbeTimer !== null) {
-        window.clearTimeout(redrawProbeTimer);
-      }
-      redrawProbeTimer = window.setTimeout(() => {
-        redrawProbeTimer = null;
-        const sessionId = sessionIdRef.current;
-        if (disposed || !sessionId || hasRequestedAlternateScreenRedraw) return;
-        if (terminal.buffer.active.type !== "alternate") return;
-        if (nonEmptyVisibleLineCount() > 3) return;
-        if (!looksLikeSparseVimScreen()) return;
-        hasRequestedAlternateScreenRedraw = true;
-        void callBackend<void>("write_terminal", {
-          request: { session_id: sessionId, data: "\f" },
-        });
-      }, 48);
-    }
-
     function scheduleScrollToBottom() {
       window.requestAnimationFrame(() => terminal.scrollToBottom());
     }
 
-    function writeTerminalOutput(data: string) {
+    function writeTerminalOutput(data: string | Uint8Array) {
+      const outputText = typeof data === "string" ? data : outputTextDecoder.decode(data, { stream: true });
       if (!isActiveRef.current) {
         pendingLogLine = "";
         terminal.write(data);
         return;
       }
-      const outputWindow = `${recentOutputTail}${data}`;
+      const outputWindow = `${recentOutputTail}${outputText}`;
       recentOutputTail = outputWindow.slice(-32);
       if (isActiveRef.current && isLogHighlightMode && terminal.buffer.active.type === "normal") {
-        const result = processLogOutput(data, logHighlighterRef.current, pendingLogLine);
+        const result = processLogOutput(outputText, logHighlighterRef.current, pendingLogLine);
         pendingLogLine = result.pendingLine;
         if (result.data) {
           terminal.write(result.data);
@@ -633,8 +600,6 @@ export function TerminalTab({
       }
       if (containsAlternateScreenSequence(outputWindow)) {
         scheduleScrollToBottom();
-        hasRequestedAlternateScreenRedraw = false;
-        scheduleAlternateScreenRedrawProbe();
       }
       if (containsLeaveAlternateScreenSequence(outputWindow)) {
         scheduleScrollToBottom();
@@ -761,6 +726,11 @@ export function TerminalTab({
       pendingOutput = [];
       retryHintShownRef.current = false;
       terminal.writeln(`Connecting to ${connectionId}...`);
+      const onOutput = createBackendChannel<ArrayBuffer>();
+      onOutput.onmessage = (data) => {
+        if (disposed) return;
+        writeTerminalOutput(new Uint8Array(data));
+      };
       try {
         const response = await callBackend<TerminalSessionResponse>("open_terminal", {
           request: {
@@ -768,6 +738,7 @@ export function TerminalTab({
             cols: terminal.cols || 80,
             rows: terminal.rows || 24,
           },
+          onOutput,
         });
         lastBackendSizeRef.current = { cols: terminal.cols || 80, rows: terminal.rows || 24 };
         sessionIdRef.current = response.session_id;
@@ -812,9 +783,6 @@ export function TerminalTab({
       if (resizeFrame !== null) {
         window.cancelAnimationFrame(resizeFrame);
       }
-      if (redrawProbeTimer !== null) {
-        window.clearTimeout(redrawProbeTimer);
-      }
       resizeObserver?.disconnect();
       container.removeEventListener("wheel", handleAlternateScreenWheel, { capture: true });
       disposeInput?.dispose();
@@ -846,6 +814,7 @@ export function TerminalTab({
     const sessionId = sessionIdRef.current;
     if (!sessionId) return;
     resizeBackendSessionIfChanged(sessionId, terminalRef.current);
+    kickAlternateScreenRedraw(sessionId, terminalRef.current);
   }, [isActive]);
 
   useEffect(() => {
@@ -858,6 +827,7 @@ export function TerminalTab({
       const sessionId = sessionIdRef.current;
       if (!sessionId) return;
       resizeBackendSessionIfChanged(sessionId, terminal);
+      kickAlternateScreenRedraw(sessionId, terminal);
     });
     return () => {
       window.cancelAnimationFrame(frame);

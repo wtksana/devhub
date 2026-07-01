@@ -1,6 +1,7 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { Terminal } from "@xterm/xterm";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AppShell } from "./AppShell";
 import type { DevHubSettings } from "../features/settings/settingsTypes";
@@ -17,6 +18,13 @@ function waitForEffects() {
   return new Promise((resolve) => {
     window.setTimeout(resolve, 0);
   });
+}
+
+function setTerminalSize(index: number, cols: number, rows: number) {
+  const terminal = vi.mocked(Terminal).mock.instances[index] as unknown as { cols: number; rows: number } | undefined;
+  if (!terminal) return;
+  terminal.cols = cols;
+  terminal.rows = rows;
 }
 
 function createSettings(): DevHubSettings {
@@ -103,6 +111,7 @@ vi.mock("../features/settings/useSettings", () => ({
 
 vi.mock("../lib/tauri", () => ({
   callBackend: vi.fn().mockResolvedValue({ session_id: "session-1" }),
+  createBackendChannel: vi.fn(() => ({ onmessage: null })),
   listenBackend: vi.fn().mockImplementation(async (_event, handler) => {
     terminalOutputHandler = handler as (payload: TerminalOutputPayload) => void;
     return vi.fn();
@@ -134,6 +143,7 @@ describe("AppShell", () => {
     callBackendMock.mockClear();
     callBackendMock.mockResolvedValue({ session_id: "session-1" });
     listenBackendMock.mockClear();
+    vi.mocked(Terminal).mockClear();
     terminalOutputHandler = null;
   });
 
@@ -376,7 +386,9 @@ describe("AppShell", () => {
     await waitFor(() => {
       expect(callBackendMock.mock.calls.filter(([command]) => command === "open_terminal")).toHaveLength(2);
     });
+    await waitForEffects();
     callBackendMock.mockClear();
+    setTerminalSize(0, 100, 24);
 
     const handle = screen.getByRole("separator", { name: "调整工作区列 1 宽度" });
     fireEvent.mouseDown(handle, { clientX: 500 });
@@ -411,7 +423,9 @@ describe("AppShell", () => {
     await waitFor(() => {
       expect(callBackendMock.mock.calls.filter(([command]) => command === "open_terminal")).toHaveLength(1);
     });
+    await waitForEffects();
     callBackendMock.mockClear();
+    setTerminalSize(0, 80, 12);
 
     await userEvent.pointer({
       keys: "[MouseRight]",
@@ -453,7 +467,9 @@ describe("AppShell", () => {
     await waitFor(() => {
       expect(callBackendMock.mock.calls.filter(([command]) => command === "open_terminal")).toHaveLength(2);
     });
+    await waitForEffects();
     callBackendMock.mockClear();
+    setTerminalSize(0, 80, 12);
 
     await userEvent.pointer({
       keys: "[MouseRight]",
@@ -1233,7 +1249,9 @@ describe("AppShell", () => {
     await waitFor(() => {
       expect(callBackendMock.mock.calls.filter(([command]) => command === "open_terminal")).toHaveLength(4);
     });
+    await waitForEffects();
     callBackendMock.mockClear();
+    setTerminalSize(0, 80, 40);
 
     await userEvent.click(screen.getByRole("button", { name: /关闭 生产 Web 3/ }));
 

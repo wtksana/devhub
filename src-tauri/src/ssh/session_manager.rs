@@ -2,15 +2,17 @@ use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::process::Command;
 use std::str;
-use std::sync::Arc;
+use std::sync::{Arc, mpsc as std_mpsc};
+use std::thread::JoinHandle;
 use std::time::Duration;
 
 use portable_pty::{CommandBuilder, PtySize};
+use tauri::ipc::{Channel, Response};
 use tauri::{AppHandle, Emitter};
 use thiserror::Error;
 use tokio::sync::{
-    mpsc::{self, error::TryRecvError},
     Mutex, OwnedMutexGuard,
+    mpsc::{self, error::TryRecvError},
 };
 use uuid::Uuid;
 
@@ -19,12 +21,16 @@ use crate::core::settings_store::SettingsStore;
 use crate::models::settings::{SshConnectionSettings, TerminalSettings};
 use crate::models::terminal::TerminalOutputEvent;
 use crate::ssh::client::{
-    connect_authenticated, load_ssh_connection, resolve_auth, ResolvedAuth, SshClientError,
+    ResolvedAuth, SshClientError, connect_authenticated, load_ssh_connection, resolve_auth,
 };
 
 const TERMINAL_OUTPUT_EVENT: &str = "terminal://output";
 const INPUT_CHANNEL_SIZE: usize = 256;
 const OUTPUT_BUFFER_SIZE: usize = 8192;
+const OUTPUT_FLUSH_COALESCE: Duration = Duration::from_millis(4);
+const OUTPUT_MAX_PENDING_BYTES: usize = 4 * 1024 * 1024;
+const OUTPUT_OVERFLOW_NOTICE: &[u8] =
+    b"\x1bc\x1b[2m[devhub] dropped output due to terminal backpressure\x1b[0m\r\n";
 pub const LOCAL_CONNECTION_ID: &str = "local";
 const SSH_IDLE_SLEEP: Duration = Duration::from_millis(10);
 const SSH_SESSION_TIMEOUT_MS: u32 = 100;
@@ -60,6 +66,91 @@ pub enum InputDrain {
 pub enum TerminalWorkerMessage {
     Input(String),
     Resize { cols: u16, rows: u16 },
+}
+
+pub struct TerminalOutputCoalescer {
+    pending: Vec<u8>,
+    max_pending_bytes: usize,
+}
+
+impl Default for TerminalOutputCoalescer {
+    fn default() -> Self {
+        Self::with_max_pending_bytes(OUTPUT_MAX_PENDING_BYTES)
+    }
+}
+
+impl TerminalOutputCoalescer {
+    pub fn with_max_pending_bytes(max_pending_bytes: usize) -> Self {
+        Self {
+            pending: Vec::new(),
+            max_pending_bytes,
+        }
+    }
+
+    pub fn push(&mut self, output: Vec<u8>) -> Option<Vec<u8>> {
+        if self.pending.len() + output.len() > self.max_pending_bytes {
+            self.pending.clear();
+            self.pending.extend_from_slice(OUTPUT_OVERFLOW_NOTICE);
+        }
+        self.pending.extend_from_slice(&output);
+        None
+    }
+
+    pub fn flush_pending(&mut self) -> Option<Vec<u8>> {
+        if self.pending.is_empty() {
+            return None;
+        }
+        Some(std::mem::take(&mut self.pending))
+    }
+}
+
+struct TerminalOutputFlusher {
+    tx: Option<std_mpsc::Sender<Vec<u8>>>,
+    join: Option<JoinHandle<()>>,
+}
+
+impl TerminalOutputFlusher {
+    fn new(on_output: Channel<Response>) -> Self {
+        let (tx, rx) = std_mpsc::channel::<Vec<u8>>();
+        let join = std::thread::spawn(move || {
+            let mut coalescer = TerminalOutputCoalescer::default();
+            while let Ok(first) = rx.recv() {
+                coalescer.push(first);
+                while let Ok(next) = rx.recv_timeout(OUTPUT_FLUSH_COALESCE) {
+                    coalescer.push(next);
+                }
+                if let Some(output) = coalescer.flush_pending() {
+                    let _ = on_output.send(Response::new(output));
+                }
+            }
+            if let Some(output) = coalescer.flush_pending() {
+                let _ = on_output.send(Response::new(output));
+            }
+        });
+        Self {
+            tx: Some(tx),
+            join: Some(join),
+        }
+    }
+
+    fn emit(&self, output: Vec<u8>) {
+        if let Some(tx) = &self.tx {
+            let _ = tx.send(output);
+        }
+    }
+
+    fn close(&mut self) {
+        self.tx.take();
+        if let Some(join) = self.join.take() {
+            let _ = join.join();
+        }
+    }
+}
+
+impl Drop for TerminalOutputFlusher {
+    fn drop(&mut self) {
+        self.close();
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -158,10 +249,11 @@ impl SessionManager {
         connection_id: String,
         cols: u16,
         rows: u16,
+        on_output: Channel<Response>,
     ) -> Result<String> {
         if connection_id == LOCAL_CONNECTION_ID {
             return self
-                .open_local_terminal(app, connection_id, cols, rows)
+                .open_local_terminal(app, connection_id, cols, rows, on_output)
                 .await;
         }
 
@@ -191,6 +283,7 @@ impl SessionManager {
             input_rx,
             cols,
             rows,
+            on_output,
         );
         Ok(session_id)
     }
@@ -201,6 +294,7 @@ impl SessionManager {
         connection_id: String,
         cols: u16,
         rows: u16,
+        on_output: Channel<Response>,
     ) -> Result<String> {
         let session_id = Uuid::new_v4().to_string();
         let (tx, input_rx) = mpsc::channel(INPUT_CHANNEL_SIZE);
@@ -213,7 +307,7 @@ impl SessionManager {
             },
         );
 
-        spawn_local_worker(app, session_id.clone(), input_rx, cols, rows);
+        spawn_local_worker(app, session_id.clone(), input_rx, cols, rows, on_output);
         Ok(session_id)
     }
 
@@ -302,9 +396,10 @@ fn spawn_local_worker(
     input_rx: mpsc::Receiver<TerminalWorkerMessage>,
     cols: u16,
     rows: u16,
+    on_output: Channel<Response>,
 ) {
     tokio::task::spawn_blocking(move || {
-        if let Err(error) = run_local_worker(&app, &session_id, input_rx, cols, rows) {
+        if let Err(error) = run_local_worker(&app, &session_id, input_rx, cols, rows, on_output) {
             emit_status_with_output(
                 &app,
                 &session_id,
@@ -321,6 +416,7 @@ fn run_local_worker(
     mut input_rx: mpsc::Receiver<TerminalWorkerMessage>,
     cols: u16,
     rows: u16,
+    on_output: Channel<Response>,
 ) -> Result<()> {
     let command = local_shell_command();
     let pty_system = portable_pty::native_pty_system();
@@ -351,7 +447,6 @@ fn run_local_worker(
     let master = Arc::new(Mutex::new(pair.master));
     let resize_master = Arc::clone(&master);
     let mut buffer = [0_u8; OUTPUT_BUFFER_SIZE];
-    let mut pending_output = Vec::new();
     let _input_writer = std::thread::spawn(move || {
         while let Some(message) = input_rx.blocking_recv() {
             let result = drain_local_worker_messages(
@@ -378,15 +473,13 @@ fn run_local_worker(
     });
 
     emit_status(app, session_id, "connected");
+    let mut output_flusher = TerminalOutputFlusher::new(on_output);
 
     loop {
         match reader.read(&mut buffer) {
             Ok(0) => break,
             Ok(size) => {
-                let output = decode_terminal_output(&mut pending_output, &buffer[..size])?;
-                if !output.is_empty() {
-                    emit_output(app, session_id, output);
-                }
+                output_flusher.emit(buffer[..size].to_vec());
             }
             Err(error) if is_ignorable_terminal_read_error(&error) => {}
             Err(error) => return Err(TerminalSessionError::Io(error.to_string())),
@@ -398,6 +491,7 @@ fn run_local_worker(
     }
 
     let _ = child.kill();
+    output_flusher.close();
     emit_status(app, session_id, "closed");
     Ok(())
 }
@@ -413,6 +507,7 @@ fn spawn_ssh_worker(
     mut input_rx: mpsc::Receiver<TerminalWorkerMessage>,
     cols: u16,
     rows: u16,
+    on_output: Channel<Response>,
 ) {
     tokio::task::spawn_blocking(move || {
         if let Err(error) = run_ssh_worker(
@@ -425,6 +520,7 @@ fn spawn_ssh_worker(
             &mut input_rx,
             cols,
             rows,
+            on_output,
         ) {
             emit_status_with_output(
                 &app,
@@ -447,6 +543,7 @@ fn run_ssh_worker(
     input_rx: &mut mpsc::Receiver<TerminalWorkerMessage>,
     cols: u16,
     rows: u16,
+    on_output: Channel<Response>,
 ) -> Result<()> {
     let environment = terminal_environment(&terminal_settings);
     let ssh = {
@@ -478,9 +575,9 @@ fn run_ssh_worker(
     ssh.set_blocking(true);
     ssh.set_timeout(SSH_SESSION_TIMEOUT_MS);
     emit_status(app, session_id, "connected");
+    let mut output_flusher = TerminalOutputFlusher::new(on_output);
 
     let mut buffer = [0_u8; OUTPUT_BUFFER_SIZE];
-    let mut pending_output = Vec::new();
     loop {
         let worker_drain = drain_ssh_worker_messages(input_rx, &mut channel)?;
         if worker_drain == InputDrain::Disconnected {
@@ -497,10 +594,7 @@ fn run_ssh_worker(
             }
             Ok(size) => {
                 read_output = true;
-                let output = decode_terminal_output(&mut pending_output, &buffer[..size])?;
-                if !output.is_empty() {
-                    emit_output(app, session_id, output);
-                }
+                output_flusher.emit(buffer[..size].to_vec());
             }
             Err(error) if is_ignorable_terminal_read_error(&error) => {}
             Err(error) => return Err(TerminalSessionError::Io(error.to_string())),
@@ -516,6 +610,7 @@ fn run_ssh_worker(
     }
 
     let _ = channel.close();
+    output_flusher.close();
     emit_status(app, session_id, "closed");
     Ok(())
 }
@@ -666,17 +761,6 @@ pub fn decode_terminal_output(pending: &mut Vec<u8>, chunk: &[u8]) -> Result<Str
             Ok(output)
         }
     }
-}
-
-fn emit_output(app: &AppHandle, session_id: &str, data: String) {
-    let _ = app.emit(
-        TERMINAL_OUTPUT_EVENT,
-        TerminalOutputEvent {
-            session_id: session_id.to_string(),
-            data,
-            status: None,
-        },
-    );
 }
 
 fn emit_status(app: &AppHandle, session_id: &str, status: &str) {

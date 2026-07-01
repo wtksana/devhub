@@ -5,13 +5,14 @@ import { FitAddon } from "@xterm/addon-fit";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { TerminalTab } from "./TerminalTab";
-import { callBackend, listenBackend } from "../../lib/tauri";
+import { callBackend, createBackendChannel, listenBackend } from "../../lib/tauri";
 import { readClipboardText, writeClipboardText } from "../../lib/clipboard";
 import { I18nProvider } from "../../i18n/I18nProvider";
 import type { TerminalSettings } from "../settings/settingsTypes";
 
 vi.mock("../../lib/tauri", () => ({
   callBackend: vi.fn(),
+  createBackendChannel: vi.fn(() => ({ onmessage: null })),
   listenBackend: vi.fn(),
 }));
 
@@ -21,6 +22,7 @@ vi.mock("../../lib/clipboard", () => ({
 }));
 
 const callBackendMock = vi.mocked(callBackend);
+const createBackendChannelMock = vi.mocked(createBackendChannel);
 const listenBackendMock = vi.mocked(listenBackend);
 const readClipboardTextMock = vi.mocked(readClipboardText);
 const writeClipboardTextMock = vi.mocked(writeClipboardText);
@@ -120,6 +122,12 @@ describe("TerminalTab", () => {
     window.localStorage.clear();
   });
 
+  function terminalOutputChannel() {
+    const openCall = callBackendMock.mock.calls.find(([command]) => command === "open_terminal");
+    const args = openCall?.[1] as { onOutput?: { onmessage?: (data: ArrayBuffer) => void } } | undefined;
+    return args?.onOutput;
+  }
+
   function renderTerminalTab(props: Partial<React.ComponentProps<typeof TerminalTab>> = {}) {
     return render(
       <I18nProvider language="zh-CN">
@@ -153,9 +161,9 @@ describe("TerminalTab", () => {
     terminalContainer.append(textarea);
 
     await waitFor(() => {
-      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", expect.objectContaining({
         request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
-      });
+      }));
     });
     callBackendMock.mockClear();
 
@@ -187,10 +195,18 @@ describe("TerminalTab", () => {
     const { unmount } = renderTerminalTab(terminalProps());
 
     await waitFor(() => {
-      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", expect.objectContaining({
         request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
-      });
+      }));
     });
+    expect(createBackendChannelMock).toHaveBeenCalled();
+    expect(callBackendMock).toHaveBeenCalledWith(
+      "open_terminal",
+      expect.objectContaining({
+        request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
+        onOutput: expect.objectContaining({ onmessage: expect.any(Function) }),
+      }),
+    );
     expect(listenBackendMock).toHaveBeenCalledWith("terminal://output", expect.any(Function));
     expect(vi.mocked(Terminal)).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -209,13 +225,14 @@ describe("TerminalTab", () => {
     expect(terminal.loadAddon).toHaveBeenCalledWith(webglAddon);
     expect(terminal.loadAddon).toHaveBeenCalledWith(fitAddon);
     expect(terminal.focus).toHaveBeenCalled();
-    expect(outputHandler).not.toBeNull();
     const emitOutput = outputHandler as unknown as (payload: { session_id: string; data: string }) => void;
     emitOutput({ session_id: "other-session", data: "ignored" });
-    emitOutput({ session_id: "session-1", data: "hello" });
+    const onOutput = terminalOutputChannel()?.onmessage;
+    expect(onOutput).toBeTypeOf("function");
+    onOutput?.(new TextEncoder().encode("hello").buffer);
 
     expect(terminal.write).toHaveBeenCalledTimes(1);
-    expect(terminal.write).toHaveBeenCalledWith("hello");
+    expect(Array.from(terminal.write.mock.calls[0][0] as Uint8Array)).toEqual(Array.from(new TextEncoder().encode("hello")));
 
     const onData = terminal.onData.mock.calls[0]?.[0] as ((data: string) => void) | undefined;
     onData?.("ls\r");
@@ -242,9 +259,9 @@ describe("TerminalTab", () => {
     renderTerminalTab({ connectionId: "prod-web-01", fontFamily: "Maple Mono", fontSize: 16, theme: "dark", isActive: true });
 
     await waitFor(() => {
-      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", expect.objectContaining({
         request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
-      });
+      }));
     });
     callBackendMock.mockClear();
 
@@ -278,9 +295,9 @@ describe("TerminalTab", () => {
     renderTerminalTab({ connectionId: "prod-web-01", fontFamily: "Maple Mono", fontSize: 16, theme: "dark", isActive: true });
 
     await waitFor(() => {
-      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", expect.objectContaining({
         request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
-      });
+      }));
     });
 
     const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
@@ -321,9 +338,9 @@ describe("TerminalTab", () => {
     renderTerminalTab({ connectionId: "prod-web-01", fontFamily: "Maple Mono", fontSize: 16, theme: "dark", isActive: true });
 
     await waitFor(() => {
-      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", expect.objectContaining({
         request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
-      });
+      }));
     });
 
     const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
@@ -361,9 +378,9 @@ describe("TerminalTab", () => {
     renderTerminalTab({ connectionId: "prod-web-01", fontFamily: "Maple Mono", fontSize: 16, theme: "dark", isActive: true });
 
     await waitFor(() => {
-      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", expect.objectContaining({
         request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
-      });
+      }));
     });
     callBackendMock.mockClear();
 
@@ -403,9 +420,9 @@ describe("TerminalTab", () => {
     renderTerminalTab({ connectionId: "prod-web-01", fontFamily: "Maple Mono", fontSize: 16, theme: "dark", isActive: true });
 
     await waitFor(() => {
-      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", expect.objectContaining({
         request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
-      });
+      }));
     });
     callBackendMock.mockClear();
 
@@ -440,9 +457,9 @@ describe("TerminalTab", () => {
     renderTerminalTab({ connectionId: "prod-web-01", fontFamily: "Maple Mono", fontSize: 16, theme: "dark", isActive: true });
 
     await waitFor(() => {
-      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", expect.objectContaining({
         request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
-      });
+      }));
     });
     callBackendMock.mockClear();
 
@@ -479,9 +496,9 @@ describe("TerminalTab", () => {
     renderTerminalTab({ connectionId: "prod-web-01", fontFamily: "Maple Mono", fontSize: 16, theme: "dark", isActive: true });
 
     await waitFor(() => {
-      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", expect.objectContaining({
         request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
-      });
+      }));
     });
 
     const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
@@ -509,9 +526,9 @@ describe("TerminalTab", () => {
     renderTerminalTab({ connectionId: "prod-web-01", fontFamily: "Maple Mono", fontSize: 16, theme: "dark", isActive: true });
 
     await waitFor(() => {
-      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", expect.objectContaining({
         request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
-      });
+      }));
     });
 
     const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
@@ -540,9 +557,9 @@ describe("TerminalTab", () => {
     renderTerminalTab({ connectionId: "prod-web-01", fontFamily: "Maple Mono", fontSize: 16, theme: "dark", isActive: true });
 
     await waitFor(() => {
-      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", expect.objectContaining({
         request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
-      });
+      }));
     });
 
     const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
@@ -571,9 +588,9 @@ describe("TerminalTab", () => {
     renderTerminalTab({ connectionId: "prod-web-01", fontFamily: "Maple Mono", fontSize: 16, theme: "dark", isActive: true });
 
     await waitFor(() => {
-      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", expect.objectContaining({
         request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
-      });
+      }));
     });
 
     const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
@@ -630,9 +647,9 @@ describe("TerminalTab", () => {
     const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
     expect(terminal.open).toHaveBeenCalled();
     await waitFor(() => {
-      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", expect.objectContaining({
         request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
-      });
+      }));
     });
   });
 
@@ -677,9 +694,9 @@ describe("TerminalTab", () => {
     renderTerminalTab();
 
     await waitFor(() => {
-      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", expect.objectContaining({
         request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
-      });
+      }));
     });
     const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
     terminal.buffer = {
@@ -718,9 +735,9 @@ describe("TerminalTab", () => {
     renderTerminalTab();
 
     await waitFor(() => {
-      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", expect.objectContaining({
         request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
-      });
+      }));
     });
     const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
     terminal.buffer = {
@@ -790,9 +807,9 @@ describe("TerminalTab", () => {
 
     expect(onStatusChange).toHaveBeenCalledWith("connecting");
     await waitFor(() => {
-      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", expect.objectContaining({
         request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
-      });
+      }));
     });
     expect(onStatusChange).not.toHaveBeenCalledWith("connected");
 
@@ -868,7 +885,9 @@ describe("TerminalTab", () => {
       expect(openTerminalCalls).toHaveLength(2);
       expect(openTerminalCalls[1]).toEqual([
         "open_terminal",
-        { request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) } },
+        expect.objectContaining({
+          request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
+        }),
       ]);
     });
   });
@@ -904,7 +923,9 @@ describe("TerminalTab", () => {
       expect(openTerminalCalls).toHaveLength(2);
       expect(openTerminalCalls[openTerminalCalls.length - 1]).toEqual([
         "open_terminal",
-        { request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) } },
+        expect.objectContaining({
+          request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
+        }),
       ]);
     });
   });
@@ -963,9 +984,9 @@ describe("TerminalTab", () => {
 
     await waitFor(() => {
       expect(callBackendMock).toHaveBeenCalledTimes(2);
-      expect(callBackendMock).toHaveBeenLastCalledWith("open_terminal", {
+      expect(callBackendMock).toHaveBeenLastCalledWith("open_terminal", expect.objectContaining({
         request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
-      });
+      }));
     });
     expect(onStatusChange).not.toHaveBeenCalledWith("connected");
   });
@@ -1012,9 +1033,9 @@ describe("TerminalTab", () => {
     renderTerminalTab();
 
     await waitFor(() => {
-      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", expect.objectContaining({
         request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
-      });
+      }));
     });
     const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
     terminal.buffer = {
@@ -1046,9 +1067,9 @@ describe("TerminalTab", () => {
     renderTerminalTab();
 
     await waitFor(() => {
-      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", expect.objectContaining({
         request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
-      });
+      }));
     });
     const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
     terminal.buffer = {
@@ -1082,9 +1103,9 @@ describe("TerminalTab", () => {
     renderTerminalTab();
 
     await waitFor(() => {
-      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", expect.objectContaining({
         request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
-      });
+      }));
     });
     const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
     terminal.buffer = {
@@ -1120,9 +1141,9 @@ describe("TerminalTab", () => {
     renderTerminalTab();
 
     await waitFor(() => {
-      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", expect.objectContaining({
         request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
-      });
+      }));
     });
     const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
     terminal.buffer = {
@@ -1159,9 +1180,9 @@ describe("TerminalTab", () => {
     renderTerminalTab({ isActive: false });
 
     await waitFor(() => {
-      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", expect.objectContaining({
         request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
-      });
+      }));
     });
     const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
     terminal.buffer = {
@@ -1194,9 +1215,9 @@ describe("TerminalTab", () => {
     const { rerender } = renderTerminalTab({ isActive: false });
 
     await waitFor(() => {
-      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", expect.objectContaining({
         request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
-      });
+      }));
     });
     const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
     terminal.write.mockClear();
@@ -1230,9 +1251,9 @@ describe("TerminalTab", () => {
     const { rerender } = renderTerminalTab({ isActive: false });
 
     await waitFor(() => {
-      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", expect.objectContaining({
         request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
-      });
+      }));
     });
     const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
     terminal.buffer = {
@@ -1278,9 +1299,9 @@ describe("TerminalTab", () => {
     renderTerminalTab();
 
     await waitFor(() => {
-      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", expect.objectContaining({
         request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
-      });
+      }));
     });
     const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
     terminal.buffer = {
@@ -1301,7 +1322,7 @@ describe("TerminalTab", () => {
     expect(terminal.write).toHaveBeenCalledWith("\x1b[31mERROR\x1b[39m raw\n");
   });
 
-  it("requests a redraw when a sparse alternate buffer looks like a vim screen", async () => {
+  it("does not inject Ctrl-L when a sparse alternate buffer looks like a vim screen", async () => {
     let outputHandler: ((payload: { session_id: string; data: string }) => void) | null = null;
     callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
     listenBackendMock.mockImplementationOnce(async (_event, handler) => {
@@ -1312,9 +1333,9 @@ describe("TerminalTab", () => {
     renderTerminalTab(terminalProps({ theme: "light" }));
 
     await waitFor(() => {
-      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", expect.objectContaining({
         request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
-      });
+      }));
     });
     callBackendMock.mockClear();
     vi.useFakeTimers();
@@ -1338,9 +1359,7 @@ describe("TerminalTab", () => {
 
     vi.advanceTimersByTime(64);
 
-    expect(callBackendMock).toHaveBeenCalledWith("write_terminal", {
-      request: { session_id: "session-1", data: "\f" },
-    });
+    expect(callBackendMock).not.toHaveBeenCalledWith("write_terminal", expect.anything());
     vi.useRealTimers();
   });
 
@@ -1355,9 +1374,9 @@ describe("TerminalTab", () => {
     renderTerminalTab(terminalProps({ theme: "light" }));
 
     await waitFor(() => {
-      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", expect.objectContaining({
         request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
-      });
+      }));
     });
     callBackendMock.mockClear();
     vi.useFakeTimers();
@@ -1396,9 +1415,9 @@ describe("TerminalTab", () => {
     renderTerminalTab(terminalProps({ theme: "light" }));
 
     await waitFor(() => {
-      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", expect.objectContaining({
         request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
-      });
+      }));
     });
     callBackendMock.mockClear();
     vi.useFakeTimers();
@@ -1437,9 +1456,9 @@ describe("TerminalTab", () => {
     renderTerminalTab();
 
     await waitFor(() => {
-      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", expect.objectContaining({
         request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
-      });
+      }));
     });
     const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
     terminal.buffer = {
@@ -1472,9 +1491,9 @@ describe("TerminalTab", () => {
     renderTerminalTab();
 
     await waitFor(() => {
-      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", expect.objectContaining({
         request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
-      });
+      }));
     });
     const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
     terminal.buffer = {
@@ -1503,9 +1522,9 @@ describe("TerminalTab", () => {
     renderTerminalTab();
 
     await waitFor(() => {
-      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", expect.objectContaining({
         request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
-      });
+      }));
     });
     const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
     terminal.focus.mockClear();
@@ -1534,9 +1553,9 @@ describe("TerminalTab", () => {
     renderTerminalTab();
 
     await waitFor(() => {
-      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", expect.objectContaining({
         request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
-      });
+      }));
     });
     const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
     terminal.rows = 46;
@@ -1568,9 +1587,9 @@ describe("TerminalTab", () => {
     renderTerminalTab();
 
     await waitFor(() => {
-      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", expect.objectContaining({
         request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
-      });
+      }));
     });
     const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
     terminal.buffer = {
@@ -1596,9 +1615,9 @@ describe("TerminalTab", () => {
     renderTerminalTab({ connectionId: "prod-web-01", fontFamily: "Maple Mono", fontSize: 16, theme: "dark", isActive: true });
 
     await waitFor(() => {
-      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", expect.objectContaining({
         request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
-      });
+      }));
     });
 
     const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
@@ -1625,9 +1644,9 @@ describe("TerminalTab", () => {
     renderTerminalTab({ connectionId: "prod-web-01", fontFamily: "Maple Mono", fontSize: 16, theme: "dark", isActive: true });
 
     await waitFor(() => {
-      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", expect.objectContaining({
         request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
-      });
+      }));
     });
     callBackendMock.mockClear();
 
@@ -1664,9 +1683,9 @@ describe("TerminalTab", () => {
     });
 
     await waitFor(() => {
-      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", expect.objectContaining({
         request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
-      });
+      }));
     });
     callBackendMock.mockClear();
 
@@ -1692,6 +1711,65 @@ describe("TerminalTab", () => {
     expect(callBackendMock).not.toHaveBeenCalledWith("open_terminal", expect.anything());
   });
 
+  it("kicks an alternate-screen terminal with a temporary resize when it becomes active", async () => {
+    callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
+    listenBackendMock.mockResolvedValueOnce(vi.fn());
+
+    const { rerender } = renderTerminalTab({
+      connectionId: "prod-web-01",
+      fontFamily: "Maple Mono",
+      fontSize: 16,
+      theme: "dark",
+      isActive: false,
+      isVisible: true,
+    });
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", expect.objectContaining({
+        request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
+      }));
+    });
+    callBackendMock.mockClear();
+
+    const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
+    terminal.cols = 120;
+    terminal.rows = 36;
+    terminal.buffer = {
+      active: {
+        type: "alternate",
+        baseY: 0,
+        cursorX: 0,
+        cursorY: 0,
+        length: 36,
+        getLine: () => ({ translateToString: () => "" }),
+      },
+    };
+
+    rerender(
+      <I18nProvider language="zh-CN">
+        <TerminalTab
+          {...terminalProps({
+            connectionId: "prod-web-01",
+            fontFamily: "Maple Mono",
+            fontSize: 16,
+            theme: "dark",
+            isActive: true,
+            isVisible: true,
+          })}
+        />
+      </I18nProvider>,
+    );
+
+    await waitFor(() => {
+      expect(callBackendMock).toHaveBeenCalledWith("resize_terminal", {
+        request: { session_id: "session-1", cols: 120, rows: 37 },
+      });
+      expect(callBackendMock).toHaveBeenCalledWith("resize_terminal", {
+        request: { session_id: "session-1", cols: 120, rows: 36 },
+      });
+    });
+  });
+
   it("does not resize an inactive hidden terminal when the workspace pane layout changes", async () => {
     callBackendMock.mockResolvedValueOnce({ session_id: "session-1" });
     listenBackendMock.mockResolvedValueOnce(vi.fn());
@@ -1707,9 +1785,9 @@ describe("TerminalTab", () => {
     });
 
     await waitFor(() => {
-      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", expect.objectContaining({
         request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
-      });
+      }));
     });
     callBackendMock.mockClear();
 
@@ -1862,9 +1940,9 @@ describe("TerminalTab", () => {
     });
 
     await waitFor(() => {
-      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", expect.objectContaining({
         request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
-      });
+      }));
     });
     callBackendMock.mockClear();
 
@@ -1902,9 +1980,9 @@ describe("TerminalTab", () => {
     });
 
     await waitFor(() => {
-      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", expect.objectContaining({
         request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
-      });
+      }));
     });
 
     const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
@@ -1952,9 +2030,9 @@ describe("TerminalTab", () => {
     renderTerminalTab();
 
     await waitFor(() => {
-      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", expect.objectContaining({
         request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
-      });
+      }));
     });
     const terminal = vi.mocked(Terminal).mock.instances[0] as unknown as MockTerminal;
     terminal.buffer = {
@@ -2006,9 +2084,9 @@ describe("TerminalTab", () => {
     renderTerminalTab({ connectionId: "prod-web-01", fontFamily: "Maple Mono", fontSize: 16, theme: "dark", isActive: true });
 
     await waitFor(() => {
-      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", {
+      expect(callBackendMock).toHaveBeenCalledWith("open_terminal", expect.objectContaining({
         request: { connection_id: "prod-web-01", cols: expect.any(Number), rows: expect.any(Number) },
-      });
+      }));
     });
     callBackendMock.mockClear();
 

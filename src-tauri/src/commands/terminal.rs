@@ -1,3 +1,4 @@
+use tauri::ipc::{Channel, Response};
 use tauri::{AppHandle, State};
 
 use crate::commands::logging::log_operation;
@@ -17,6 +18,7 @@ pub async fn open_terminal(
     credential_store: State<'_, CredentialStore>,
     logger: State<'_, AppLogger>,
     request: OpenTerminalRequest,
+    on_output: Channel<Response>,
 ) -> Result<TerminalSessionResponse, String> {
     let started_at = std::time::Instant::now();
     let connection_id = request.connection_id.clone();
@@ -28,6 +30,7 @@ pub async fn open_terminal(
             request.connection_id,
             request.cols,
             request.rows,
+            on_output,
         )
         .await
         .map(|session_id| TerminalSessionResponse { session_id })

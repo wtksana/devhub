@@ -1,12 +1,12 @@
 use crate::ssh::session_manager::{
-    drain_local_worker_messages, drain_terminal_input, decode_terminal_output, is_ignorable_terminal_read_error,
-    local_shell_command, terminal_environment, InputDrain, SessionManager, SshConnectLimiter,
-    TerminalWorkerMessage,
+    InputDrain, SessionManager, SshConnectLimiter, TerminalOutputCoalescer, TerminalWorkerMessage,
+    decode_terminal_output, drain_local_worker_messages, drain_terminal_input,
+    is_ignorable_terminal_read_error, local_shell_command, terminal_environment,
 };
 use std::io::{Error, ErrorKind, Result as IoResult, Write};
 use std::sync::{
-    atomic::{AtomicUsize, Ordering},
     Arc,
+    atomic::{AtomicUsize, Ordering},
 };
 
 struct PermanentWriteFailure;
@@ -48,6 +48,37 @@ fn decodes_terminal_output_across_utf8_chunk_boundaries() {
     assert_eq!(first, "");
     assert_eq!(second, "本a");
     assert!(pending.is_empty());
+}
+
+#[test]
+fn coalesces_terminal_output_until_flush_interval() {
+    let mut coalescer = TerminalOutputCoalescer::default();
+
+    assert_eq!(coalescer.push(b"hello".to_vec()), None);
+    assert_eq!(coalescer.push(b" world".to_vec()), None);
+
+    assert_eq!(coalescer.flush_pending(), Some(b"hello world".to_vec()));
+    assert_eq!(coalescer.flush_pending(), None);
+}
+
+#[test]
+fn coalescer_drops_backlog_as_whole_reset_notice_when_pending_output_overflows() {
+    let mut coalescer = TerminalOutputCoalescer::with_max_pending_bytes(8);
+
+    assert_eq!(coalescer.push(b"12345678".to_vec()), None);
+    assert!(coalescer.push(b"9".to_vec()).is_none());
+
+    let output = coalescer.flush_pending().unwrap();
+    assert!(output.starts_with(b"\x1bc"));
+    assert!(
+        String::from_utf8_lossy(&output).contains("dropped output due to terminal backpressure")
+    );
+    assert!(output.ends_with(b"9"));
+    assert!(
+        !output
+            .windows(b"12345678".len())
+            .any(|window| window == b"12345678")
+    );
 }
 
 #[test]
@@ -102,7 +133,10 @@ async fn sends_resize_to_terminal_worker() {
 async fn drains_local_worker_messages_with_only_the_last_resize() {
     let (input_tx, mut input_rx) = tokio::sync::mpsc::channel(8);
     input_tx
-        .send(TerminalWorkerMessage::Resize { cols: 100, rows: 30 })
+        .send(TerminalWorkerMessage::Resize {
+            cols: 100,
+            rows: 30,
+        })
         .await
         .unwrap();
     input_tx
@@ -110,7 +144,10 @@ async fn drains_local_worker_messages_with_only_the_last_resize() {
         .await
         .unwrap();
     input_tx
-        .send(TerminalWorkerMessage::Resize { cols: 120, rows: 36 })
+        .send(TerminalWorkerMessage::Resize {
+            cols: 120,
+            rows: 36,
+        })
         .await
         .unwrap();
     let mut writer = Vec::new();
